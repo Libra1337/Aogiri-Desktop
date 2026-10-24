@@ -3,6 +3,8 @@
 	import 'katex/dist/katex.min.css';
 	import { openExternal } from '$lib/openExternal';
 	import { renderMarkdown } from '$lib/markdown';
+	import { renderMermaid } from '$lib/mermaid';
+	import { themeState } from '$lib/theme.svelte';
 	import { t } from '$lib/i18n';
 
 	let {
@@ -23,6 +25,33 @@
 	// as it finishes), so nothing below is worked out again.
 	const source = $derived(text);
 	const html = $derived(DOMPurify.sanitize(renderMarkdown(source)));
+	let root = $state<HTMLElement>();
+
+	// A ```mermaid block shows its diagram in the block's frame. The source
+	// stays in the hidden <pre>, so the copy action copies it, and shows
+	// again when it does not parse. Drawn again when the theme changes.
+	$effect(() => {
+		void html;
+		void themeState.value;
+		if (!root) return;
+		for (const code of root.querySelectorAll<HTMLElement>('.codeblock code.language-mermaid')) {
+			const block = code.closest<HTMLElement>('.codeblock')!;
+			const text = code.textContent ?? '';
+			renderMermaid(text).then((svg) => {
+				if (!svg || !block.isConnected || code.textContent !== text) return;
+				let view = block.querySelector<HTMLElement>('.diagram-view');
+				if (!view) {
+					view = document.createElement('div');
+					view.className = 'diagram-view';
+					view.setAttribute('role', 'img');
+					view.setAttribute('aria-label', t('chat.diagram'));
+					block.append(view);
+				}
+				view.innerHTML = svg;
+				block.classList.add('diagram');
+			});
+		}
+	});
 
 	// Only hand a link to the system opener if it carries an explicit, allowed
 	// scheme. The test is anchored and case-insensitive so tricks like
@@ -60,7 +89,7 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="md" class:more onclick={onClick}>{@html html}</div>
+<div class="md" class:more bind:this={root} onclick={onClick}>{@html html}</div>
 
 <style>
 	/* Conversation text: 24px lines at --fs-md (1.6), paragraphs 12px apart. */
@@ -189,6 +218,25 @@
 		border: none;
 		border-radius: 0;
 		background: none;
+	}
+	/* A diagram replaces the code under the header; it scrolls sideways
+	   when it is wider than the column. */
+	.md :global(.codeblock.diagram pre) {
+		display: none;
+	}
+	.md :global(.diagram-view) {
+		display: flex;
+		justify-content: center;
+		padding: 12px;
+		overflow-x: auto;
+		/* Mermaid sized its labels outside the reply: the reply's own
+		   line breaking would cut them. */
+		word-break: normal;
+		line-height: normal;
+	}
+	.md :global(.diagram-view svg) {
+		max-width: 100%;
+		height: auto;
 	}
 	.md :global(.cb-head) {
 		display: flex;

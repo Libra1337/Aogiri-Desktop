@@ -16,6 +16,7 @@ const chat = {
 		rewindRestoreFailed: '文件没有还原：{error}',
 		quoteTitle: '引用到输入框',
 		copyTurn: '复制整段回复',
+		diagram: '图表',
 		tokens: '{n} tokens',
 		// Composer
 		approvalAsk: '谨慎',
@@ -608,6 +609,7 @@ const chat = {
 		rewindRestoreFailed: 'Could not restore the files: {error}',
 		quoteTitle: 'Quote into the composer',
 		copyTurn: 'Copy the whole reply',
+		diagram: 'Diagram',
 		tokens: '{n} tokens',
 		// Composer
 		approvalAsk: 'Cautious',

@@ -28,6 +28,8 @@
 	//                           suggestion; =suggestion: no changes; =long: a
 	//                           long suggestion). `window.__sent` the ops,
 	//                           `window.__opened` "changes" for the Changes panel
+	//   &diagram                a third turn whose reply has a mermaid flowchart,
+	//                           a sequence diagram and a block that does not parse
 	//   &states                 the other conversations in the navigator wait
 	//                           for an answer, run, or failed
 	//   &busy[=<n>]             n more conversations (8 by default), in a third
@@ -291,6 +293,44 @@
 		byTitle('clippy 清理').handle({ type: 'approval_request', call_id: 'q1', name: 'AskUserQuestion', summary: '', questions: [{ question: '429 时重试还是报错？', options: [{ label: '重试' }, { label: '报错' }], multiSelect: false }] } as never);
 		byTitle('浅色主题调色').handle({ type: 'status', message: 'streaming' } as never);
 		byTitle('daemon 技能开关').handle({ type: 'error', message: 'cargo test 没有通过' } as never);
+	}
+
+	// ?shell&diagram: a reply with two diagrams and a broken one.
+	if (mode.has('diagram') && !mode.has('empty')) {
+		feed({ type: 'user_message', content: '画一下回退检查点的流程。' });
+		feed({ type: 'status', message: 'streaming' });
+		feed({
+			type: 'assistant_delta',
+			delta: [
+				'每一轮开始前先拍一个快照，回退时按会话和轮次找回：',
+				'',
+				'```mermaid',
+				'flowchart LR',
+				'  A[发送消息] --> B{Codex 或 Claude Code?}',
+				'  B -- 是 --> C[拍快照]',
+				'  C --> D[(refs/lynshen/checkpoints)]',
+				'  B -- 否 --> E[引擎自己的检查点]',
+				'  D --> F[回退时还原文件]',
+				'```',
+				'',
+				'```mermaid',
+				'sequenceDiagram',
+				'  participant 界面',
+				'  participant Git',
+				'  界面->>Git: update-ref 本轮快照',
+				'  Note over 界面,Git: 重启后按会话和轮次查找',
+				'  界面->>Git: checkout 快照 -- .',
+				'```',
+				'',
+				'下面这个写错了，所以按代码显示：',
+				'',
+				'```mermaid',
+				'flowchart LR',
+				'  A --> ((',
+				'```'
+			].join('\n')
+		});
+		feed({ type: 'status', message: 'ready' });
 	}
 
 	// ?shell&recap: a third turn that ends with changes and a suggestion.
