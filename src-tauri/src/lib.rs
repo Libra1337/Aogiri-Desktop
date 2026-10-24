@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -364,10 +363,6 @@ fn ensure_daemon(
     Err("lynshen daemon did not start in time".to_string())
 }
 
-/// Whether this app run already checked the daemon for staleness.
-#[cfg(unix)]
-static DAEMON_CHECKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// Why the daemon listening now should be replaced, if it should: its program
 /// was removed (an uninstall or package upgrade) or rewritten after it started
 /// (a reinstall at the same path). Either way it keeps running old code
@@ -433,33 +428,29 @@ fn parse_etime(text: &str) -> Option<std::time::Duration> {
     Some(std::time::Duration::from_secs(days * 86_400 + secs))
 }
 
-/// Replace a stale daemon (see `stale_daemon`) once per app run: SIGTERM lets
-/// it end its tool commands and exit; a fresh one starts from the current
-/// program. Hosted sessions reopen from their saved state.
+/// A development build found the daemon stale (see `stale_daemon`); the
+/// page asks it to restart once no session is running (`daemon_stale`).
+static DAEMON_STALE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Notes a stale daemon for the page. It is not ended here: SIGTERM would cut
+/// off every running turn (the Claude Code and Codex processes end with it),
+/// so it restarts once idle, as after a release update (daemonVersion.ts).
 #[cfg(unix)]
-fn replace_stale_daemon() {
-    if DAEMON_CHECKED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return;
-    }
-    // A release build compares versions with the daemon instead and lets it
-    // restart once idle (daemon.ts); this check is for development builds.
-    #[cfg(unix)]
+fn note_stale_daemon() {
+    // A release build compares versions with the daemon instead.
     if app_cli::path().is_some() {
         return;
     }
-    #[cfg(unix)]
-    if let Some((pid, reason)) = stale_daemon() {
-        eprintln!("lynshen daemon is stale ({reason}); restarting it");
-        let _ = Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .status();
-        for _ in 0..50 {
-            if !daemon_listening() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
+    if let Some((_, reason)) = stale_daemon() {
+        eprintln!("lynshen daemon is stale ({reason}); it restarts once idle");
+        DAEMON_STALE.store(true, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+/// Whether the daemon was found stale since the page last asked.
+#[tauri::command]
+fn daemon_stale() -> bool {
+    DAEMON_STALE.swap(false, std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Starts the daemon when nothing listens yet, with the phone page written
@@ -474,7 +465,7 @@ fn start_daemon(
     static STARTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _starting = STARTING.lock().unwrap_or_else(|e| e.into_inner());
     #[cfg(unix)]
-    replace_stale_daemon();
+    note_stale_daemon();
     let web = if daemon_listening() {
         None
     } else {
@@ -3593,8 +3584,6 @@ struct Pty {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
-    /// Set by `pty_close` to tell the reader thread to stop before the child is killed.
-    stop: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -3777,24 +3766,24 @@ fn pty_open(
         if let Some(path) = shell_env::child_path(shell_env::snapshot_path().map(Into::into)) {
             cmd.env("PATH", path);
         }
-        cmd.env("TERM", "xterm-256color");
     }
+    // An app opened from Finder has no TERM: the shell and everything run in
+    // it (Claude Code) would take the terminal for one without colours.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    let stop = Arc::new(AtomicBool::new(false));
     let handle = app.clone();
     let stream_id = id.clone();
-    let reader_stop = stop.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        // Reads until every process on the terminal has closed it, also after
+        // pty_close: see there.
         loop {
-            if reader_stop.load(Ordering::Relaxed) {
-                break;
-            }
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
@@ -3821,7 +3810,6 @@ fn pty_open(
                 writer: Mutex::new(writer),
                 master: Mutex::new(pair.master),
                 child: Mutex::new(child),
-                stop,
             }),
         );
     Ok(())
@@ -3875,13 +3863,17 @@ fn pty_close(id: String, ptys: tauri::State<Ptys>) -> Result<(), String> {
         .map_err(|e| format!("lock poisoned: {e}"))?
         .remove(&id);
     if let Some(pty) = removed {
-        // Stop the reader thread before killing so it doesn't spin on a dead fd.
-        pty.stop.store(true, Ordering::Relaxed);
-        if let Ok(mut child) = pty.child.lock() {
-            let _ = child.kill();
-            // Reap the process so it doesn't linger as a zombie.
-            let _ = child.wait();
-        }
+        // Off the main thread, with the reader still draining the terminal: a
+        // shell exits only once its output is read, so with a TUI writing
+        // (Claude Code redrawing on SIGHUP) and nobody reading, `wait` never
+        // returned and the window froze.
+        std::thread::spawn(move || {
+            if let Ok(mut child) = pty.child.lock() {
+                let _ = child.kill();
+                // Reap the process so it doesn't linger as a zombie.
+                let _ = child.wait();
+            }
+        });
     }
     Ok(())
 }
@@ -4210,6 +4202,7 @@ pub fn run() {
             about_app,
             open_logs_folder,
             app_cli::replace_daemon,
+            daemon_stale,
             #[cfg(desktop)]
             app_update::update_check,
             #[cfg(desktop)]

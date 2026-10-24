@@ -98,6 +98,7 @@ const shell = {
 		},
 		daemonUpdate: {
 			idle: '后台服务会在没有任务运行时更新到 {version}',
+			idleRebuilt: '后台服务会在没有任务运行时换成新构建的 lynshen',
 			failed: '后台服务更新失败：{error}'
 		},
 		notConfigured: '未配置',
@@ -1225,6 +1226,7 @@ const shell = {
 		},
 		daemonUpdate: {
 			idle: 'The background service updates to {version} once no task is running',
+			idleRebuilt: 'The background service switches to the rebuilt lynshen once no task is running',
 			failed: 'Could not update the background service: {error}'
 		},
 		notConfigured: 'not configured',

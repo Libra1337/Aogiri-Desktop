@@ -124,6 +124,8 @@ export class DaemonSync {
 	#held: Record<string, unknown> | null = null;
 	/** Session ids the last daemon list on this connection had. */
 	#seen = new Set<string>();
+	/** The daemon's list being asked for (see `push`). */
+	#loading: Promise<void> | null = null;
 
 	/** `ready`: the desktop's project tree is restored and not being swapped
 	 *  (a list applied before would be merged with an empty tree). */
@@ -205,7 +207,20 @@ export class DaemonSync {
 		this.push();
 	}
 
-	/** Sends the desktop's list when it differs from the daemon's. */
+	/** Asks the daemon for its list, applied as if it had sent it: after a
+	 *  save refused because another client saved first, the list it was
+	 *  refused against. */
+	#load(): Promise<void> {
+		this.#loading ??= daemon
+			.request({ op: 'workspaces' })
+			.then((reply) => this.handle(reply))
+			.finally(() => (this.#loading = null));
+		return this.#loading;
+	}
+
+	/** Sends the desktop's list when it differs from the daemon's. A save
+	 *  refused because another client saved first merges that client's list
+	 *  and sends again; any other refusal is logged, not swallowed. */
 	push() {
 		if (this.#rev < 0) return;
 		const local = this.local();
@@ -214,9 +229,10 @@ export class DaemonSync {
 		this.#remoteKey = key;
 		daemon.request({ op: 'workspaces_set', rev: this.#rev, workspaces: local }).then(
 			(reply) => this.handle(reply),
-			() => {
-				// Another client saved first; its broadcast brings the new list.
+			(e) => {
 				this.#remoteKey = '';
+				if (/stale workspaces/.test(String(e))) return this.#load().catch((err) => console.warn('workspaces not read from the daemon:', err));
+				console.warn('workspaces not saved to the daemon:', e);
 			}
 		);
 	}

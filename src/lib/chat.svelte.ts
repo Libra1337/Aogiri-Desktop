@@ -2404,6 +2404,8 @@ export class ChatState {
 				const card = this.#compaction() ?? this.#pushCompaction();
 				card.state = 'failed';
 				card.error = str(ev.error);
+				// The turn carries on: only its closing status would clear "compacting".
+				if (this.engineState === 'compacting') this.engineState = 'streaming';
 				break;
 			}
 			case 'goal':
