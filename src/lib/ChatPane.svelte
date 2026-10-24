@@ -1539,17 +1539,23 @@
 		const cwd = project?.path;
 		if (!cwd || (c.backendId !== 'codex' && c.backendId !== 'claude')) return;
 		const idx = c.userTurns;
-		gitCheckpointCapture(cwd)
+		gitCheckpointCapture(cwd, session.id, idx)
 			.then((sha) => {
 				if (sha) c.fileCheckpoints[idx] = sha;
 			})
 			.catch(() => {});
 	}
-	// Restore the working tree to the checkpoint captured before the target turn.
+	// Restore the working tree to the checkpoint captured before the target turn:
+	// this run's sha, else the one kept under the session's refs (an earlier run
+	// of the app). A turn without a snapshot, or a failed restore, says so.
 	function restoreCheckpoint(userIndex: number) {
 		const cwd = project?.path;
-		const sha = chat.fileCheckpoints[userIndex];
-		if (cwd && sha) gitCheckpointRestore(cwd, sha).catch((e) => console.error('checkpoint restore failed', e));
+		if (!cwd) return;
+		gitCheckpointRestore(cwd, chat.fileCheckpoints[userIndex] ?? '', session.id, userIndex)
+			.then((safety) => {
+				if (safety === null) toast.info(t('chat.rewindNoCheckpoint'));
+			})
+			.catch((e) => toast.error(t('chat.rewindRestoreFailed', { error: String(e) })));
 	}
 
 	// Open a workspace file referenced by a chat link. HTML opens in the built-in
