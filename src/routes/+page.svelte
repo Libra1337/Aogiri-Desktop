@@ -67,6 +67,7 @@
 	import { trial } from '$lib/trial.svelte';
 	import { browser, type WebRef } from '$lib/browser.svelte';
 	import { prefs } from '$lib/prefs.svelte';
+	import { playChime, unlockChimes, type Chime } from '$lib/chime';
 	import { fmtTokens } from '$lib/usageStats';
 	import { cloudSync } from '$lib/cloudSync.svelte';
 	import { t } from '$lib/i18n';
@@ -77,6 +78,7 @@
 	import {
 		activateTab,
 		closeTab,
+		closeTabGroup,
 		emptyLayout,
 		findLeaf,
 		leafOfTab,
@@ -101,6 +103,7 @@
 	import Mosaic from '$lib/workbench/Mosaic.svelte';
 	import HomePage from '$lib/HomePage.svelte';
 	import TitleBar from '$lib/shell/TitleBar.svelte';
+	import OpenInEditor from '$lib/shell/OpenInEditor.svelte';
 	import TabChromePopover from '$lib/workbench/TabChromePopover.svelte';
 	import ChatPane, { type ChatPaneApi, type ProviderOption } from '$lib/ChatPane.svelte';
 	import SettingsPage from '$lib/settings/SettingsPage.svelte';
@@ -209,6 +212,9 @@
 			/* ignore */
 		}
 	}
+	const chime = (kind: Chime) => {
+		if (prefs.sounds) playChime(kind);
+	};
 	const notifyDone = (title: string) =>
 		notify('Aogiri', t('shell.notifyDone', { title: shownTitle(title) }));
 	// How many conversations wait for the user: the Dock badge, the Windows
@@ -217,6 +223,7 @@
 	// An agent's question, pending action or report while the window is in
 	// the background.
 	agentDirectory.onArrival = (kind, agent, text, agentId) => {
+		if (kind === 'question' || kind === 'action') chime('attention');
 		const message = t(`shell.notify.${kind}`, { text });
 		if (!document.hasFocus()) void notify(agent, message);
 		// In front: a notice that leads to the agent on the workbench.
@@ -1028,7 +1035,7 @@
 			const cwd = activeProject?.path;
 			if (cwd && (c.backendId === 'codex' || c.backendId === 'claude')) {
 				const idx = c.userTurns;
-				gitCheckpointCapture(cwd)
+				gitCheckpointCapture(cwd, activeId, idx)
 					.then((sha) => {
 						if (sha) c.fileCheckpoints[idx] = sha;
 					})
@@ -1146,7 +1153,8 @@
 
 	// ---------- session tab chrome (color / icon / rename) ----------
 	// One shared popover serves the mosaic tabs and the sidebar rows.
-	let sessionChromeFor = $state<{ sid: string; x: number; y: number } | null>(null);
+	// `tab`: opened from a canvas tab, so the menu also closes tabs.
+	let sessionChromeFor = $state<{ sid: string; x: number; y: number; tab?: string } | null>(null);
 	const chromeSession = $derived(sessionChromeFor ? (sessionMap.get(sessionChromeFor.sid) ?? null) : null);
 
 	function tileChrome(tab: TileTab): { color?: string; icon?: TabIcon } | null {
@@ -1161,7 +1169,24 @@
 		const sid = chatSessionOf(tab.panel);
 		if (!sid || !sessionMap.has(sid)) return;
 		ev.preventDefault();
-		sessionChromeFor = { sid, x: ev.clientX, y: ev.clientY };
+		sessionChromeFor = { sid, x: ev.clientX, y: ev.clientY, tab: tab.id };
+	}
+	/** 关闭其他 (with other tabs in the group) and 关闭全部 for a canvas tab. */
+	function tabCloseActions(tabId: string | undefined, dismiss: () => void) {
+		const leaf = tabId ? leafOfTab(tiles.root, tabId) : null;
+		if (!tabId || !leaf) return {};
+		return {
+			onCloseOthers: leaf.tabs.length > 1 ? () => (dismiss(), onMosaicChange(closeTabGroup(tiles, tabId, true))) : undefined,
+			onCloseAll: () => (dismiss(), onMosaicChange(closeTabGroup(tiles, tabId, false)))
+		};
+	}
+	/** The same for a tab without a menu of its own, in the app's context menu. */
+	function tileMenu(tab: TileTab) {
+		const acts = tabCloseActions(tab.id, () => {});
+		return [
+			...(acts.onCloseOthers ? [{ key: 'close-others', label: t('dock.mosaic.closeOthers'), run: acts.onCloseOthers }] : []),
+			...(acts.onCloseAll ? [{ key: 'close-all', label: t('dock.mosaic.closeAll'), run: acts.onCloseAll }] : [])
+		];
 	}
 	function openSessionMenu(sid: string, ev: MouseEvent) {
 		if (!sessionMap.has(sid)) return;
@@ -1362,6 +1387,14 @@
 		}
 	}
 
+	// A zoom step says the new size for a moment.
+	let zoomToast = 0;
+	function stepZoom(dir: 1 | -1 | 0) {
+		if (!prefs.stepZoom(dir)) return;
+		if (zoomToast) toast.dismiss(zoomToast);
+		zoomToast = toast.info(t('shell.zoomLevel', { n: Math.round(prefs.zoom * 100) }), { duration: 1200 });
+	}
+
 	function onWindowKey(e: KeyboardEvent) {
 		// Something closer to the target already claimed this key (e.g. the code
 		// editor's own ⌘K / ⌘S keymap, or a pane's picker) — never double-fire.
@@ -1376,6 +1409,9 @@
 		const pane = panes.get(activeId);
 		if (matches(e, 'palette')) return act(() => (showPalette = !showPalette));
 		if (matches(e, 'shortcuts')) return act(() => (showShortcuts = !showShortcuts));
+		if (matches(e, 'zoomIn')) return act(() => stepZoom(1));
+		if (matches(e, 'zoomOut')) return act(() => stepZoom(-1));
+		if (matches(e, 'zoomReset')) return act(() => stepZoom(0));
 		if (matches(e, 'captureRequirement'))
 			return act(() => {
 				openRequirements();
@@ -1406,6 +1442,8 @@
 	}
 
 	onMount(() => {
+		// The webview's audio starts locked; the first click or key unlocks it.
+		unlockChimes();
 		cloudSync.start();
 		// Anonymous usage counts; told once, off in Settings → General.
 		if (telemetry.start(sendTelemetry))
@@ -1492,6 +1530,14 @@
 					s.chat.unseen = true;
 					notifyDone(s.chat.title);
 				}
+				// A sound unless the user is looking at this session: its turn
+				// ended, or an action, a question or a plan waits on them.
+				if (prefs.sounds && (!document.hasFocus() || s.id !== curActive)) {
+					const asking = s.chat.pendingApproval;
+					const planning = planless ? undefined : s.chat.messages.findLast((m) => m.kind === 'plan' && m.status === 'pending');
+					if ((asking && asking.callId !== hadApproval) || (planning && planning !== hadPlan)) chime('attention');
+					else if (wasBusy && !s.chat.busy) chime('done');
+				}
 				// Something waits on the user while the window is in the
 				// background: an action to allow, or a plan to approve.
 				if (!document.hasFocus()) {
@@ -1527,7 +1573,7 @@
 				void shells.load();
 				checkDaemonVersion(version).then((outcome) => {
 					if (outcome.kind === 'restart-when-idle')
-						toast.info(t('shell.daemonUpdate.idle', { version: outcome.version }));
+						toast.info(outcome.version ? t('shell.daemonUpdate.idle', { version: outcome.version }) : t('shell.daemonUpdate.idleRebuilt'));
 					else if (outcome.kind === 'failed') toast.error(t('shell.daemonUpdate.failed', { error: outcome.error }));
 				});
 			};
@@ -1685,6 +1731,8 @@
 		onAdd={(key) => mosaicAdd(focusedLeaf, key)}
 	>
 		{#snippet actions()}
+			{@const editorProject = showSettings || showDesk || showSetup || homeShown ? undefined : (pageProject ?? activeProject)}
+			{#if editorProject && !editorProject.chats && !editorProject.home && !editorProject.agents && !editorProject.stale}<OpenInEditor path={editorProject.path} />{/if}
 			{#if !showSettings && !showDesk && !showSetup && active && active.surface === 'tui'}
 				<button class="tile-action" title={t('dock.tui.backToGui')} aria-label={t('dock.tui.backToGui')} onclick={() => active && tuiPanels[active.id]?.backToGui()}>
 					<ChatCircleTextIcon size={16} />
@@ -1811,6 +1859,7 @@
 							{tabMark}
 							onTabContext={openTileChrome}
 							onTabRename={openTileChrome}
+							tabMenu={tileMenu}
 						>
 								{#snippet actions(tab)}
 									{@const sid = chatSessionOf(tab.panel)}
@@ -2105,6 +2154,7 @@
 			onIcon={(i) => store.setSessionChrome(chromeSession.id, { icon: i })}
 			pinned={!!chromeSession.pinned}
 			onPin={(v) => store.setPinned(chromeSession.id, v)}
+			{...tabCloseActions(sessionChromeFor.tab, () => (sessionChromeFor = null))}
 			onClose={() => (sessionChromeFor = null)}
 		/>
 	{/if}

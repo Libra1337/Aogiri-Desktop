@@ -1262,7 +1262,7 @@
 		outline: none;
 		background: transparent;
 		color: var(--text);
-		font-family: var(--font-sans);
+		font-family: var(--font-chat);
 		font-size: var(--fs-md);
 		line-height: 24px;
 		padding: 12px 14px;

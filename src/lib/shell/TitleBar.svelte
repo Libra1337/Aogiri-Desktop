@@ -72,7 +72,7 @@
 </script>
 
 <header class="titlebar" data-tauri-drag-region>
-	<div class="lead" class:resizing style:width="{leftWidth}px" data-tauri-drag-region>
+	<div class="lead" class:resizing style:width="calc({leftWidth}px * var(--ui-zoom, 1))" data-tauri-drag-region>
 		{#if showToggle}
 			<button
 				class="tb-btn"
@@ -123,6 +123,10 @@
 
 <style>
 	.titlebar {
+		/* Not zoomed with the rest of the interface: the traffic lights over
+		   it are the system's and keep their size and place. The widths it
+		   is given (leftWidth) are the zoomed page's, so they scale up again. */
+		zoom: calc(1 / var(--ui-zoom, 1));
 		position: relative;
 		display: flex;
 		align-items: center;

@@ -17,6 +17,7 @@
     "core:window:allow-set-title",
     "core:window:allow-set-badge-count",
     "core:window:allow-set-overlay-icon",
+    "core:webview:allow-set-webview-zoom",
     "opener:default",
     "dialog:default",
     "clipboard-manager:allow-read-text",

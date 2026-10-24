@@ -3753,6 +3753,341 @@ try {
     assert.deepEqual(await ip.evaluate(() => window.__opened), [`import:codex:copy-019a1f22:${cwd}`]);
     await ip.close();
   }
+  // Mermaid in a reply (?shell&diagram): a ```mermaid block shows its
+  // diagram inside the code block's frame, in the theme's colours (drawn
+  // again in the other theme); the copy action copies the source; a block
+  // that does not parse stays as code.
+  {
+    const dp = await browser.newPage({viewport:{width:1280,height:900}});
+    dp.on('pageerror', e => errors.push(e.message));
+    await dp.goto(base + '?shell&diagram');
+    const blocks = dp.locator('.md .codeblock').filter({has: dp.locator('code.language-mermaid')});
+    await expect(blocks).toHaveCount(3, {timeout:120000});
+    const [flow, seq, bad] = [blocks.nth(0), blocks.nth(1), blocks.nth(2)];
+    await expect(flow.locator('.diagram-view svg')).toBeVisible({timeout:120000});
+    await expect(seq.locator('.diagram-view svg')).toBeVisible();
+    await expect(flow.getByRole('img', {name:'图表'})).toBeVisible();
+    await expect(flow.locator('pre')).toBeHidden();
+    await expect(flow.locator('.cb-lang')).toHaveText('mermaid');
+    await expect(flow.locator('.diagram-view')).toContainText('拍快照');
+    // The broken one: still code, no diagram, no error picture.
+    await expect(bad.locator('pre')).toBeVisible();
+    await expect(bad.locator('.diagram-view')).toHaveCount(0);
+    assert.equal(await dp.locator('[id^="dmermaid"], .error-icon').count(), 0);
+    // Colours from the tokens: a node on --panel with a --dim2 edge, its text --text.
+    const look = () => dp.evaluate(() => {
+      const css = getComputedStyle(document.documentElement);
+      const hex = (c) => { const x = document.createElement('canvas').getContext('2d'); x.fillStyle = c; return x.fillStyle; };
+      const node = document.querySelector('.diagram-view .node rect, .diagram-view .node polygon, .diagram-view .node path');
+      const label = document.querySelector('.diagram-view .nodeLabel, .diagram-view .node text');
+      const ns = getComputedStyle(node);
+      return {fill: hex(ns.fill), stroke: hex(ns.stroke), text: hex(getComputedStyle(label).color), panel: hex(css.getPropertyValue('--panel').trim()), dim2: hex(css.getPropertyValue('--dim2').trim()), ink: hex(css.getPropertyValue('--text').trim())};
+    });
+    let l = await look();
+    assert.deepEqual([l.fill, l.stroke, l.text], [l.panel, l.dim2, l.ink], 'dark: the node is not on the tokens');
+    // The copy action copies the source, not the drawing.
+    await dp.evaluate(() => { window.__copied = []; navigator.clipboard.writeText = async (t) => { window.__copied.push(t); }; });
+    await flow.locator('.cb-copy').click();
+    assert.match((await dp.evaluate(() => window.__copied))[0], /^flowchart LR\n {2}A\[发送消息\]/);
+    // The light theme: drawn again in its colours.
+    const darkSvg = await flow.locator('.diagram-view').innerHTML();
+    await dp.evaluate(async () => { const { setTheme } = await import('/src/lib/theme.svelte.ts'); setTheme('light'); });
+    await expect.poll(() => flow.locator('.diagram-view').innerHTML()).not.toBe(darkSvg);
+    l = await look();
+    assert.deepEqual([l.fill, l.stroke, l.text], [l.panel, l.dim2, l.ink], 'light: the node is not on the tokens');
+    await dp.close();
+  }
+  // File links in a reply (?shell&files&editors): a path that names a file
+  // stays a link; one that names none reads as plain text and offers no
+  // menu. Right-click opens the file menu (open, the external editor, attach,
+  // copy paths and name, show in the file manager); a file the editor cannot
+  // show has no external-editor row. The title bar's editor button opens the
+  // project in the editor last chosen, its caret lists the installed ones.
+  {
+    const fp = await browser.newPage({viewport:{width:1280,height:860}});
+    fp.on('pageerror', e => errors.push(e.message));
+    await fp.goto(base + '?shell&files&editors');
+    const reply = fp.locator('.answer').last();
+    const link = (text) => reply.locator('a.fileref', {hasText: text});
+    await expect(link('src/lib/chatWidth.ts')).toBeVisible({timeout:60000});
+    await expect(link('docs/old-width.md')).toHaveClass(/dead/);
+    await expect(link('src/lib/chatWidth.ts')).not.toHaveClass(/dead/);
+    await expect(link('build/aogiri.dmg')).not.toHaveClass(/dead/);
+    assert.equal(await link('docs/old-width.md').evaluate((a) => getComputedStyle(a).textDecorationLine), 'none');
+    // The roots the reply's paths are looked for in: the project first.
+    const resolved = await fp.evaluate(() => window.__calls.find((c) => c.command === 'resolve_file_ref')?.args);
+    assert.equal(resolved.roots[0], '/Users/me/code/lynshen-desktop');
+    const reveal = await fp.evaluate(() => /Macintosh|Mac OS X/.test(navigator.userAgent) ? '在访达中显示' : /Windows/.test(navigator.userAgent) ? '在资源管理器中显示' : '在文件管理器中显示');
+    // The menu of a text file, at the pointer.
+    await link('src/lib/chatWidth.ts').click({button: 'right'});
+    const menu = fp.locator('.file-menu .pm');
+    await expect(menu.getByRole('menuitem')).toHaveText(['打开', '在 VS Code 中打开', '添加为附件', '复制绝对路径', '复制相对路径', '复制文件名', reveal]);
+    // The app's own text menu stays out.
+    await expect(fp.locator('.ctx')).toHaveCount(0);
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await menu.getByRole('menuitem', {name: '在 VS Code 中打开'}).click();
+    await expect(menu).toHaveCount(0);
+    const opened = await fp.evaluate(() => window.__calls.find((c) => c.command === 'open_in_editor')?.args);
+    assert.deepEqual(opened, {id: 'vscode', path: '/Users/me/code/lynshen-desktop/src/lib/chatWidth.ts', line: 12, col: null, root: '/Users/me/code/lynshen-desktop'});
+    // Copy the relative path.
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await link('src/lib/chatWidth.ts').click({button: 'right'});
+    await menu.getByRole('menuitem', {name: '复制相对路径'}).click();
+    await expect.poll(() => fp.evaluate(() => window.__calls.filter((c) => c.command === 'plugin:clipboard-manager|write_text').map((c) => c.args.text))).toEqual(['src/lib/chatWidth.ts']);
+    // A file the editor cannot show: no external editor; 打开 shows it in the file manager.
+    await link('build/aogiri.dmg').click({button: 'right'});
+    await expect(menu.getByRole('menuitem')).toHaveText(['打开', '添加为附件', '复制绝对路径', '复制相对路径', '复制文件名', reveal]);
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await menu.getByRole('menuitem', {name: '打开'}).click();
+    await expect.poll(() => fp.evaluate(() => window.__calls.some((c) => c.command === 'plugin:opener|reveal_item_in_dir'))).toBe(true);
+    // A path that names no file: a click opens nothing, a right-click has no file menu.
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await link('docs/old-width.md').click();
+    await link('docs/old-width.md').click({button: 'right'});
+    await expect(menu).toHaveCount(0);
+    assert.equal(await fp.evaluate(() => window.__calls.filter((c) => c.command === 'read_text' || c.command === 'open_in_editor').length), 0);
+    await fp.keyboard.press('Escape');
+    // The title bar: the editor button and its caret.
+    const button = fp.getByRole('button', {name: '在 VS Code 中打开'});
+    await expect(button).toBeVisible();
+    const box = await button.boundingBox();
+    assert.equal(Math.round(box.height), 28);
+    await fp.getByRole('button', {name: '选择编辑器'}).click();
+    const pick = fp.locator('.oie .pm');
+    await expect(pick.locator('.pop-label')).toHaveText(['VS Code', 'Zed', 'Xcode']);
+    await expect(pick.getByRole('menuitemradio', {name: 'VS Code'})).toHaveAttribute('aria-checked', 'true');
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await pick.getByRole('menuitemradio', {name: 'Zed'}).click();
+    assert.deepEqual(await fp.evaluate(() => window.__calls.find((c) => c.command === 'open_in_editor')?.args), {id: 'zed', path: '/Users/me/code/lynshen-desktop', line: null, col: null, root: null});
+    // Zed is the one a click opens now, here and in the file menu.
+    await expect(fp.getByRole('button', {name: '在 Zed 中打开'})).toBeVisible();
+    await link('src/lib/ChatPane.svelte').click({button: 'right'});
+    await expect(menu.getByRole('menuitem', {name: '在 Zed 中打开'})).toBeVisible();
+    await fp.keyboard.press('Escape');
+    // Without an editor installed, no button and no menu row.
+    await fp.goto(base + '?shell&files');
+    await expect(link('src/lib/chatWidth.ts')).toBeVisible({timeout:60000});
+    await expect(link('docs/old-width.md')).toHaveClass(/dead/);
+    await link('src/lib/chatWidth.ts').click({button: 'right'});
+    await expect(menu.getByRole('menuitem')).toHaveText(['打开', '添加为附件', '复制绝对路径', '复制相对路径', '复制文件名', reveal]);
+    await expect(fp.locator('.oie')).toHaveCount(0);
+    await fp.close();
+  }
+  // Output speed (?shell): a turn whose output streamed for 2 s in two
+  // requests (a tool run and the wait for the first token between them do
+  // not count) shows its output tokens over that time, when the figure is
+  // chosen in Settings → 通用 → 回复统计 (off by default); the preview there
+  // shows it too.
+  {
+    const sp = await browser.newPage({viewport:{width:1280,height:860}});
+    sp.on('pageerror', e => errors.push(e.message));
+    await sp.addInitScript(() => localStorage.setItem('lynshen-prefs', JSON.stringify({version: 3, turnStats: ['elapsed', 'tokens', 'tps']})));
+    await sp.goto(base + '?shell');
+    await expect(sp.locator('.answer').last()).toBeVisible({timeout:60000});
+    await sp.clock.install({time: 1_000_000});
+    const step = async (ms, ev) => { await sp.clock.setFixedTime(1_000_000 + ms); await sp.evaluate((ev) => window.__shellChat.handle(ev), ev); };
+    await step(0, {type: 'user_message', content: '再把列宽的规则写进 design.md。'});
+    await step(0, {type: 'status', message: 'streaming'});
+    await step(0, {type: 'connecting'});
+    await step(600, {type: 'assistant_delta', delta: '先读一下 design.md 里列宽那一节。'});
+    await step(1100, {type: 'tool_start', call_id: 'tps1', name: 'read'});
+    await step(4000, {type: 'tool_output', call_id: 'tps1', name: 'read', output: 'x'});
+    await step(4200, {type: 'connecting'});
+    await step(5000, {type: 'assistant_delta', delta: '已写进 design.md 的「对话列」一节：默认自适应，标准 844px，铺满时减去两侧留白。'});
+    await step(6500, {type: 'usage', input_tokens: 12000, output_tokens: 400});
+    await step(6500, {type: 'status', message: 'ready'});
+    const foot = sp.locator('.answer').last().locator('.foot');
+    // 400 tokens over 0.5 s + 1.5 s of streaming.
+    await expect(foot.locator('.stat', {hasText: 'tok/s'})).toHaveText('200.0 tok/s');
+    await expect(foot.locator('.stat', {hasText: 'tok/s'})).toHaveAttribute('title', /输出速度/);
+    await expect(foot.locator('.stat').first()).toHaveText('6.5s');
+    assert.equal(await sp.evaluate(() => window.__shellChat.messages.filter((m) => m.kind === 'assistant').at(-1).turn.genMs), 2000);
+    // Settings: the figure's checkbox, and the preview.
+    await sp.goto(base + '?shell&settings=general');
+    const row = sp.locator('#set-turn-stats');
+    await expect(row.getByRole('checkbox', {name: '输出速度'})).toBeChecked({timeout:60000});
+    await expect(sp.locator('.sp-stat', {hasText: 'tok/s'})).toHaveText('51.2 tok/s');
+    await row.locator('label.cb', {hasText: '输出速度'}).click();
+    await expect(sp.locator('.sp-stat', {hasText: 'tok/s'})).toHaveCount(0);
+    await sp.close();
+    // Off by default.
+    const dp = await browser.newPage({viewport:{width:1280,height:860}});
+    dp.on('pageerror', e => errors.push(e.message));
+    await dp.goto(base + '?shell&settings=general');
+    await expect(dp.locator('#set-turn-stats').getByRole('checkbox', {name: '输出速度'})).not.toBeChecked({timeout:60000});
+    await dp.close();
+  }
+  // Fonts (Settings → 通用): the interface, conversation and code faces.
+  // A choice applies at once and is kept; the conversation follows the
+  // interface unless set; a font not installed here is not listed.
+  {
+    const fp = await browser.newPage({viewport:{width:1280,height:860}});
+    fp.on('pageerror', e => errors.push(e.message));
+    await fp.goto(base + '?shell&settings=general');
+    const ui = fp.locator('#set-ui-font');
+    await expect(ui).toBeVisible({timeout:60000});
+    await expect(fp.locator('#set-chat-font .trigger')).toHaveText('跟随界面字体');
+    await expect(fp.locator('#set-code-font .trigger')).toHaveText('默认');
+    await ui.locator('.trigger').click();
+    const rows = fp.locator('#set-ui-font .menu .opt');
+    await expect(rows.first()).toHaveText('默认');
+    const labels = (await rows.allTextContents()).map((l) => l.trim());
+    assert.ok(labels.includes('Inter'), labels.join());
+    // Not installed on the test machine: not offered.
+    assert.ok(!labels.includes('HarmonyOS Sans SC'), labels.join());
+    await fp.locator('#set-ui-font .menu .opt', {hasText: /^\s*Inter\s*$/}).click();
+    const vars = () => fp.evaluate(() => { const s = getComputedStyle(document.documentElement); return {ui: s.getPropertyValue('--font-sans').trim(), chat: getComputedStyle(document.body).getPropertyValue('--font-chat').trim()}; });
+    assert.match((await vars()).ui, /^'Inter Variable'/);
+    assert.equal(await fp.evaluate(() => JSON.parse(localStorage.getItem('lynshen-prefs')).uiFont), 'inter');
+    await fp.locator('#set-code-font .trigger').click();
+    await fp.locator('#set-code-font .menu .opt', {hasText: '系统等宽字体'}).click();
+    assert.match(await fp.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim()), /^ui-monospace/);
+    // Kept across a reload; back to the default removes the override.
+    await fp.reload();
+    await expect(fp.locator('#set-ui-font .trigger')).toHaveText('Inter', {timeout:60000});
+    assert.match((await vars()).ui, /^'Inter Variable'/);
+    await fp.locator('#set-ui-font .trigger').click();
+    await fp.locator('#set-ui-font .menu .opt').first().click();
+    assert.equal(await fp.evaluate(() => document.documentElement.style.getPropertyValue('--font-sans')), '');
+    assert.match((await vars()).ui, /^-apple-system/);
+    await fp.close();
+  }
+  // Sounds (Settings → 通用 → 提示音): on by default; the two buttons play
+  // the done and the alert sound; the switch turns them off and is kept.
+  {
+    const sp = await browser.newPage({viewport:{width:1280,height:860}});
+    sp.on('pageerror', e => errors.push(e.message));
+    await sp.addInitScript(() => {
+      window.__played = [];
+      const Real = window.AudioContext;
+      window.AudioContext = class extends Real {
+        createBufferSource() {
+          const src = super.createBufferSource();
+          const start = src.start.bind(src);
+          src.start = (...a) => { window.__played.push(src.buffer.duration); return start(...a); };
+          return src;
+        }
+      };
+    });
+    await sp.goto(base + '?shell&settings=general');
+    const row = sp.locator('#set-sounds');
+    await expect(row.getByRole('switch', {name: '提示音'})).toBeChecked({timeout:60000});
+    await row.getByRole('button', {name: '试听完成'}).click();
+    await row.getByRole('button', {name: '试听提醒'}).click();
+    await expect.poll(() => sp.evaluate(() => window.__played.length)).toBe(2);
+    const [a, b] = await sp.evaluate(() => window.__played);
+    assert.ok(a > 0.25 && a < 0.6 && b > 0.25 && b < 0.6, `${a} ${b}`);
+    await row.getByRole('switch', {name: '提示音'}).click();
+    await expect(row.getByRole('switch', {name: '提示音'})).not.toBeChecked();
+    assert.equal(await sp.evaluate(() => JSON.parse(localStorage.getItem('lynshen-prefs')).sounds), false);
+    await sp.close();
+  }
+  // Interface zoom (?shell): a step sets --ui-zoom and is kept (the fixture
+  // has no webview, so the page zoom is set by hand as the webview would);
+  // the title bar keeps its own size, and its title still starts at the
+  // canvas's left edge.
+  {
+    const zp = await browser.newPage({viewport:{width:1280,height:800}});
+    zp.on('pageerror', e => errors.push(e.message));
+    await zp.goto(base + '?shell');
+    await expect(zp.locator('.titlebar')).toBeVisible({timeout:60000});
+    const edges = () => zp.evaluate(() => {
+      const t = document.querySelector('.titlebar').getBoundingClientRect();
+      const title = document.querySelector('.titlebar .title').getBoundingClientRect();
+      const nav = document.querySelector('aside').getBoundingClientRect();
+      return {barH: t.height, barW: t.width, title: title.left, canvas: nav.right, vw: window.innerWidth};
+    });
+    const before = await edges();
+    for (let i = 0; i < 3; i++) await zp.evaluate(() => window.__prefs.stepZoom(1));
+    assert.equal(await zp.evaluate(() => window.__prefs.zoom), 1.5);
+    assert.equal(await zp.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom')), '1.5');
+    assert.equal(await zp.evaluate(() => JSON.parse(localStorage.getItem('lynshen-prefs')).zoom), 1.5);
+    await zp.evaluate(() => (document.documentElement.style.zoom = '1.5'));
+    await zp.waitForTimeout(400);
+    const after = await edges();
+    // (Chromium gives these rects in unzoomed pixels.) The bar keeps its
+    // height and the window's width; the navigator grows 1.5×, and the
+    // title still starts where the canvas does.
+    assert.ok(Math.abs(after.barH - before.barH) < 1 && Math.abs(after.barW - before.barW) < 1, JSON.stringify({before, after}));
+    assert.ok(Math.abs(after.canvas - before.canvas * 1.5) < 2, JSON.stringify({before, after}));
+    assert.ok(Math.abs(after.title - after.canvas) < 2, JSON.stringify({before, after}));
+    await zp.evaluate(() => (document.documentElement.style.zoom = ''));
+    await zp.evaluate(() => window.__prefs.stepZoom(-1));
+    assert.equal(await zp.evaluate(() => window.__prefs.zoom), 1.25);
+    await zp.evaluate(() => window.__prefs.stepZoom(0));
+    assert.equal(await zp.evaluate(() => window.__prefs.zoom), 1);
+    await zp.reload();
+    await expect.poll(() => zp.evaluate(() => window.__prefs?.zoom), {timeout: 60000}).toBe(1);
+    await zp.close();
+  }
+  // Smooth wheel (macOS): a mouse wheel's notch handed over by the app
+  // (wheel.rs → window.__lynshenWheel) is first a wheel event, then a
+  // glide of the scroller under the pointer by the same distance; a
+  // handler that cancels the wheel keeps it; reduced motion steps.
+  {
+    for (const reduced of [false, true]) {
+      const ctx = await browser.newContext({viewport:{width:1280,height:800}, reducedMotion: reduced ? 'reduce' : 'no-preference'});
+      const wp = await ctx.newPage();
+      wp.on('pageerror', e => errors.push(e.message));
+      await wp.goto(base + '?shell');
+      await expect(wp.locator('.chatpane main')).toBeVisible({timeout:60000});
+      await wp.evaluate(async () => { const { installSmoothWheel } = await import('/src/lib/smoothWheel.ts'); installSmoothWheel(() => 1); });
+      assert.ok(await wp.evaluate(() => window.__calls.some((c) => c.command === 'smooth_wheel_ready' && c.args.ready === true)));
+      const main = wp.locator('.chatpane main');
+      await main.evaluate((m) => (m.scrollTop = 0));
+      const box = await main.boundingBox();
+      const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+      await wp.evaluate(() => { window.__wheels = []; document.addEventListener('wheel', (e) => window.__wheels.push(e.deltaY), {capture: true}); });
+      const top = () => main.evaluate((m) => m.scrollTop);
+      await wp.evaluate(([x, y]) => window.__lynshenWheel(x, y, 0, 120), [x, y]);
+      assert.deepEqual(await wp.evaluate(() => window.__wheels), [120]);
+      if (reduced) assert.equal(await top(), 120);
+      else {
+        const early = await top();
+        assert.ok(early < 120, `moved ${early} at once`);
+        await expect.poll(top, {timeout: 2000}).toBe(120);
+      }
+      // A handler that cancels the wheel keeps it.
+      await wp.evaluate(() => document.querySelector('.chatpane main').addEventListener('wheel', (e) => e.preventDefault(), {once: true}));
+      await wp.evaluate(([x, y]) => window.__lynshenWheel(x, y, 0, 120), [x, y]);
+      await wp.waitForTimeout(400);
+      assert.equal(await top(), 120);
+      await ctx.close();
+    }
+  }
+  // A canvas tab's right-click (?shell&preview&tabmenu: two previews in a
+  // leaf beside the conversation): 关闭其他 closes the
+  // other tabs of its group and keeps it in front; 关闭全部 closes the group.
+  {
+    const tp = await browser.newPage({viewport:{width:1440,height:900}});
+    tp.on('pageerror', e => errors.push(e.message));
+    await tp.goto(base + '?shell&preview&tabmenu');
+    const chip = tp.locator('button.ufile', {hasText: 'chatWidth.ts'});
+    await expect(chip).toBeVisible({timeout:60000});
+    await chip.click();
+    await expect(tp.locator('.ltab', {hasText: 'chatWidth.ts'})).toHaveCount(1);
+    await tp.locator('button.ufile', {hasText: '私聊_墨竹.jsonl'}).click();
+    await expect(tp.locator('.ltab', {hasText: '私聊_墨竹.jsonl'})).toHaveCount(1);
+    const sideLeaf = tp.locator('[data-leaf]').filter({has: tp.locator('.ltab', {hasText: 'chatWidth.ts'})});
+    const sideTabs = sideLeaf.locator('.ltab');
+    const n = await sideTabs.count();
+    assert.ok(n >= 2, `side tabs ${n}`);
+    await sideTabs.filter({hasText: 'chatWidth.ts'}).click({button: 'right'});
+    const ctx = tp.locator('.ctx .pm');
+    await expect(ctx.getByRole('menuitem')).toHaveText(['关闭其他', '关闭全部']);
+    await ctx.getByRole('menuitem', {name: '关闭其他'}).click();
+    await expect(sideTabs).toHaveCount(1);
+    await expect(sideTabs.first()).toContainText('chatWidth.ts');
+    // The chat's leaf is untouched.
+    await expect(tp.locator('.chatpane')).toBeVisible();
+    // Alone in its group: only 关闭全部.
+    await sideTabs.first().click({button: 'right'});
+    await expect(ctx.getByRole('menuitem')).toHaveText(['关闭全部']);
+    await ctx.getByRole('menuitem', {name: '关闭全部'}).click();
+    await expect(tp.locator('.ltab', {hasText: 'chatWidth.ts'})).toHaveCount(0);
+    await expect(tp.locator('.chatpane')).toBeVisible();
+    await tp.close();
+  }
   assert.deepEqual(errors, []);
-  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported.');
+  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部.');
 } finally { await browser.close(); await server.close(); }

@@ -317,6 +317,29 @@ Object.assign(window, {
         case 'read_text': return String(args.path).endsWith('.md') ? '# 交接说明\n\n- 第一条\n- 第二条\n\n一段很长的说明文字，'.padEnd(400, '长') + '\n\n```ts\nconst x = 1;\n```\n' : '';
         case 'stat_text': return {mtime_ms: 1, size: 10};
         case 'plugin:opener|reveal_item_in_dir': return null;
+        // A file a reply names (?shell&files): the files the fixture project
+        // has, under the first root that has them; anything else is missing.
+        case 'resolve_file_ref': {
+          const files: Record<string, boolean> = {
+            '/Users/me/code/lynshen-desktop/src/lib/chatWidth.ts': true,
+            '/Users/me/code/lynshen-desktop/src/lib/ChatPane.svelte': true,
+            '/Users/me/code/lynshen-desktop/build/aogiri.dmg': false
+          };
+          const rel = String(args.rel);
+          for (const root of [...(args.roots ?? []), '']) {
+            const path = rel.startsWith('/') ? rel : `${root}/${rel.replace(/^\.\//, '')}`;
+            if (path in files) return {path, text: files[path]};
+          }
+          return null;
+        }
+        // The editors installed here (?editors): VS Code with its icon, Zed
+        // without one (the menu draws a generic icon), Xcode.
+        case 'list_editors': return params0.has('editors') ? [
+          {id: 'vscode', name: 'VS Code', icon: `data:image/svg+xml,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><rect width='16' height='16' rx='3' fill='#007acc'/></svg>")}`},
+          {id: 'zed', name: 'Zed', icon: null},
+          {id: 'xcode', name: 'Xcode', icon: null}
+        ] : [];
+        case 'open_in_editor': return null;
         // A Claude Code / Codex conversation carried to LynShen (ticket #40).
         case 'continue_on_lynshen_cmd': return {id: 's19a0b1c2d3e4f5a6', title: '对话宽度跟随窗口', cwd: args.cwd, turns: 12};
         default: return null;

@@ -869,7 +869,8 @@ describe('reply timing', () => {
 			const [a, b] = c.messages.filter((m) => m.kind === 'assistant') as { segMs?: number; turn?: { segments: number; elapsed: number } }[];
 			expect(a.segMs).toBe(2000);
 			expect(b.segMs).toBe(1400);
-			expect(b.turn).toMatchObject({ segments: 2, elapsed: 4000 });
+			// Output streamed 1000–2000 and 3000–4000: the waits and the tool run are not output time.
+			expect(b.turn).toMatchObject({ segments: 2, elapsed: 4000, genMs: 2000 });
 			expect(c.call).toBeNull();
 			expect(c.runMs).toBe(4000);
 		} finally {
@@ -1704,5 +1705,27 @@ describe('ChatState.pickDraftModel', () => {
 		} finally {
 			vi.unstubAllGlobals();
 		}
+	});
+});
+
+describe('subagent ends', () => {
+	it('ends a subagent the run list says ended', () => {
+		const c = new ChatState();
+		c.handle({ type: 'subagent_lifecycle', path: 'a1', label: 'Scan', status: 'running' } as never);
+		c.handle({ type: 'agent_runs', workflows: [], agents: [{ id: 'a1', state: 'running' }] } as never);
+		expect(c.subagents.a1.endedAt).toBeUndefined();
+		c.handle({ type: 'agent_runs', workflows: [], agents: [{ id: 'a1', state: 'killed' }] } as never);
+		expect(c.subagents.a1).toMatchObject({ status: 'killed' });
+		expect(c.subagents.a1.endedAt).toBeGreaterThan(0);
+	});
+
+	it("shows an ended Workflow's agents left mid-run as completed or stopped", () => {
+		const c = new ChatState();
+		c.handle({ type: 'agent_runs', workflows: [{ id: 'w1', status: 'killed', agents: [{ id: 'a1', state: 'progress' }, { id: 'a2', state: 'done' }] }], agents: [] } as never);
+		expect(c.agentRuns.workflows[0].agents.map((a) => a.state)).toEqual(['stopped', 'done']);
+		c.handle({ type: 'agent_runs', workflows: [{ id: 'w1', status: 'completed', agents: [{ id: 'a1', state: 'progress' }] }], agents: [] } as never);
+		expect(c.agentRuns.workflows[0].agents[0].state).toBe('completed');
+		c.handle({ type: 'agent_runs', workflows: [{ id: 'w1', status: 'running', agents: [{ id: 'a1', state: 'progress' }] }], agents: [] } as never);
+		expect(c.agentRuns.workflows[0].agents[0].state).toBe('progress');
 	});
 });

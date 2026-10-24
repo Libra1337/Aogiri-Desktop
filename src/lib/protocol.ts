@@ -1079,11 +1079,32 @@ export interface InstallDoneEvent {
 export function listFiles(cwd?: string): Promise<string[]> {
 	return invoke('list_files', { cwd });
 }
-/** A reply's relative path → the one file it names under `root` (maybe in a nested repo). */
-/** `rel` under the project `root`: directly, in one of the directories the
- *  reply mentioned (`hints`), or the newest match below the root. */
-export function resolveFileRef(root: string, rel: string, hints?: string[]): Promise<string | null> {
-	return invoke('resolve_file_ref', { root, rel, hints: hints ?? null });
+/** A file a reply names, found: its path as the UI opens it, and whether
+ *  the editor can show it (`text`). */
+export interface FileTarget {
+	path: string;
+	text: boolean;
+}
+/** `rel` under the first of `roots` (the session's directory, the project
+ *  root, its added directories) that has it, in one of the directories the
+ *  reply mentioned (`hints`), or the newest match below the roots. */
+export function resolveFileRef(roots: string[], rel: string, hints?: string[]): Promise<FileTarget | null> {
+	return invoke('resolve_file_ref', { roots, rel, hints: hints ?? null });
+}
+
+/** An external editor installed on this computer (editors.rs). */
+export interface EditorInfo {
+	id: string;
+	name: string;
+	/** The app's own icon as a data URL; null where none is read (Windows, Linux). */
+	icon: string | null;
+}
+export function listEditors(): Promise<EditorInfo[]> {
+	return invoke('list_editors');
+}
+/** Opens a folder, or a file at a line in the window of `root`, in the editor `id`. */
+export function openInEditor(id: string, path: string, at?: { line?: number; col?: number }, root?: string): Promise<void> {
+	return invoke('open_in_editor', { id, path, line: at?.line ?? null, col: at?.col ?? null, root: root ?? null });
 }
 
 export interface ProviderInfo {
@@ -1203,16 +1224,20 @@ export function transcribeAudio(audioBase64: string, mime?: string, language?: s
 	return invoke('transcribe_audio', { audioBase64, mime, language });
 }
 
-/** Snapshot the working tree as a dangling checkpoint commit (returns its sha).
+/** Snapshot the working tree as a checkpoint commit (returns its sha). Given
+ *  the session and the user turn it comes before, the commit is kept under
+ *  refs/lynshen/checkpoints/<session>/<turn>, so a restarted app finds it.
  *  Non-destructive: it never touches the index or working tree. */
-export function gitCheckpointCapture(cwd: string): Promise<string> {
-	return invoke('git_checkpoint_capture', { cwd });
+export function gitCheckpointCapture(cwd: string, session?: string, turn?: number): Promise<string> {
+	return invoke('git_checkpoint_capture', { cwd, session, turn });
 }
 
-/** Restore the working tree to a checkpoint sha. Snapshots the current state
- *  first (returns that recovery sha) so nothing is unrecoverable. */
-export function gitCheckpointRestore(cwd: string, checkpoint: string): Promise<string> {
-	return invoke('git_checkpoint_restore', { cwd, checkpoint });
+/** Restore the working tree to a checkpoint: the sha given (empty: none), else
+ *  the one kept for the session's turn. Snapshots the current state first
+ *  (returns that recovery sha, kept under refs/lynshen/rewind-backup/<session>)
+ *  so nothing is unrecoverable. null: no checkpoint for that turn. */
+export function gitCheckpointRestore(cwd: string, checkpoint: string, session?: string, turn?: number): Promise<string | null> {
+	return invoke('git_checkpoint_restore', { cwd, checkpoint, session, turn });
 }
 
 /** One-shot LLM completion (no agent / no chat pollution) — powers AI commit

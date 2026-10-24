@@ -31,7 +31,7 @@
 		{@const Icon = FILE_ICONS[fileKind(path)]}
 		{@const folder = folderLabel(path)}
 		{#if onOpen}
-			<button type="button" class="ufile" title={path} aria-label={t('chat.openAttachment', { name: fileName(path) })} onclick={() => onOpen(path, files)}>
+			<button type="button" class="ufile" title={path} data-file={path} aria-label={t('chat.openAttachment', { name: fileName(path) })} onclick={() => onOpen(path, files)}>
 				<Icon size={13} aria-hidden="true" /><span class="uname">{fileName(path)}</span>{#if folder}<span class="udir">{folder}</span>{/if}
 			</button>
 		{:else}

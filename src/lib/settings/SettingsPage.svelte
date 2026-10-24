@@ -94,6 +94,8 @@
 	import TextField from '$lib/ui/TextField.svelte';
 	import { RETRY_ATTEMPTS_MAX, retryAttemptsSetting } from '$lib/retryView';
 	import Select from '$lib/ui/Select.svelte';
+	import { offeredFonts, type FontChoice, type FontSlot } from '$lib/fonts';
+	import { playChime } from '$lib/chime';
 	import ModelPicker from '$lib/models/ModelPicker.svelte';
 	import { itemsFromOptions } from '$lib/models/items';
 	import { gatewayCatalog } from '$lib/models/catalogStore.svelte';
@@ -205,6 +207,7 @@
 	const SAMPLE_TURN: TurnStats = {
 		elapsed: 48300,
 		ttft: 1200,
+		genMs: 41000,
 		segments: 2,
 		inTokens: 18400,
 		outTokens: 2100,
@@ -216,6 +219,13 @@
 		model: 'claude-sonnet-5-5'
 	};
 	const previewParts = $derived(turnParts(SAMPLE_TURN, prefs.turnStats));
+	const fontLabel = (slot: FontSlot, c: FontChoice) =>
+		c.family ?? (c.id === 'system' ? t('settings.behavior.fontSystem') : t(slot === 'chat' ? 'settings.behavior.fontFollowUi' : 'settings.behavior.fontDefault'));
+	const FONT_ROWS = [
+		['ui', 'ui-font', 'uiFont'],
+		['chat', 'chat-font', 'chatFont'],
+		['code', 'code-font', 'codeFont']
+	] as const;
 
 	// Launch at login needs the desktop app (a browser has no login item).
 	const inApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -1058,6 +1068,15 @@
 								onChange={(v) => prefs.setOpenElsewhere(v === 'tab' ? 'tab' : 'side')}
 							/>
 						</SettingsRow>
+						{#each FONT_ROWS as [slot, id, key] (slot)}
+							<SettingsRow {id} title={t(`settings.behavior.${key}`)} description={t(`settings.behavior.${key}Hint`)}>
+								<Select
+									value={prefs[key]}
+									options={offeredFonts(slot, prefs[key]).map((c) => ({ value: c.id, label: fontLabel(slot, c) }))}
+									onChange={(v) => prefs.setFont(slot, v)}
+								/>
+							</SettingsRow>
+						{/each}
 						<SettingsRow id="terminal-font" title={t('settings.behavior.terminalFont')}>
 							<div class="w-md"><TextField mono placeholder="MesloLGS NF" bind:value={() => prefs.terminalFont, (v) => prefs.setTerminalFont(String(v ?? ''))} /></div>
 						</SettingsRow>
@@ -1113,6 +1132,13 @@
 						</SettingsRow>
 						<SettingsRow id="cache-miss" title={t('settings.behavior.cacheMissAlert')} description={t('settings.behavior.cacheMissAlertHint')}>
 							<Switch checked={prefs.cacheMissAlert} label={t('settings.behavior.cacheMissAlert')} onChange={(on) => prefs.setCacheMissAlert(on)} />
+						</SettingsRow>
+						<SettingsRow id="sounds" title={t('settings.behavior.sounds')} description={t('settings.behavior.soundsHint')}>
+							<div class="sound-acts">
+								<Button size="sm" variant="ghost" onclick={() => playChime('done')}>{t('settings.behavior.soundsDone')}</Button>
+								<Button size="sm" variant="ghost" onclick={() => playChime('attention')}>{t('settings.behavior.soundsAttention')}</Button>
+								<Switch checked={prefs.sounds} label={t('settings.behavior.sounds')} onChange={(on) => prefs.setFlag('sounds', on)} />
+							</div>
 						</SettingsRow>
 						<SettingsRow id="html-open" title={t('settings.behavior.htmlOpen')}>
 							<Segmented
@@ -1553,6 +1579,11 @@
 {/if}
 
 <style>
+	.sound-acts {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
 	.stat-preview {
 		position: relative;
 		padding: 16px 18px 14px;

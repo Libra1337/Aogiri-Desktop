@@ -15,6 +15,10 @@ export const fmtDur = (ms: number) =>
  *  reply footer shows as a change pill. */
 export type TurnPart = { text: string; title: string; mono?: boolean; change?: { files: number; added: number; removed: number } };
 
+/** Output speed needs this much streaming time: a reply that arrives in one
+ *  burst would give a figure in the thousands. */
+export const TPS_MIN_MS = 1000;
+
 /** The chosen turn figures, in footer order; shared by the reply footer and its settings preview. */
 export function turnParts(s: TurnStats, keys: readonly TurnStatKey[]): TurnPart[] {
 	const out: TurnPart[] = [];
@@ -26,6 +30,8 @@ export function turnParts(s: TurnStats, keys: readonly TurnStatKey[]): TurnPart[
 			out.push({ text: t('chat.stat.ttftShort', { t: fmtDur(s.ttft) }), title: t('chat.stat.ttft') });
 		else if (k === 'tokens' && (s.inTokens || s.outTokens))
 			out.push({ text: `↑${fmtTokens(s.inTokens)} ↓${fmtTokens(s.outTokens)}`, title: t('chat.stat.tokens'), mono: true });
+		else if (k === 'tps' && s.genMs && s.genMs >= TPS_MIN_MS && s.outTokens)
+			out.push({ text: t('chat.stat.tpsShort', { n: (s.outTokens / (s.genMs / 1000)).toFixed(1) }), title: t('chat.stat.tps'), mono: true });
 		else if (k === 'files' && s.files)
 			out.push({ text: t('chat.stat.filesShort', { n: s.files, a: s.added, r: s.removed }), title: t('chat.stat.files'), change: { files: s.files, added: s.added, removed: s.removed } });
 		else if (k === 'tools' && s.tools) out.push({ text: t('chat.stat.toolsShort', { n: s.tools }), title: t('chat.stat.tools') });

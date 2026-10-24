@@ -58,6 +58,9 @@ export interface TurnStats {
 	elapsed: number;
 	/** Time to the first streamed output, ms. */
 	ttft?: number;
+	/** Time output was streaming, summed over the turn's requests (no waits
+	 *  for the first token, no tool runs), ms. */
+	genMs?: number;
 	inTokens: number;
 	outTokens: number;
 	files: number;
@@ -1173,6 +1176,10 @@ export class ChatState {
 	// send state is still shown.
 	#sending: Extract<Msg, { kind: 'user' }> | null = null;
 	#firstOutput: number | null = null;
+	// When the current request's output began streaming, and the turn's
+	// streaming time so far.
+	#genStart: number | null = null;
+	#genMs = 0;
 	#turnIn = 0;
 	#turnOut = 0;
 	#turnTools = 0;
@@ -1310,6 +1317,7 @@ export class ChatState {
 		const turn: TurnStats = {
 			elapsed,
 			...(this.#firstOutput !== null ? { ttft: this.#firstOutput - this.#turnStart } : {}),
+			...(this.#genMs > 0 ? { genMs: this.#genMs } : {}),
 			inTokens: this.#turnIn,
 			outTokens: this.#turnOut,
 			files: edits.length,
@@ -1324,6 +1332,7 @@ export class ChatState {
 		};
 		this.#turnStart = null;
 		this.#firstOutput = null;
+		this.#genMs = 0;
 		this.#turnIn = this.#turnOut = this.#turnTools = this.#turnSegments = 0;
 		this.#segStart = null;
 		for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -1360,6 +1369,7 @@ export class ChatState {
 		const now = Date.now();
 		if (this.#firstOutput === null && this.#turnStart !== null) this.#firstOutput = now;
 		if (this.call?.phase !== 'output') this.call = { phase: 'output', since: now };
+		if (this.#genStart === null && this.#turnStart !== null) this.#genStart = now;
 		this.#setSend(null);
 	}
 
@@ -1376,6 +1386,10 @@ export class ChatState {
 	/** The open reply segment ends (its tool call, a new request, the turn's
 	 *  end): stamp its own time. Text after it starts a new segment. */
 	#closeSegment(now: number) {
+		if (this.#genStart !== null) {
+			this.#genMs += now - this.#genStart;
+			this.#genStart = null;
+		}
 		const m = this.#assistantIdx >= 0 ? this.messages[this.#assistantIdx] : null;
 		if (m?.kind === 'assistant' && m.segMs === undefined && this.#segStart !== null) {
 			m.segMs = now - this.#segStart;
@@ -1423,6 +1437,8 @@ export class ChatState {
 		this.teamBudget = null;
 		this.#segStart = this.#turnStart;
 		this.#firstOutput = null;
+		this.#genStart = null;
+		this.#genMs = 0;
 		this.#turnIn = this.#turnOut = this.#turnTools = this.#turnSegments = 0;
 		this.#turnCostStart = this.cost;
 		this.#turnBillingIds = [];
@@ -2388,6 +2404,8 @@ export class ChatState {
 				const card = this.#compaction() ?? this.#pushCompaction();
 				card.state = 'failed';
 				card.error = str(ev.error);
+				// The turn carries on: only its closing status would clear "compacting".
+				if (this.engineState === 'compacting') this.engineState = 'streaming';
 				break;
 			}
 			case 'goal':
@@ -2662,9 +2680,26 @@ export class ChatState {
 						toolCalls: n(w.tool_calls),
 						phases: arr<Record<string, unknown>>(w.phases).map((p) => ({ index: n(p.index), title: str(p.title) })),
 						agents: arr<Record<string, unknown>>(w.agents).map(agentRun)
-					})),
+					})).map((run) => {
+						// A Workflow that ended leaves its agents at their last reported
+						// state (the engine updates the run only): they are not running.
+						// Completed, it ran them to the end; stopped or failed, not.
+						const end = runState(run.status);
+						if (end !== 'running')
+							for (const a of run.agents) if (['running', 'queued'].includes(runState(a.state))) a.state = end === 'done' ? 'completed' : 'stopped';
+						return run;
+					}),
 					agents: arr<Record<string, unknown>>(ev.agents).map(agentRun)
 				};
+				// The run list is the engine's own: a subagent it says ended has
+				// ended, though its lifecycle event never came (a reconnect, a
+				// restarted engine).
+				for (const a of this.agentRuns.agents) {
+					const life = this.subagents[a.id];
+					if (!life || life.endedAt || !a.state || ['running', 'queued'].includes(runState(a.state)) || AFTER_RUN.has(a.state)) continue;
+					this.subagents[a.id] = { ...life, status: a.state, endedAt: Date.now() };
+					delete this.stopRequested[a.id];
+				}
 				for (const a of arr<Record<string, unknown>>(ev.agents)) {
 					const id = str(a.id);
 					if (!id) continue;

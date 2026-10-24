@@ -127,6 +127,42 @@ describe('DaemonSync', () => {
 		expect(request).not.toHaveBeenCalled();
 	});
 
+	it('merges the list another client saved first and sends again', async () => {
+		const { sync, store, workspaces } = await setup();
+		const ws = workspaces.workspaces[0];
+		const theirs = { id: 'p2', name: 'lib', path: '/w/lib' };
+		sync.handle({ type: 'workspaces', rev: 3, workspaces: [{ id: ws.id, name: ws.name, is_default: true, projects: [{ id: 'p1', name: 'app', path: '/w/app' }] }] });
+		request.mockReset();
+		request
+			.mockImplementationOnce(() => Promise.reject('stale workspaces (rev 3, current 4)'))
+			.mockImplementationOnce(() => Promise.resolve({ type: 'workspaces', rev: 4, workspaces: [{ id: ws.id, name: ws.name, is_default: true, projects: [{ id: 'p1', name: 'app', path: '/w/app' }, theirs] }] }))
+			.mockImplementation(() => Promise.resolve({}));
+		store.projects.push({ id: 'p3', name: 'docs', path: '/w/docs', sessions: [] });
+		sync.push();
+		await flush();
+		await flush();
+		const ops = request.mock.calls.map((c) => (c[0] as { op: string }).op);
+		expect(ops.slice(0, 3)).toEqual(['workspaces_set', 'workspaces', 'workspaces_set']);
+		const resent = request.mock.calls[2][0] as { rev: number; workspaces: { projects: { path: string }[] }[] };
+		expect(resent.rev).toBe(4);
+		expect(resent.workspaces[0].projects.map((p) => p.path).sort()).toEqual(['/w/app', '/w/docs', '/w/lib']);
+	});
+
+	it('logs a refusal that is not a stale list', async () => {
+		const { sync, store, workspaces } = await setup();
+		const ws = workspaces.workspaces[0];
+		sync.handle({ type: 'workspaces', rev: 3, workspaces: [{ id: ws.id, name: ws.name, is_default: true, projects: [{ id: 'p1', name: 'app', path: '/w/app' }] }] });
+		request.mockReset();
+		request.mockImplementation(() => Promise.reject('disk full'));
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		store.projects.push({ id: 'p3', name: 'docs', path: '/w/docs', sessions: [] });
+		sync.push();
+		await flush();
+		expect(warn).toHaveBeenCalledWith('workspaces not saved to the daemon:', 'disk full');
+		expect(request).toHaveBeenCalledOnce();
+		warn.mockRestore();
+	});
+
 	it('holds a list that comes before the restore and merges it once restored, without a second copy', async () => {
 		const store = new SessionStore();
 		const workspaces = new WorkspaceStore();

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -24,6 +23,7 @@ mod claude_history;
 mod daemon_launch;
 mod device_header;
 mod device_id;
+mod editors;
 mod installer;
 mod main_window;
 mod monoize_auth;
@@ -41,6 +41,7 @@ mod shell_icons;
 mod tool_login;
 mod tool_path;
 mod tool_switch;
+mod wheel;
 mod window_state;
 
 use backend::BackendKind;
@@ -362,10 +363,6 @@ fn ensure_daemon(
     Err("lynshen daemon did not start in time".to_string())
 }
 
-/// Whether this app run already checked the daemon for staleness.
-#[cfg(unix)]
-static DAEMON_CHECKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// Why the daemon listening now should be replaced, if it should: its program
 /// was removed (an uninstall or package upgrade) or rewritten after it started
 /// (a reinstall at the same path). Either way it keeps running old code
@@ -431,33 +428,29 @@ fn parse_etime(text: &str) -> Option<std::time::Duration> {
     Some(std::time::Duration::from_secs(days * 86_400 + secs))
 }
 
-/// Replace a stale daemon (see `stale_daemon`) once per app run: SIGTERM lets
-/// it end its tool commands and exit; a fresh one starts from the current
-/// program. Hosted sessions reopen from their saved state.
+/// A development build found the daemon stale (see `stale_daemon`); the
+/// page asks it to restart once no session is running (`daemon_stale`).
+static DAEMON_STALE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Notes a stale daemon for the page. It is not ended here: SIGTERM would cut
+/// off every running turn (the Claude Code and Codex processes end with it),
+/// so it restarts once idle, as after a release update (daemonVersion.ts).
 #[cfg(unix)]
-fn replace_stale_daemon() {
-    if DAEMON_CHECKED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return;
-    }
-    // A release build compares versions with the daemon instead and lets it
-    // restart once idle (daemon.ts); this check is for development builds.
-    #[cfg(unix)]
+fn note_stale_daemon() {
+    // A release build compares versions with the daemon instead.
     if app_cli::path().is_some() {
         return;
     }
-    #[cfg(unix)]
-    if let Some((pid, reason)) = stale_daemon() {
-        eprintln!("lynshen daemon is stale ({reason}); restarting it");
-        let _ = Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .status();
-        for _ in 0..50 {
-            if !daemon_listening() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
+    if let Some((_, reason)) = stale_daemon() {
+        eprintln!("lynshen daemon is stale ({reason}); it restarts once idle");
+        DAEMON_STALE.store(true, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+/// Whether the daemon was found stale since the page last asked.
+#[tauri::command]
+fn daemon_stale() -> bool {
+    DAEMON_STALE.swap(false, std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Starts the daemon when nothing listens yet, with the phone page written
@@ -472,7 +465,7 @@ fn start_daemon(
     static STARTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _starting = STARTING.lock().unwrap_or_else(|e| e.into_inner());
     #[cfg(unix)]
-    replace_stale_daemon();
+    note_stale_daemon();
     let web = if daemon_listening() {
         None
     } else {
@@ -2531,47 +2524,102 @@ fn walk_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
 
 /// Resolves a file path a reply names: absolute, from the home directory
 /// (`~/`), or relative. Agents write relative paths from the directory they
-/// worked in, which is often below the project root (a nested repo, the
-/// folder the reply just named): try `root/rel` first, then `hint/rel` for
-/// each directory the reply mentions (`hints`, in order), then `dir/rel` for
-/// every directory up to REF_DEPTH below the root. Of several matches the
-/// most recently modified wins: the file the agent just wrote, not an older
-/// one of the same name (`index.html` in two games).
-#[tauri::command]
-fn resolve_file_ref(root: String, rel: String, hints: Option<Vec<String>>) -> Option<String> {
+/// worked in: the session's directory, the project root, one of the project's
+/// added directories (`roots`, in that order), or a folder below one of them
+/// (a nested repo, the folder the reply just named). Try `root/rel` for each
+/// root, then `hint/rel` for each directory the reply mentions (`hints`, in
+/// order), then `dir/rel` for every directory up to REF_DEPTH below the
+/// roots. Of several matches the most recently modified wins: the file the
+/// agent just wrote, not an older one of the same name (`index.html` in two
+/// games). Async: every file link in a reply is checked, and the search walks
+/// directories.
+#[tauri::command(async)]
+fn resolve_file_ref(
+    roots: Vec<String>,
+    rel: String,
+    hints: Option<Vec<String>>,
+) -> Option<FileTarget> {
     let home = rel.strip_prefix("~/").or_else(|| rel.strip_prefix("~\\"));
     let rel = match home {
         Some(rest) => backend::home_dir().join(rest),
         None => PathBuf::from(&rel),
     };
     if rel.is_absolute() {
-        return rel.is_file().then(|| ui_path(&rel));
+        return rel.is_file().then(|| FileTarget::of(&rel));
     }
-    let root = PathBuf::from(root).canonicalize().ok()?;
+    let mut canon: Vec<PathBuf> = Vec::new();
+    for root in roots
+        .iter()
+        .filter_map(|r| PathBuf::from(r).canonicalize().ok())
+    {
+        if !canon.contains(&root) {
+            canon.push(root);
+        }
+    }
+    let roots = canon;
     let rel = rel.as_path();
     let inside = |path: PathBuf| {
         path.canonicalize()
             .ok()
-            .filter(|p| p.is_file() && p.starts_with(&root))
+            .filter(|p| p.is_file() && roots.iter().any(|r| p.starts_with(r)))
     };
-    let direct = root.join(rel);
-    if direct.is_file() {
-        return Some(ui_path(&direct));
+    if let Some(direct) = roots.iter().map(|r| r.join(rel)).find(|p| p.is_file()) {
+        return Some(FileTarget::of(&direct));
     }
     for hint in hints.unwrap_or_default() {
         let dir = Path::new(hint.trim());
-        let dir = if dir.is_absolute() { dir.to_path_buf() } else { root.join(dir) };
-        if let Some(found) = inside(dir.join(rel)) {
-            return Some(ui_path(&found));
+        let dirs = if dir.is_absolute() {
+            vec![dir.to_path_buf()]
+        } else {
+            roots.iter().map(|r| r.join(dir)).collect()
+        };
+        if let Some(found) = dirs.into_iter().find_map(|d| inside(d.join(rel))) {
+            return Some(FileTarget::of(&found));
         }
     }
     let mut found = Vec::new();
-    find_ref(&root, rel, 0, &mut found);
+    for root in &roots {
+        find_ref(root, rel, 0, &mut found);
+    }
     found
         .into_iter()
         .filter_map(inside)
         .max_by_key(|path| path.metadata().and_then(|m| m.modified()).ok())
-        .map(|path| ui_path(&path))
+        .map(|path| FileTarget::of(&path))
+}
+
+/// A file a reply names, as the UI opens it.
+#[derive(Serialize, Debug, PartialEq)]
+struct FileTarget {
+    path: String,
+    /// The editor can show it: UTF-8 without NUL bytes, within MAX_TEXT_READ.
+    /// Anything else (an .apk, a PDF, a 50 MB log) is shown in the file manager.
+    text: bool,
+}
+
+impl FileTarget {
+    fn of(path: &Path) -> Self {
+        FileTarget {
+            path: ui_path(path),
+            text: looks_like_text(path),
+        }
+    }
+}
+
+fn looks_like_text(path: &Path) -> bool {
+    if std::fs::metadata(path).map_or(true, |m| m.len() > MAX_TEXT_READ) {
+        return false;
+    }
+    let mut head = [0u8; 8192];
+    let Ok(n) = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) else {
+        return false;
+    };
+    let head = &head[..n];
+    // A UTF-8 character cut at the end of the sample is still text.
+    !head.contains(&0)
+        && std::str::from_utf8(head)
+            .map(|_| true)
+            .unwrap_or_else(|e| e.error_len().is_none())
 }
 
 /// A canonical path as the UI opens it: on Windows `canonicalize` adds a
@@ -2802,6 +2850,7 @@ const GIT_SUBCOMMANDS: &[&str] = &[
     "remote",
     "merge",
     "rev-list",
+    "init",
 ];
 
 /// 需要访问网络的子命令：禁用凭据交互提示、限时执行（防止卡在等待输入上）。
@@ -2989,6 +3038,11 @@ fn validate_git_args(args: &[String]) -> Result<(), String> {
                     return Err(format!("invalid ref name: {r}"));
                 }
             }
+        }
+        // init 只在项目目录本身建仓库：不带任何参数（没有路径，没有 `--`
+        // 之后的路径，也没有 --separate-git-dir 之类）。
+        "init" if args.len() > 1 => {
+            return Err("git init takes no arguments".to_string());
         }
         // remote 只用于列出（remote -v），不放行 add/set-url 等子操作。
         "remote" if !positionals.is_empty() => {
@@ -3357,13 +3411,92 @@ fn git_plumb(dir: &Path, index: Option<&Path>, args: &[&str]) -> Result<String, 
     }
 }
 
-/// Snapshot the full working tree (tracked + untracked) as a dangling commit
-/// object, WITHOUT touching the user's index or working tree (uses an isolated
-/// temp index). Returns the commit sha — a rewind file-checkpoint. `Ok(String::new())`
-/// only if the tree is unwritable; errors bubble the git message.
+/// Where a session's rewind checkpoints are kept: one ref per turn
+/// (`refs/lynshen/checkpoints/<session>/<turn>`), so git's garbage collection
+/// keeps them and a restarted app finds them by session and turn.
+const CHECKPOINT_REFS: &str = "refs/lynshen/checkpoints";
+/// The state a rewind replaced, one ref per session.
+const REWIND_BACKUP_REFS: &str = "refs/lynshen/rewind-backup";
+/// Checkpoints and backups older than this are dropped when a new one is taken.
+const CHECKPOINT_DAYS: u64 = 30;
+
+/// A session id that can go into a ref name: ASCII letters, digits, `-` and
+/// `_`, at most 128 characters.
+fn ref_safe(session: &str) -> Result<&str, String> {
+    let ok = !session.is_empty()
+        && session.len() <= 128
+        && session
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if ok {
+        Ok(session)
+    } else {
+        Err(format!("invalid session id: {session}"))
+    }
+}
+
+/// The ref of `session`'s checkpoint taken before user turn `turn`.
+fn checkpoint_ref(session: &str, turn: u32) -> Result<String, String> {
+    Ok(format!("{CHECKPOINT_REFS}/{}/{turn}", ref_safe(session)?))
+}
+
+/// Drops the checkpoint and backup refs (of every session) whose commit is
+/// older than `CHECKPOINT_DAYS`. Best effort: a failure keeps the refs.
+fn prune_checkpoints(dir: &Path) {
+    let Ok(list) = git_plumb(
+        dir,
+        None,
+        &[
+            "for-each-ref",
+            "--format=%(refname) %(committerdate:unix)",
+            CHECKPOINT_REFS,
+            REWIND_BACKUP_REFS,
+        ],
+    ) else {
+        return;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    for line in list.lines() {
+        let Some((name, at)) = line.rsplit_once(' ') else {
+            continue;
+        };
+        let at = at.parse::<u64>().unwrap_or(now);
+        if now.saturating_sub(at) > CHECKPOINT_DAYS * 86_400 {
+            let _ = git_plumb(dir, None, &["update-ref", "-d", name]);
+        }
+    }
+}
+
+/// Snapshot the full working tree (tracked + untracked) as a commit object,
+/// WITHOUT touching the user's index or working tree (uses an isolated temp
+/// index). Returns the commit sha — a rewind file-checkpoint. Given a session
+/// and turn, the commit is also kept under that turn's ref (`checkpoint_ref`),
+/// which replaces the one a rewound turn left there. Without them, or with a
+/// session id that cannot name a ref, it stays a dangling commit, as before.
+/// Errors bubble the git message.
 #[tauri::command(async)]
-fn git_checkpoint_capture(cwd: String) -> Result<String, String> {
-    let dir = PathBuf::from(&cwd);
+fn git_checkpoint_capture(
+    cwd: String,
+    session: Option<String>,
+    turn: Option<u32>,
+) -> Result<String, String> {
+    let commit = checkpoint_commit(&cwd)?;
+    let kept = session
+        .zip(turn)
+        .and_then(|(s, t)| checkpoint_ref(&s, t).ok());
+    if let Some(name) = kept {
+        let dir = PathBuf::from(&cwd);
+        git_plumb(&dir, None, &["update-ref", &name, &commit])?;
+        prune_checkpoints(&dir);
+    }
+    Ok(commit)
+}
+
+/// The working tree as a commit (with HEAD as its parent, if any).
+fn checkpoint_commit(cwd: &str) -> Result<String, String> {
+    let dir = PathBuf::from(cwd);
     let idx = std::env::temp_dir().join(format!("lynshen-ckpt-{}.idx", std::process::id()));
     let _ = std::fs::remove_file(&idx);
     let has_head = git_plumb(&dir, None, &["rev-parse", "--verify", "HEAD"]).is_ok();
@@ -3397,24 +3530,52 @@ fn git_checkpoint_capture(cwd: String) -> Result<String, String> {
     Ok(commit)
 }
 
-/// Restore the working tree + index to a checkpoint commit. First snapshots the
-/// CURRENT state as a recovery commit (returned, so nothing is ever unrecoverable),
-/// then restores the checkpoint's paths. Files created after the checkpoint are
-/// left in place — this never deletes untracked work.
+/// Restore the working tree + index to a checkpoint: the sha given (a dangling
+/// commit this run took, or one an older version took), else the one kept for
+/// `session`'s turn `turn`. A sha whose object is gone (git gc) falls back to
+/// the ref too. First snapshots the CURRENT state as a recovery commit
+/// (returned, and kept under `refs/lynshen/rewind-backup/<session>` given a
+/// session), then restores the checkpoint's paths. Files created after the
+/// checkpoint are left in place — this never deletes untracked work.
+/// `Ok(None)`: no checkpoint for that turn; nothing was changed.
 #[tauri::command(async)]
-fn git_checkpoint_restore(cwd: String, checkpoint: String) -> Result<String, String> {
-    if checkpoint.len() < 7
-        || checkpoint.len() > 64
-        || !checkpoint.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        return Err(format!("invalid checkpoint sha: {checkpoint}"));
-    }
+fn git_checkpoint_restore(
+    cwd: String,
+    checkpoint: String,
+    session: Option<String>,
+    turn: Option<u32>,
+) -> Result<Option<String>, String> {
     let dir = PathBuf::from(&cwd);
-    git_plumb(&dir, None, &["cat-file", "-e", &checkpoint])
-        .map_err(|_| format!("checkpoint object not found: {checkpoint}"))?;
-    let safety = git_checkpoint_capture(cwd.clone())?;
-    git_plumb(&dir, None, &["checkout", &checkpoint, "--", "."])?;
-    Ok(safety)
+    let given = if checkpoint.is_empty() {
+        None
+    } else {
+        if checkpoint.len() < 7
+            || checkpoint.len() > 64
+            || !checkpoint.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(format!("invalid checkpoint sha: {checkpoint}"));
+        }
+        let found = git_plumb(&dir, None, &["cat-file", "-e", &checkpoint]).is_ok();
+        found.then_some(checkpoint)
+    };
+    // A session id that cannot name a ref has no kept checkpoint or backup.
+    let session = session.as_deref().and_then(|s| ref_safe(s).ok());
+    let kept = || {
+        let name = checkpoint_ref(session?, turn?).ok()?;
+        git_plumb(&dir, None, &["rev-parse", "--verify", "--quiet", &name])
+            .ok()
+            .filter(|sha| !sha.is_empty())
+    };
+    let Some(target) = given.or_else(kept) else {
+        return Ok(None);
+    };
+    let safety = checkpoint_commit(&cwd)?;
+    if let Some(session) = session {
+        let name = format!("{REWIND_BACKUP_REFS}/{session}");
+        git_plumb(&dir, None, &["update-ref", &name, &safety])?;
+    }
+    git_plumb(&dir, None, &["checkout", &target, "--", "."])?;
+    Ok(Some(safety))
 }
 
 // --- terminal (real PTY) ---
@@ -3423,8 +3584,6 @@ struct Pty {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
-    /// Set by `pty_close` to tell the reader thread to stop before the child is killed.
-    stop: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -3607,24 +3766,24 @@ fn pty_open(
         if let Some(path) = shell_env::child_path(shell_env::snapshot_path().map(Into::into)) {
             cmd.env("PATH", path);
         }
-        cmd.env("TERM", "xterm-256color");
     }
+    // An app opened from Finder has no TERM: the shell and everything run in
+    // it (Claude Code) would take the terminal for one without colours.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    let stop = Arc::new(AtomicBool::new(false));
     let handle = app.clone();
     let stream_id = id.clone();
-    let reader_stop = stop.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        // Reads until every process on the terminal has closed it, also after
+        // pty_close: see there.
         loop {
-            if reader_stop.load(Ordering::Relaxed) {
-                break;
-            }
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
@@ -3651,7 +3810,6 @@ fn pty_open(
                 writer: Mutex::new(writer),
                 master: Mutex::new(pair.master),
                 child: Mutex::new(child),
-                stop,
             }),
         );
     Ok(())
@@ -3705,13 +3863,17 @@ fn pty_close(id: String, ptys: tauri::State<Ptys>) -> Result<(), String> {
         .map_err(|e| format!("lock poisoned: {e}"))?
         .remove(&id);
     if let Some(pty) = removed {
-        // Stop the reader thread before killing so it doesn't spin on a dead fd.
-        pty.stop.store(true, Ordering::Relaxed);
-        if let Ok(mut child) = pty.child.lock() {
-            let _ = child.kill();
-            // Reap the process so it doesn't linger as a zombie.
-            let _ = child.wait();
-        }
+        // Off the main thread, with the reader still draining the terminal: a
+        // shell exits only once its output is read, so with a TUI writing
+        // (Claude Code redrawing on SIGHUP) and nobody reading, `wait` never
+        // returned and the window froze.
+        std::thread::spawn(move || {
+            if let Ok(mut child) = pty.child.lock() {
+                let _ = child.kill();
+                // Reap the process so it doesn't linger as a zombie.
+                let _ = child.wait();
+            }
+        });
     }
     Ok(())
 }
@@ -3874,6 +4036,11 @@ pub fn run() {
             #[cfg(not(desktop))]
             let silent = false;
             main_window::create(app, silent)?;
+            // A mouse wheel's notches glide instead of stepping (wheel.rs).
+            #[cfg(target_os = "macos")]
+            if let Some(win) = app.get_webview_window("main") {
+                wheel::install(&win);
+            }
             #[cfg(all(debug_assertions, target_os = "macos"))]
             set_dev_dock_icon();
             // 异步捕获登录 shell 环境快照（不阻塞启动；见 shell_env.rs）。
@@ -3900,6 +4067,14 @@ pub fn run() {
         // 关闭主窗口时隐藏到托盘而不是退出（macOS/Windows/Linux 一致），
         // 真正退出通过托盘菜单「退出」。窗口的大小和位置在隐藏时写盘，拖动或
         // 缩放停下约一秒后也写盘（window_state.rs）。
+        // A page loading has no wheel handler until smoothWheel.ts sets it again.
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Started
+            {
+                wheel::page_loading();
+            }
+        })
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
@@ -3993,6 +4168,9 @@ pub fn run() {
             generate_text,
             git_checkpoint_capture,
             git_checkpoint_restore,
+            editors::list_editors,
+            editors::open_in_editor,
+            wheel::smooth_wheel_ready,
             project_root,
             chats_dir,
             default_workspace_dir,
@@ -4024,6 +4202,7 @@ pub fn run() {
             about_app,
             open_logs_folder,
             app_cli::replace_daemon,
+            daemon_stale,
             #[cfg(desktop)]
             app_update::update_check,
             #[cfg(desktop)]
@@ -4084,7 +4263,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{background_ext, read_json_strict, resolve_file_ref, ui_path, valid_app_data_name};
+    use super::{
+        background_ext, read_json_strict, resolve_file_ref, ui_path, valid_app_data_name,
+        FileTarget,
+    };
     use std::path::Path;
 
     #[test]
@@ -4155,35 +4337,48 @@ mod tests {
         assert_eq!(ui_path(Path::new("/Users/me/a.ts")), "/Users/me/a.ts");
     }
 
+    /// `resolve_file_ref`'s path only.
+    fn resolved(roots: &[&str], rel: &str, hints: Option<Vec<String>>) -> Option<String> {
+        let roots = roots.iter().map(|r| r.to_string()).collect();
+        resolve_file_ref(roots, rel.into(), hints).map(|t| t.path)
+    }
+
     #[test]
     fn resolve_file_ref_follows_the_reply_then_the_newest_match() {
         let root = std::env::temp_dir().join(format!("lynshen-ref-new-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
-        for (p, secs) in [("minecraft/index.html", 2_000_000_000), ("starcore/index.html", 1_000_000_000)] {
+        for (p, secs) in [
+            ("minecraft/index.html", 2_000_000_000),
+            ("starcore/index.html", 1_000_000_000),
+        ] {
             let f = root.join(p);
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
-            std::fs::File::create(&f).unwrap().set_modified(at(secs)).unwrap();
+            std::fs::File::create(&f)
+                .unwrap()
+                .set_modified(at(secs))
+                .unwrap();
         }
         let r = root.display().to_string();
+        let r = r.as_str();
         let canon = root.canonicalize().unwrap();
         // The reply named the folder: its file, though another is newer.
         let hinted = vec![canon.join("starcore/").display().to_string()];
         assert_eq!(
-            resolve_file_ref(r.clone(), "index.html".into(), Some(hinted)),
+            resolved(&[r], "index.html", Some(hinted)),
             Some(ui_path(&canon.join("starcore/index.html")))
         );
         assert_eq!(
-            resolve_file_ref(r.clone(), "index.html".into(), Some(vec!["starcore".into()])),
+            resolved(&[r], "index.html", Some(vec!["starcore".into()])),
             Some(ui_path(&canon.join("starcore/index.html")))
         );
         // No hint (or one that does not have it): the newest of the two.
         assert_eq!(
-            resolve_file_ref(r.clone(), "index.html".into(), Some(vec!["docs/".into()])),
+            resolved(&[r], "index.html", Some(vec!["docs/".into()])),
             Some(ui_path(&canon.join("minecraft/index.html")))
         );
-        // A hint outside the project is not followed.
-        assert_eq!(resolve_file_ref(r.clone(), "nope.html".into(), Some(vec!["/".into()])), None);
+        // A hint outside the roots is not followed.
+        assert_eq!(resolved(&[r], "nope.html", Some(vec!["/".into()])), None);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -4191,23 +4386,66 @@ mod tests {
     fn resolve_file_ref_finds_nested_matches() {
         let root = std::env::temp_dir().join(format!("lynshen-ref-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        for p in ["a/repo/src/x.ts", "a/repo/src/y.ts", "b/src/y.ts", "top.ts"] {
+        for p in [
+            "a/repo/src/x.ts",
+            "a/repo/src/y.ts",
+            "b/src/y.ts",
+            "top.ts",
+            "extra/only.ts",
+        ] {
             let f = root.join(p);
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             std::fs::write(&f, "").unwrap();
         }
         let r = root.display().to_string();
+        let r = r.as_str();
         let canon = root.canonicalize().unwrap();
         // As the UI gets it: without the `\\?\` prefix canonicalize adds on Windows.
-        assert_eq!(resolve_file_ref(r.clone(), "top.ts".into(), None), Some(ui_path(&canon.join("top.ts"))));
-        assert_eq!(resolve_file_ref(r.clone(), "src/x.ts".into(), None), Some(ui_path(&canon.join("a/repo/src/x.ts"))));
-        assert!(resolve_file_ref(r.clone(), "src/y.ts".into(), None).is_some());
-        assert_eq!(resolve_file_ref(r.clone(), "src/z.ts".into(), None), None);
+        assert_eq!(
+            resolved(&[r], "top.ts", None),
+            Some(ui_path(&canon.join("top.ts")))
+        );
+        assert_eq!(
+            resolved(&[r], "src/x.ts", None),
+            Some(ui_path(&canon.join("a/repo/src/x.ts")))
+        );
+        assert!(resolved(&[r], "src/y.ts", None).is_some());
+        assert_eq!(resolved(&[r], "src/z.ts", None), None);
+        // The session's directory first, then the project root.
+        let repo = canon.join("a/repo").display().to_string();
+        assert_eq!(
+            resolved(&[&repo, r], "src/y.ts", None),
+            Some(ui_path(&canon.join("a/repo/src/y.ts")))
+        );
+        // An added directory outside the project root.
+        let extra = canon.join("extra").display().to_string();
+        assert_eq!(
+            resolved(&["/nonexistent", &extra], "only.ts", None),
+            Some(ui_path(&canon.join("extra/only.ts")))
+        );
         // An absolute path is taken as it is, wherever the project is.
         let abs = canon.join("b/src/y.ts").display().to_string();
-        assert_eq!(resolve_file_ref("/nonexistent".into(), abs.clone(), None), Some(ui_path(Path::new(&abs))));
-        assert_eq!(resolve_file_ref(r.clone(), canon.join("b/src/none.ts").display().to_string(), None), None);
+        assert_eq!(
+            resolved(&["/nonexistent"], &abs, None),
+            Some(ui_path(Path::new(&abs)))
+        );
+        let none = canon.join("b/src/none.ts").display().to_string();
+        assert_eq!(resolved(&[r], &none, None), None);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn file_target_tells_text_from_binary() {
+        let dir = std::env::temp_dir().join(format!("lynshen-kind-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = dir.join("a.md");
+        // The 8 KB sample cuts a character in two.
+        std::fs::write(&text, "路径 ".repeat(3000)).unwrap();
+        let bin = dir.join("app.apk");
+        std::fs::write(&bin, b"PK\x03\x04\x00\x00").unwrap();
+        assert!(FileTarget::of(&text).text);
+        assert!(!FileTarget::of(&bin).text);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -4447,20 +4685,60 @@ mod tests {
         git(&["add", "."]);
         git(&["commit", "-q", "-m", "init"]);
         let cwd = dir.to_string_lossy().to_string();
-        // Snapshot the "v1" state.
-        let cp0 = super::git_checkpoint_capture(cwd.clone()).unwrap();
+        // Snapshot the "v1" state (no session: a dangling commit, as before).
+        let cp0 = super::git_checkpoint_capture(cwd.clone(), None, None).unwrap();
         assert!(!cp0.is_empty());
         // The agent modifies a tracked file and adds a new one.
         std::fs::write(dir.join("a.txt"), "v2").unwrap();
         std::fs::write(dir.join("b.txt"), "new").unwrap();
         // Restore to the checkpoint: a.txt reverts, current state saved as safety.
-        let safety = super::git_checkpoint_restore(cwd.clone(), cp0).unwrap();
+        let safety = super::git_checkpoint_restore(cwd.clone(), cp0, None, None)
+            .unwrap()
+            .unwrap();
         assert!(!safety.is_empty());
         assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "v1");
         // Files created after the checkpoint are left in place (never deleted).
         assert!(dir.join("b.txt").exists());
         // A bogus sha is rejected without touching the tree.
-        assert!(super::git_checkpoint_restore(cwd, "nothex!!".into()).is_err());
+        assert!(super::git_checkpoint_restore(cwd.clone(), "nothex!!".into(), None, None).is_err());
+
+        // Kept under the session's turn: found again by session and turn (an
+        // app restart forgets the sha), and the state before the rewind is kept.
+        std::fs::write(dir.join("a.txt"), "v3").unwrap();
+        let cp1 = super::git_checkpoint_capture(cwd.clone(), Some("s-1".into()), Some(2)).unwrap();
+        std::fs::write(dir.join("a.txt"), "v4").unwrap();
+        let back =
+            super::git_checkpoint_restore(cwd.clone(), String::new(), Some("s-1".into()), Some(2))
+                .unwrap()
+                .unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "v3");
+        let refs =
+            String::from_utf8(git(&["for-each-ref", "--format=%(refname) %(objectname)"]).stdout)
+                .unwrap();
+        assert!(refs.contains(&format!("refs/lynshen/checkpoints/s-1/2 {cp1}")));
+        assert!(refs.contains(&format!("refs/lynshen/rewind-backup/s-1 {back}")));
+        // A sha whose object is gone falls back to the turn's ref.
+        std::fs::write(dir.join("a.txt"), "v5").unwrap();
+        super::git_checkpoint_restore(
+            cwd.clone(),
+            "0123456789abcdef0123456789abcdef01234567".into(),
+            Some("s-1".into()),
+            Some(2),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "v3");
+        // No checkpoint for that turn: nothing changes.
+        assert_eq!(
+            super::git_checkpoint_restore(cwd.clone(), String::new(), Some("s-1".into()), Some(9))
+                .unwrap(),
+            None
+        );
+        // A session id that is not a ref name: a dangling commit, no ref.
+        let cp2 = super::git_checkpoint_capture(cwd, Some("../x".into()), Some(1)).unwrap();
+        assert!(!cp2.is_empty());
+        let refs = String::from_utf8(git(&["for-each-ref", "--format=%(refname)"]).stdout).unwrap();
+        assert!(!refs.contains("/x/"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -4724,6 +5002,7 @@ mod tests {
             vec!["checkout", "-b", "feature/new-ui"],
             vec!["checkout", "main"],
             vec!["remote", "-v"],
+            vec!["init"],
         ] {
             assert!(
                 validate_git_args(&args(&cmd)).is_ok(),
@@ -4775,6 +5054,11 @@ mod tests {
             vec!["remote", "set-url", "origin", "https://evil"],
             // 远端子命令禁止 `--` 逃逸
             vec!["push", "--", "origin"],
+            // init 只在项目目录里建仓库
+            vec!["init", "/tmp/elsewhere"],
+            vec!["init", "--", "/tmp/elsewhere"],
+            vec!["init", "--separate-git-dir=/tmp/x"],
+            vec!["init", "--template=/tmp/hooks"],
         ] {
             assert!(
                 validate_git_args(&args(&cmd)).is_err(),

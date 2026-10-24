@@ -169,6 +169,17 @@ export function closeTab(layout: TileLayout, tabId: string): TileLayout {
 	return { ...layout, root };
 }
 
+/** 关闭其他 / 关闭全部: every other tab of `tabId`'s leaf (`keep`), or every
+ *  tab of it. A leaf left empty collapses as closeTab does. */
+export function closeTabGroup(layout: TileLayout, tabId: string, keep: boolean): TileLayout {
+	const leaf = leafOfTab(layout.root, tabId);
+	if (!leaf) return layout;
+	let next = layout;
+	for (const tab of leaf.tabs) if (!keep || tab.id !== tabId) next = closeTab(next, tab.id);
+	if (keep) next = activateTab(next, tabId);
+	return next;
+}
+
 /** Split leaf `leafId`, seeding the new sibling leaf with `tab`. left/top put
  *  the new leaf before the target, right/bottom after; `share` is the new
  *  leaf's part of the area. Returns the new layout and the created leaf's id

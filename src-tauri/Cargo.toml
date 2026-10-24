@@ -92,7 +92,9 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Storage_Fil
 
 [target."cfg(target_os = \"macos\")".dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSEvent", "NSView", "NSWindow", "block2", "objc2-core-foundation"] }
+# The scroll-wheel event monitor of wheel.rs. Already in Cargo.lock through Tauri.
+block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSError", "NSFileManager", "NSString", "NSURL"] }
 # The identifier and version of an old LynShen.app (src/renamed/bundle.rs).
 # Already in Cargo.lock through Tauri.
