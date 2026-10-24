@@ -3,6 +3,7 @@ import {
 	insertTab,
 	activateTab,
 	closeTab,
+	closeTabGroup,
 	deserializeLayout,
 	emptyLayout,
 	findLeaf,
@@ -328,5 +329,22 @@ describe('insertTab', () => {
 		const [, right] = leavesOf(split.root);
 		const moved = insertTab(split, 'a', right.id, 1);
 		expect(leavesOf(moved.root).map((l) => l.tabs.map((t) => t.id))).toEqual([['b', 'a']]);
+	});
+});
+
+describe('closeTabGroup', () => {
+	it('closes the other tabs of the leaf, or all of them, and leaves other leaves alone', () => {
+		let layout = openTab(emptyLayout(), null, { id: 'a', panel: 'chat:1' });
+		layout = openTab(layout, null, { id: 'b', panel: 'git' });
+		layout = openTab(layout, null, { id: 'c', panel: 'files' });
+		const leaf = leafOfTab(layout.root, 'a')!;
+		layout = splitLeaf(layout, leaf.id, 'right', { id: 'd', panel: 'terminal' }).layout;
+		const others = closeTabGroup(layout, 'b', true);
+		expect(leafOfTab(others.root, 'b')?.tabs.map((t) => t.id)).toEqual(['b']);
+		expect(leafOfTab(others.root, 'b')?.active).toBe('b');
+		expect(leafOfTab(others.root, 'd')?.tabs.map((t) => t.id)).toEqual(['d']);
+		const all = closeTabGroup(layout, 'b', false);
+		expect(leavesOf(all.root).map((l) => l.tabs.map((t) => t.id))).toEqual([['d']]);
+		expect(closeTabGroup(layout, 'nope', false)).toBe(layout);
 	});
 });

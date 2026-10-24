@@ -30,6 +30,8 @@
 	//                           `window.__opened` "changes" for the Changes panel
 	//   &diagram                a third turn whose reply has a mermaid flowchart,
 	//                           a sequence diagram and a block that does not parse
+	//   &tabmenu                the app's context menu (with &preview or &tool:
+	//                           a tab's 关闭其他 / 关闭全部)
 	//   &files                  a third turn whose reply names a text file, a
 	//                           file the editor cannot show and a missing one
 	//                           (main.ts resolves them); with &editors the
@@ -79,7 +81,7 @@
 	import FilePreview from '../../src/lib/preview/FilePreview.svelte';
 	import { filePreviews } from '../../src/lib/preview/store.svelte';
 	import { previewOf, previewPanel } from '../../src/lib/preview/kinds';
-	import { activateTab, leafOfTab, leavesOf, singleLeafLayout, type TileLayout } from '../../src/lib/workbench/tiles';
+	import { activateTab, closeTabGroup, leafOfTab, leavesOf, singleLeafLayout, type TileLayout } from '../../src/lib/workbench/tiles';
 	import { chatPanel, chatTab, openElsewhere } from '../../src/lib/workbench/canvas';
 	import ChatPane from '../../src/lib/ChatPane.svelte';
 	import Sidebar from '../../src/lib/Sidebar.svelte';
@@ -512,7 +514,7 @@
 {/snippet}
 
 <ConfirmHost />
-{#if mode.has('files')}<ContextMenuHost />{/if}
+{#if mode.has('files') || mode.has('tabmenu')}<ContextMenuHost />{/if}
 <Toaster />
 <TrialGrantCard />
 <div class="app">
@@ -572,6 +574,14 @@
 						hideSoloBar
 						layout={tiles}
 						onchange={(next) => (tiles = next)}
+						tabMenu={(tab) => {
+							const leaf = leafOfTab(tiles.root, tab.id);
+							if (!leaf) return [];
+							return [
+								...(leaf.tabs.length > 1 ? [{ key: 'close-others', label: '关闭其他', run: () => (tiles = closeTabGroup(tiles, tab.id, true)) }] : []),
+								{ key: 'close-all', label: '关闭全部', run: () => (tiles = closeTabGroup(tiles, tab.id, false)) }
+							];
+						}}
 						label={(tab) =>
 							previewOf(tab.panel) ? fileName(previewOf(tab.panel)!) : tab.panel === 'plan' ? '任务计划' : tab.panel === 'team' ? '工作组' : session.chat.title || '对话'}
 					>

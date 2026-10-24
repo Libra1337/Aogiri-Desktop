@@ -29,6 +29,8 @@
 		deleteLabel = '',
 		pinned = false,
 		onPin,
+		onCloseOthers,
+		onCloseAll,
 		onClose,
 		defaultIcon,
 		children
@@ -47,6 +49,9 @@
 		/** Sessions: pin or unpin it in the sidebar. */
 		pinned?: boolean;
 		onPin?: (pinned: boolean) => void;
+		/** A canvas tab's: close the other tabs, or every tab, of its group. */
+		onCloseOthers?: () => void;
+		onCloseAll?: () => void;
 		onClose: () => void;
 		/** What shows with no icon set (a project's folder, an agent's
 		 *  generated avatar): the first choice, so it can be picked back. */
@@ -217,6 +222,12 @@
 		<Button size="sm" full onclick={() => onPin(!pinned)}>
 			{#if pinned}<PushPinSlashIcon size={12} />{t('shell.unpin')}{:else}<PushPinIcon size={12} />{t('shell.pin')}{/if}
 		</Button>
+	{/if}
+	{#if onCloseOthers}
+		<Button size="sm" full onclick={onCloseOthers}>{t('dock.mosaic.closeOthers')}</Button>
+	{/if}
+	{#if onCloseAll}
+		<Button size="sm" full onclick={onCloseAll}>{t('dock.mosaic.closeAll')}</Button>
 	{/if}
 	{#if onDelete}
 		<Button variant="danger" size="sm" full onclick={onDelete}><TrashIcon size={12} />{deleteLabel || t('shell.chrome.delete')}</Button>

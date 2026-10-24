@@ -21,6 +21,7 @@
 		type TileTab
 	} from './tiles';
 	import type { TabIcon } from './tabChrome';
+	import { contextItems, type ContextItem } from '$lib/ui/contextMenu';
 	import TabGlyph from './TabGlyph.svelte';
 
 	// Renders a TileLayout: recursive splits with draggable gutters, per-leaf
@@ -44,7 +45,8 @@
 		tabMark,
 		actions,
 		onTabContext,
-		onTabRename
+		onTabRename,
+		tabMenu
 	}: {
 		layout: TileLayout;
 		/** Hide the tab bar while the canvas holds a single tab: the window title
@@ -73,6 +75,9 @@
 		actions?: Snippet<[TileTab]>;
 		/** Right-click on a tab (the caller decides whether to open a menu). */
 		onTabContext?: (tab: TileTab, ev: MouseEvent) => void;
+		/** A tab's items in the app's context menu, when onTabContext opened
+		 *  no menu of its own (ui/contextMenu.ts). */
+		tabMenu?: (tab: TileTab) => ContextItem[];
 		/** Double-click on a tab (rename affordance — never maximizes). */
 		onTabRename?: (tab: TileTab, ev: MouseEvent) => void;
 	} = $props();
@@ -374,6 +379,7 @@
 						onpointerdown={(e) => tabPointerDown(e, tab)}
 						ondblclick={(e) => onTabRename?.(tab, e)}
 						oncontextmenu={(e) => onTabContext?.(tab, e)}
+						use:contextItems={() => tabMenu?.(tab) ?? []}
 						onkeydown={(e) => e.key === 'Enter' && onchange(activateTab(layout, tab.id))}
 					>
 						{#if chrome && (chrome.icon || chrome.color)}

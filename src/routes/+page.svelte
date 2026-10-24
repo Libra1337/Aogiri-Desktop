@@ -78,6 +78,7 @@
 	import {
 		activateTab,
 		closeTab,
+		closeTabGroup,
 		emptyLayout,
 		findLeaf,
 		leafOfTab,
@@ -1152,7 +1153,8 @@
 
 	// ---------- session tab chrome (color / icon / rename) ----------
 	// One shared popover serves the mosaic tabs and the sidebar rows.
-	let sessionChromeFor = $state<{ sid: string; x: number; y: number } | null>(null);
+	// `tab`: opened from a canvas tab, so the menu also closes tabs.
+	let sessionChromeFor = $state<{ sid: string; x: number; y: number; tab?: string } | null>(null);
 	const chromeSession = $derived(sessionChromeFor ? (sessionMap.get(sessionChromeFor.sid) ?? null) : null);
 
 	function tileChrome(tab: TileTab): { color?: string; icon?: TabIcon } | null {
@@ -1167,7 +1169,24 @@
 		const sid = chatSessionOf(tab.panel);
 		if (!sid || !sessionMap.has(sid)) return;
 		ev.preventDefault();
-		sessionChromeFor = { sid, x: ev.clientX, y: ev.clientY };
+		sessionChromeFor = { sid, x: ev.clientX, y: ev.clientY, tab: tab.id };
+	}
+	/** 关闭其他 (with other tabs in the group) and 关闭全部 for a canvas tab. */
+	function tabCloseActions(tabId: string | undefined, dismiss: () => void) {
+		const leaf = tabId ? leafOfTab(tiles.root, tabId) : null;
+		if (!tabId || !leaf) return {};
+		return {
+			onCloseOthers: leaf.tabs.length > 1 ? () => (dismiss(), onMosaicChange(closeTabGroup(tiles, tabId, true))) : undefined,
+			onCloseAll: () => (dismiss(), onMosaicChange(closeTabGroup(tiles, tabId, false)))
+		};
+	}
+	/** The same for a tab without a menu of its own, in the app's context menu. */
+	function tileMenu(tab: TileTab) {
+		const acts = tabCloseActions(tab.id, () => {});
+		return [
+			...(acts.onCloseOthers ? [{ key: 'close-others', label: t('dock.mosaic.closeOthers'), run: acts.onCloseOthers }] : []),
+			...(acts.onCloseAll ? [{ key: 'close-all', label: t('dock.mosaic.closeAll'), run: acts.onCloseAll }] : [])
+		];
 	}
 	function openSessionMenu(sid: string, ev: MouseEvent) {
 		if (!sessionMap.has(sid)) return;
@@ -1840,6 +1859,7 @@
 							{tabMark}
 							onTabContext={openTileChrome}
 							onTabRename={openTileChrome}
+							tabMenu={tileMenu}
 						>
 								{#snippet actions(tab)}
 									{@const sid = chatSessionOf(tab.panel)}
@@ -2134,6 +2154,7 @@
 			onIcon={(i) => store.setSessionChrome(chromeSession.id, { icon: i })}
 			pinned={!!chromeSession.pinned}
 			onPin={(v) => store.setPinned(chromeSession.id, v)}
+			{...tabCloseActions(sessionChromeFor.tab, () => (sessionChromeFor = null))}
 			onClose={() => (sessionChromeFor = null)}
 		/>
 	{/if}

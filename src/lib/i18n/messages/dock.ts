@@ -64,6 +64,8 @@ const dock = {
 			maximize: '最大化',
 			restore: '还原',
 			closeTab: '关闭标签',
+			closeOthers: '关闭其他',
+			closeAll: '关闭全部',
 			resize: '拖动调整面板大小'
 		},
 		tui: {
@@ -296,6 +298,8 @@ const dock = {
 			maximize: 'Maximize',
 			restore: 'Restore',
 			closeTab: 'Close tab',
+			closeOthers: 'Close others',
+			closeAll: 'Close all',
 			resize: 'Drag to resize the panels'
 		},
 		tui: {
