@@ -10,6 +10,7 @@
 	import ContextMenuHost from '$lib/ui/ContextMenuHost.svelte';
 	import TooltipHost from '$lib/ui/TooltipHost.svelte';
 	import ImageViewerHost from '$lib/ui/ImageViewerHost.svelte';
+	import { installSmoothWheel } from '$lib/smoothWheel';
 	import { initLaunch } from '$lib/launch';
 
 	// Tag the root with the host OS before first paint so platform-specific window
@@ -30,6 +31,8 @@
 		prefs.init();
 		// Persist detection + reflect the active locale on <html lang> for a11y.
 		setLocale(getLocale());
+		// A mouse wheel glides instead of stepping (macOS; the app hands its events over).
+		if ('__TAURI_INTERNALS__' in window && document.documentElement.dataset.os === 'macos') installSmoothWheel(() => prefs.zoom);
 		// Resizing or zooming the window: layout jumps, nothing animates along
 		// (app.css .win-resizing), until 150 ms after the last resize event.
 		const root = document.documentElement;

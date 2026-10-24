@@ -42,6 +42,7 @@ mod shell_icons;
 mod tool_login;
 mod tool_path;
 mod tool_switch;
+mod wheel;
 mod window_state;
 
 use backend::BackendKind;
@@ -4037,6 +4038,11 @@ pub fn run() {
             #[cfg(not(desktop))]
             let silent = false;
             main_window::create(app, silent)?;
+            // A mouse wheel's notches glide instead of stepping (wheel.rs).
+            #[cfg(target_os = "macos")]
+            if let Some(win) = app.get_webview_window("main") {
+                wheel::install(&win);
+            }
             #[cfg(all(debug_assertions, target_os = "macos"))]
             set_dev_dock_icon();
             // 异步捕获登录 shell 环境快照（不阻塞启动；见 shell_env.rs）。
@@ -4063,6 +4069,14 @@ pub fn run() {
         // 关闭主窗口时隐藏到托盘而不是退出（macOS/Windows/Linux 一致），
         // 真正退出通过托盘菜单「退出」。窗口的大小和位置在隐藏时写盘，拖动或
         // 缩放停下约一秒后也写盘（window_state.rs）。
+        // A page loading has no wheel handler until smoothWheel.ts sets it again.
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Started
+            {
+                wheel::page_loading();
+            }
+        })
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
@@ -4158,6 +4172,7 @@ pub fn run() {
             git_checkpoint_restore,
             editors::list_editors,
             editors::open_in_editor,
+            wheel::smooth_wheel_ready,
             project_root,
             chats_dir,
             default_workspace_dir,
