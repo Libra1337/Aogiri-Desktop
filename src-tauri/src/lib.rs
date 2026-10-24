@@ -2859,6 +2859,7 @@ const GIT_SUBCOMMANDS: &[&str] = &[
     "remote",
     "merge",
     "rev-list",
+    "init",
 ];
 
 /// 需要访问网络的子命令：禁用凭据交互提示、限时执行（防止卡在等待输入上）。
@@ -3046,6 +3047,11 @@ fn validate_git_args(args: &[String]) -> Result<(), String> {
                     return Err(format!("invalid ref name: {r}"));
                 }
             }
+        }
+        // init 只在项目目录本身建仓库：不带任何参数（没有路径，没有 `--`
+        // 之后的路径，也没有 --separate-git-dir 之类）。
+        "init" if args.len() > 1 => {
+            return Err("git init takes no arguments".to_string());
         }
         // remote 只用于列出（remote -v），不放行 add/set-url 等子操作。
         "remote" if !positionals.is_empty() => {
@@ -5003,6 +5009,7 @@ mod tests {
             vec!["checkout", "-b", "feature/new-ui"],
             vec!["checkout", "main"],
             vec!["remote", "-v"],
+            vec!["init"],
         ] {
             assert!(
                 validate_git_args(&args(&cmd)).is_ok(),
@@ -5054,6 +5061,11 @@ mod tests {
             vec!["remote", "set-url", "origin", "https://evil"],
             // 远端子命令禁止 `--` 逃逸
             vec!["push", "--", "origin"],
+            // init 只在项目目录里建仓库
+            vec!["init", "/tmp/elsewhere"],
+            vec!["init", "--", "/tmp/elsewhere"],
+            vec!["init", "--separate-git-dir=/tmp/x"],
+            vec!["init", "--template=/tmp/hooks"],
         ] {
             assert!(
                 validate_git_args(&args(&cmd)).is_err(),

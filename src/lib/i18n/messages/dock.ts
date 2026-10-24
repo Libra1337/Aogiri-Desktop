@@ -119,6 +119,7 @@ const dock = {
 		},
 		git: {
 			notRepo: '不是 Git 仓库',
+			init: '创建 Git 仓库',
 			changes: '改动',
 			stageAll: '全部暂存',
 			clean: '工作区干净',
@@ -353,6 +354,7 @@ const dock = {
 		},
 		git: {
 			notRepo: 'Not a Git repository',
+			init: 'Create a Git repository',
 			changes: 'Changes',
 			stageAll: 'Stage all',
 			clean: 'Working tree clean',
