@@ -3,6 +3,7 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { leastVeil, parseColor, sampleImage, softImage, SECONDARY_CONTRAST, TEXT_CONTRAST, type RGB } from './readability';
 import { isChatWidthMode, type ChatWidthMode } from './chatWidth';
+import { applyFont, fontChoice, type FontSlot } from './fonts';
 
 const KEY = 'lynshen-prefs';
 /** The stored shape's version. 2 turned the window frost off for everyone,
@@ -35,6 +36,10 @@ type PrefsShape = {
 	 *  for the defaults. */
 	terminalFont: string;
 	terminalFontSize: number;
+	/** The interface, conversation and code fonts: ids from FONT_CHOICES (fonts.ts). */
+	uiFont: string;
+	chatFont: string;
+	codeFont: string;
 	/** The view an existing conversation opens in: the chat, or its
 	 *  engine's own TUI. */
 	defaultSurface: 'gui' | 'tui';
@@ -84,6 +89,9 @@ const DEFAULTS: PrefsShape = {
 	telemetry: true,
 	terminalFont: '',
 	terminalFontSize: 12.5,
+	uiFont: 'default',
+	chatFont: 'default',
+	codeFont: 'default',
 	defaultSurface: 'gui',
 	balanceCurrency: 'CNY',
 	backgroundImage: '',
@@ -203,6 +211,9 @@ class PrefsStore {
 	telemetry = $state(DEFAULTS.telemetry);
 	terminalFont = $state(DEFAULTS.terminalFont);
 	terminalFontSize = $state(DEFAULTS.terminalFontSize);
+	uiFont = $state(DEFAULTS.uiFont);
+	chatFont = $state(DEFAULTS.chatFont);
+	codeFont = $state(DEFAULTS.codeFont);
 	defaultSurface = $state(DEFAULTS.defaultSurface);
 	balanceCurrency = $state(DEFAULTS.balanceCurrency);
 	backgroundImage = $state(DEFAULTS.backgroundImage);
@@ -233,6 +244,12 @@ class PrefsStore {
 		this.telemetry = p.telemetry !== false;
 		this.terminalFont = typeof p.terminalFont === 'string' ? p.terminalFont : DEFAULTS.terminalFont;
 		this.terminalFontSize = fontSize(p.terminalFontSize);
+		this.uiFont = fontChoice('ui', p.uiFont);
+		this.chatFont = fontChoice('chat', p.chatFont);
+		this.codeFont = fontChoice('code', p.codeFont);
+		applyFont('ui', this.uiFont);
+		applyFont('chat', this.chatFont);
+		applyFont('code', this.codeFont);
 		this.defaultSurface = p.defaultSurface === 'tui' ? 'tui' : 'gui';
 		this.balanceCurrency = p.balanceCurrency === 'USD' ? 'USD' : 'CNY';
 		this.backgroundImage = typeof p.backgroundImage === 'string' ? p.backgroundImage : '';
@@ -285,6 +302,9 @@ class PrefsStore {
 					telemetry: this.telemetry,
 					terminalFont: this.terminalFont,
 					terminalFontSize: this.terminalFontSize,
+					uiFont: this.uiFont,
+					chatFont: this.chatFont,
+					codeFont: this.codeFont,
 					defaultSurface: this.defaultSurface,
 					balanceCurrency: this.balanceCurrency,
 					backgroundImage: this.backgroundImage,
@@ -470,6 +490,13 @@ class PrefsStore {
 
 	setTerminalFont(v: string) {
 		this.terminalFont = v;
+		this.#save();
+	}
+
+	setFont(slot: FontSlot, id: string) {
+		const choice = fontChoice(slot, id);
+		this[`${slot}Font`] = choice;
+		applyFont(slot, choice);
 		this.#save();
 	}
 

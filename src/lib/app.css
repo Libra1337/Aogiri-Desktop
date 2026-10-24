@@ -81,6 +81,8 @@
 	/* The system UI face first (SF Pro and PingFang SC on macOS, Segoe UI and
 	   Microsoft YaHei on Windows); the bundled Inter where neither is there. */
 	--font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Inter Variable', Inter, 'Noto Sans SC', system-ui, sans-serif;
+	/* The conversation's text (Settings → 通用 → 对话字体): the interface face unless set. */
+	--font-chat: var(--font-sans);
 	--font-mono: 'Geist Mono Variable', 'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 	/* The two display moments only, at weight 500 and --fs-2xl. */
 	--font-display: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', serif;
