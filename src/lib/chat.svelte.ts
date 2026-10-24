@@ -2680,9 +2680,26 @@ export class ChatState {
 						toolCalls: n(w.tool_calls),
 						phases: arr<Record<string, unknown>>(w.phases).map((p) => ({ index: n(p.index), title: str(p.title) })),
 						agents: arr<Record<string, unknown>>(w.agents).map(agentRun)
-					})),
+					})).map((run) => {
+						// A Workflow that ended leaves its agents at their last reported
+						// state (the engine updates the run only): they are not running.
+						// Completed, it ran them to the end; stopped or failed, not.
+						const end = runState(run.status);
+						if (end !== 'running')
+							for (const a of run.agents) if (['running', 'queued'].includes(runState(a.state))) a.state = end === 'done' ? 'completed' : 'stopped';
+						return run;
+					}),
 					agents: arr<Record<string, unknown>>(ev.agents).map(agentRun)
 				};
+				// The run list is the engine's own: a subagent it says ended has
+				// ended, though its lifecycle event never came (a reconnect, a
+				// restarted engine).
+				for (const a of this.agentRuns.agents) {
+					const life = this.subagents[a.id];
+					if (!life || life.endedAt || !a.state || ['running', 'queued'].includes(runState(a.state)) || AFTER_RUN.has(a.state)) continue;
+					this.subagents[a.id] = { ...life, status: a.state, endedAt: Date.now() };
+					delete this.stopRequested[a.id];
+				}
 				for (const a of arr<Record<string, unknown>>(ev.agents)) {
 					const id = str(a.id);
 					if (!id) continue;

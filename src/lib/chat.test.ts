@@ -1707,3 +1707,25 @@ describe('ChatState.pickDraftModel', () => {
 		}
 	});
 });
+
+describe('subagent ends', () => {
+	it('ends a subagent the run list says ended', () => {
+		const c = new ChatState();
+		c.handle({ type: 'subagent_lifecycle', path: 'a1', label: 'Scan', status: 'running' } as never);
+		c.handle({ type: 'agent_runs', workflows: [], agents: [{ id: 'a1', state: 'running' }] } as never);
+		expect(c.subagents.a1.endedAt).toBeUndefined();
+		c.handle({ type: 'agent_runs', workflows: [], agents: [{ id: 'a1', state: 'killed' }] } as never);
+		expect(c.subagents.a1).toMatchObject({ status: 'killed' });
+		expect(c.subagents.a1.endedAt).toBeGreaterThan(0);
+	});
+
+	it("shows an ended Workflow's agents left mid-run as completed or stopped", () => {
+		const c = new ChatState();
+		c.handle({ type: 'agent_runs', workflows: [{ id: 'w1', status: 'killed', agents: [{ id: 'a1', state: 'progress' }, { id: 'a2', state: 'done' }] }], agents: [] } as never);
+		expect(c.agentRuns.workflows[0].agents.map((a) => a.state)).toEqual(['stopped', 'done']);
+		c.handle({ type: 'agent_runs', workflows: [{ id: 'w1', status: 'completed', agents: [{ id: 'a1', state: 'progress' }] }], agents: [] } as never);
+		expect(c.agentRuns.workflows[0].agents[0].state).toBe('completed');
+		c.handle({ type: 'agent_runs', workflows: [{ id: 'w1', status: 'running', agents: [{ id: 'a1', state: 'progress' }] }], agents: [] } as never);
+		expect(c.agentRuns.workflows[0].agents[0].state).toBe('progress');
+	});
+});
