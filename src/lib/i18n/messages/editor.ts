@@ -30,7 +30,12 @@ const editor = {
 		revealFile: '打开所在文件夹',
 		revealFailed: '打不开文件夹：{error}',
 		copyPath: '复制文件路径',
-		pathCopied: '已复制文件路径'
+		pathCopied: '已复制文件路径',
+		external: {
+			openIn: '在 {name} 中打开',
+			choose: '选择编辑器',
+			failed: '无法在 {name} 中打开：{error}'
+		}
 	},
 	en: {
 		title: 'Audit',
@@ -63,7 +68,12 @@ const editor = {
 		revealFile: 'Show in folder',
 		revealFailed: 'Could not open the folder: {error}',
 		copyPath: 'Copy file path',
-		pathCopied: 'File path copied'
+		pathCopied: 'File path copied',
+		external: {
+			openIn: 'Open in {name}',
+			choose: 'Choose an editor',
+			failed: 'Could not open in {name}: {error}'
+		}
 	}
 };
 export default editor;

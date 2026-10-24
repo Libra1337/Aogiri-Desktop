@@ -3797,6 +3797,82 @@ try {
     assert.deepEqual([l.fill, l.stroke, l.text], [l.panel, l.dim2, l.ink], 'light: the node is not on the tokens');
     await dp.close();
   }
+  // File links in a reply (?shell&files&editors): a path that names a file
+  // stays a link; one that names none reads as plain text and offers no
+  // menu. Right-click opens the file menu (open, the external editor, attach,
+  // copy paths and name, show in the file manager); a file the editor cannot
+  // show has no external-editor row. The title bar's editor button opens the
+  // project in the editor last chosen, its caret lists the installed ones.
+  {
+    const fp = await browser.newPage({viewport:{width:1280,height:860}});
+    fp.on('pageerror', e => errors.push(e.message));
+    await fp.goto(base + '?shell&files&editors');
+    const reply = fp.locator('.answer').last();
+    const link = (text) => reply.locator('a.fileref', {hasText: text});
+    await expect(link('src/lib/chatWidth.ts')).toBeVisible({timeout:60000});
+    await expect(link('docs/old-width.md')).toHaveClass(/dead/);
+    await expect(link('src/lib/chatWidth.ts')).not.toHaveClass(/dead/);
+    await expect(link('build/aogiri.dmg')).not.toHaveClass(/dead/);
+    assert.equal(await link('docs/old-width.md').evaluate((a) => getComputedStyle(a).textDecorationLine), 'none');
+    // The roots the reply's paths are looked for in: the project first.
+    const resolved = await fp.evaluate(() => window.__calls.find((c) => c.command === 'resolve_file_ref')?.args);
+    assert.equal(resolved.roots[0], '/Users/me/code/lynshen-desktop');
+    const reveal = await fp.evaluate(() => /Macintosh|Mac OS X/.test(navigator.userAgent) ? '在访达中显示' : /Windows/.test(navigator.userAgent) ? '在资源管理器中显示' : '在文件管理器中显示');
+    // The menu of a text file, at the pointer.
+    await link('src/lib/chatWidth.ts').click({button: 'right'});
+    const menu = fp.locator('.file-menu .pm');
+    await expect(menu.getByRole('menuitem')).toHaveText(['打开', '在 VS Code 中打开', '添加为附件', '复制绝对路径', '复制相对路径', '复制文件名', reveal]);
+    // The app's own text menu stays out.
+    await expect(fp.locator('.ctx')).toHaveCount(0);
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await menu.getByRole('menuitem', {name: '在 VS Code 中打开'}).click();
+    await expect(menu).toHaveCount(0);
+    const opened = await fp.evaluate(() => window.__calls.find((c) => c.command === 'open_in_editor')?.args);
+    assert.deepEqual(opened, {id: 'vscode', path: '/Users/me/code/lynshen-desktop/src/lib/chatWidth.ts', line: 12, col: null, root: '/Users/me/code/lynshen-desktop'});
+    // Copy the relative path.
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await link('src/lib/chatWidth.ts').click({button: 'right'});
+    await menu.getByRole('menuitem', {name: '复制相对路径'}).click();
+    await expect.poll(() => fp.evaluate(() => window.__calls.filter((c) => c.command === 'plugin:clipboard-manager|write_text').map((c) => c.args.text))).toEqual(['src/lib/chatWidth.ts']);
+    // A file the editor cannot show: no external editor; 打开 shows it in the file manager.
+    await link('build/aogiri.dmg').click({button: 'right'});
+    await expect(menu.getByRole('menuitem')).toHaveText(['打开', '添加为附件', '复制绝对路径', '复制相对路径', '复制文件名', reveal]);
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await menu.getByRole('menuitem', {name: '打开'}).click();
+    await expect.poll(() => fp.evaluate(() => window.__calls.some((c) => c.command === 'plugin:opener|reveal_item_in_dir'))).toBe(true);
+    // A path that names no file: a click opens nothing, a right-click has no file menu.
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await link('docs/old-width.md').click();
+    await link('docs/old-width.md').click({button: 'right'});
+    await expect(menu).toHaveCount(0);
+    assert.equal(await fp.evaluate(() => window.__calls.filter((c) => c.command === 'read_text' || c.command === 'open_in_editor').length), 0);
+    await fp.keyboard.press('Escape');
+    // The title bar: the editor button and its caret.
+    const button = fp.getByRole('button', {name: '在 VS Code 中打开'});
+    await expect(button).toBeVisible();
+    const box = await button.boundingBox();
+    assert.equal(Math.round(box.height), 28);
+    await fp.getByRole('button', {name: '选择编辑器'}).click();
+    const pick = fp.locator('.oie .pm');
+    await expect(pick.locator('.pop-label')).toHaveText(['VS Code', 'Zed', 'Xcode']);
+    await expect(pick.getByRole('menuitemradio', {name: 'VS Code'})).toHaveAttribute('aria-checked', 'true');
+    await fp.evaluate(() => (window.__calls.length = 0));
+    await pick.getByRole('menuitemradio', {name: 'Zed'}).click();
+    assert.deepEqual(await fp.evaluate(() => window.__calls.find((c) => c.command === 'open_in_editor')?.args), {id: 'zed', path: '/Users/me/code/lynshen-desktop', line: null, col: null, root: null});
+    // Zed is the one a click opens now, here and in the file menu.
+    await expect(fp.getByRole('button', {name: '在 Zed 中打开'})).toBeVisible();
+    await link('src/lib/ChatPane.svelte').click({button: 'right'});
+    await expect(menu.getByRole('menuitem', {name: '在 Zed 中打开'})).toBeVisible();
+    await fp.keyboard.press('Escape');
+    // Without an editor installed, no button and no menu row.
+    await fp.goto(base + '?shell&files');
+    await expect(link('src/lib/chatWidth.ts')).toBeVisible({timeout:60000});
+    await expect(link('docs/old-width.md')).toHaveClass(/dead/);
+    await link('src/lib/chatWidth.ts').click({button: 'right'});
+    await expect(menu.getByRole('menuitem')).toHaveText(['打开', '添加为附件', '复制绝对路径', '复制相对路径', '复制文件名', reveal]);
+    await expect(fp.locator('.oie')).toHaveCount(0);
+    await fp.close();
+  }
   assert.deepEqual(errors, []);
-  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code).');
+  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show).');
 } finally { await browser.close(); await server.close(); }

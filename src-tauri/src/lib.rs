@@ -24,6 +24,7 @@ mod claude_history;
 mod daemon_launch;
 mod device_header;
 mod device_id;
+mod editors;
 mod installer;
 mod main_window;
 mod monoize_auth;
@@ -2531,47 +2532,102 @@ fn walk_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
 
 /// Resolves a file path a reply names: absolute, from the home directory
 /// (`~/`), or relative. Agents write relative paths from the directory they
-/// worked in, which is often below the project root (a nested repo, the
-/// folder the reply just named): try `root/rel` first, then `hint/rel` for
-/// each directory the reply mentions (`hints`, in order), then `dir/rel` for
-/// every directory up to REF_DEPTH below the root. Of several matches the
-/// most recently modified wins: the file the agent just wrote, not an older
-/// one of the same name (`index.html` in two games).
-#[tauri::command]
-fn resolve_file_ref(root: String, rel: String, hints: Option<Vec<String>>) -> Option<String> {
+/// worked in: the session's directory, the project root, one of the project's
+/// added directories (`roots`, in that order), or a folder below one of them
+/// (a nested repo, the folder the reply just named). Try `root/rel` for each
+/// root, then `hint/rel` for each directory the reply mentions (`hints`, in
+/// order), then `dir/rel` for every directory up to REF_DEPTH below the
+/// roots. Of several matches the most recently modified wins: the file the
+/// agent just wrote, not an older one of the same name (`index.html` in two
+/// games). Async: every file link in a reply is checked, and the search walks
+/// directories.
+#[tauri::command(async)]
+fn resolve_file_ref(
+    roots: Vec<String>,
+    rel: String,
+    hints: Option<Vec<String>>,
+) -> Option<FileTarget> {
     let home = rel.strip_prefix("~/").or_else(|| rel.strip_prefix("~\\"));
     let rel = match home {
         Some(rest) => backend::home_dir().join(rest),
         None => PathBuf::from(&rel),
     };
     if rel.is_absolute() {
-        return rel.is_file().then(|| ui_path(&rel));
+        return rel.is_file().then(|| FileTarget::of(&rel));
     }
-    let root = PathBuf::from(root).canonicalize().ok()?;
+    let mut canon: Vec<PathBuf> = Vec::new();
+    for root in roots
+        .iter()
+        .filter_map(|r| PathBuf::from(r).canonicalize().ok())
+    {
+        if !canon.contains(&root) {
+            canon.push(root);
+        }
+    }
+    let roots = canon;
     let rel = rel.as_path();
     let inside = |path: PathBuf| {
         path.canonicalize()
             .ok()
-            .filter(|p| p.is_file() && p.starts_with(&root))
+            .filter(|p| p.is_file() && roots.iter().any(|r| p.starts_with(r)))
     };
-    let direct = root.join(rel);
-    if direct.is_file() {
-        return Some(ui_path(&direct));
+    if let Some(direct) = roots.iter().map(|r| r.join(rel)).find(|p| p.is_file()) {
+        return Some(FileTarget::of(&direct));
     }
     for hint in hints.unwrap_or_default() {
         let dir = Path::new(hint.trim());
-        let dir = if dir.is_absolute() { dir.to_path_buf() } else { root.join(dir) };
-        if let Some(found) = inside(dir.join(rel)) {
-            return Some(ui_path(&found));
+        let dirs = if dir.is_absolute() {
+            vec![dir.to_path_buf()]
+        } else {
+            roots.iter().map(|r| r.join(dir)).collect()
+        };
+        if let Some(found) = dirs.into_iter().find_map(|d| inside(d.join(rel))) {
+            return Some(FileTarget::of(&found));
         }
     }
     let mut found = Vec::new();
-    find_ref(&root, rel, 0, &mut found);
+    for root in &roots {
+        find_ref(root, rel, 0, &mut found);
+    }
     found
         .into_iter()
         .filter_map(inside)
         .max_by_key(|path| path.metadata().and_then(|m| m.modified()).ok())
-        .map(|path| ui_path(&path))
+        .map(|path| FileTarget::of(&path))
+}
+
+/// A file a reply names, as the UI opens it.
+#[derive(Serialize, Debug, PartialEq)]
+struct FileTarget {
+    path: String,
+    /// The editor can show it: UTF-8 without NUL bytes, within MAX_TEXT_READ.
+    /// Anything else (an .apk, a PDF, a 50 MB log) is shown in the file manager.
+    text: bool,
+}
+
+impl FileTarget {
+    fn of(path: &Path) -> Self {
+        FileTarget {
+            path: ui_path(path),
+            text: looks_like_text(path),
+        }
+    }
+}
+
+fn looks_like_text(path: &Path) -> bool {
+    if std::fs::metadata(path).map_or(true, |m| m.len() > MAX_TEXT_READ) {
+        return false;
+    }
+    let mut head = [0u8; 8192];
+    let Ok(n) = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) else {
+        return false;
+    };
+    let head = &head[..n];
+    // A UTF-8 character cut at the end of the sample is still text.
+    !head.contains(&0)
+        && std::str::from_utf8(head)
+            .map(|_| true)
+            .unwrap_or_else(|e| e.error_len().is_none())
 }
 
 /// A canonical path as the UI opens it: on Windows `canonicalize` adds a
@@ -4100,6 +4156,8 @@ pub fn run() {
             generate_text,
             git_checkpoint_capture,
             git_checkpoint_restore,
+            editors::list_editors,
+            editors::open_in_editor,
             project_root,
             chats_dir,
             default_workspace_dir,
@@ -4191,7 +4249,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{background_ext, read_json_strict, resolve_file_ref, ui_path, valid_app_data_name};
+    use super::{
+        background_ext, read_json_strict, resolve_file_ref, ui_path, valid_app_data_name,
+        FileTarget,
+    };
     use std::path::Path;
 
     #[test]
@@ -4262,35 +4323,48 @@ mod tests {
         assert_eq!(ui_path(Path::new("/Users/me/a.ts")), "/Users/me/a.ts");
     }
 
+    /// `resolve_file_ref`'s path only.
+    fn resolved(roots: &[&str], rel: &str, hints: Option<Vec<String>>) -> Option<String> {
+        let roots = roots.iter().map(|r| r.to_string()).collect();
+        resolve_file_ref(roots, rel.into(), hints).map(|t| t.path)
+    }
+
     #[test]
     fn resolve_file_ref_follows_the_reply_then_the_newest_match() {
         let root = std::env::temp_dir().join(format!("lynshen-ref-new-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
-        for (p, secs) in [("minecraft/index.html", 2_000_000_000), ("starcore/index.html", 1_000_000_000)] {
+        for (p, secs) in [
+            ("minecraft/index.html", 2_000_000_000),
+            ("starcore/index.html", 1_000_000_000),
+        ] {
             let f = root.join(p);
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
-            std::fs::File::create(&f).unwrap().set_modified(at(secs)).unwrap();
+            std::fs::File::create(&f)
+                .unwrap()
+                .set_modified(at(secs))
+                .unwrap();
         }
         let r = root.display().to_string();
+        let r = r.as_str();
         let canon = root.canonicalize().unwrap();
         // The reply named the folder: its file, though another is newer.
         let hinted = vec![canon.join("starcore/").display().to_string()];
         assert_eq!(
-            resolve_file_ref(r.clone(), "index.html".into(), Some(hinted)),
+            resolved(&[r], "index.html", Some(hinted)),
             Some(ui_path(&canon.join("starcore/index.html")))
         );
         assert_eq!(
-            resolve_file_ref(r.clone(), "index.html".into(), Some(vec!["starcore".into()])),
+            resolved(&[r], "index.html", Some(vec!["starcore".into()])),
             Some(ui_path(&canon.join("starcore/index.html")))
         );
         // No hint (or one that does not have it): the newest of the two.
         assert_eq!(
-            resolve_file_ref(r.clone(), "index.html".into(), Some(vec!["docs/".into()])),
+            resolved(&[r], "index.html", Some(vec!["docs/".into()])),
             Some(ui_path(&canon.join("minecraft/index.html")))
         );
-        // A hint outside the project is not followed.
-        assert_eq!(resolve_file_ref(r.clone(), "nope.html".into(), Some(vec!["/".into()])), None);
+        // A hint outside the roots is not followed.
+        assert_eq!(resolved(&[r], "nope.html", Some(vec!["/".into()])), None);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -4298,23 +4372,66 @@ mod tests {
     fn resolve_file_ref_finds_nested_matches() {
         let root = std::env::temp_dir().join(format!("lynshen-ref-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        for p in ["a/repo/src/x.ts", "a/repo/src/y.ts", "b/src/y.ts", "top.ts"] {
+        for p in [
+            "a/repo/src/x.ts",
+            "a/repo/src/y.ts",
+            "b/src/y.ts",
+            "top.ts",
+            "extra/only.ts",
+        ] {
             let f = root.join(p);
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             std::fs::write(&f, "").unwrap();
         }
         let r = root.display().to_string();
+        let r = r.as_str();
         let canon = root.canonicalize().unwrap();
         // As the UI gets it: without the `\\?\` prefix canonicalize adds on Windows.
-        assert_eq!(resolve_file_ref(r.clone(), "top.ts".into(), None), Some(ui_path(&canon.join("top.ts"))));
-        assert_eq!(resolve_file_ref(r.clone(), "src/x.ts".into(), None), Some(ui_path(&canon.join("a/repo/src/x.ts"))));
-        assert!(resolve_file_ref(r.clone(), "src/y.ts".into(), None).is_some());
-        assert_eq!(resolve_file_ref(r.clone(), "src/z.ts".into(), None), None);
+        assert_eq!(
+            resolved(&[r], "top.ts", None),
+            Some(ui_path(&canon.join("top.ts")))
+        );
+        assert_eq!(
+            resolved(&[r], "src/x.ts", None),
+            Some(ui_path(&canon.join("a/repo/src/x.ts")))
+        );
+        assert!(resolved(&[r], "src/y.ts", None).is_some());
+        assert_eq!(resolved(&[r], "src/z.ts", None), None);
+        // The session's directory first, then the project root.
+        let repo = canon.join("a/repo").display().to_string();
+        assert_eq!(
+            resolved(&[&repo, r], "src/y.ts", None),
+            Some(ui_path(&canon.join("a/repo/src/y.ts")))
+        );
+        // An added directory outside the project root.
+        let extra = canon.join("extra").display().to_string();
+        assert_eq!(
+            resolved(&["/nonexistent", &extra], "only.ts", None),
+            Some(ui_path(&canon.join("extra/only.ts")))
+        );
         // An absolute path is taken as it is, wherever the project is.
         let abs = canon.join("b/src/y.ts").display().to_string();
-        assert_eq!(resolve_file_ref("/nonexistent".into(), abs.clone(), None), Some(ui_path(Path::new(&abs))));
-        assert_eq!(resolve_file_ref(r.clone(), canon.join("b/src/none.ts").display().to_string(), None), None);
+        assert_eq!(
+            resolved(&["/nonexistent"], &abs, None),
+            Some(ui_path(Path::new(&abs)))
+        );
+        let none = canon.join("b/src/none.ts").display().to_string();
+        assert_eq!(resolved(&[r], &none, None), None);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn file_target_tells_text_from_binary() {
+        let dir = std::env::temp_dir().join(format!("lynshen-kind-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = dir.join("a.md");
+        // The 8 KB sample cuts a character in two.
+        std::fs::write(&text, "路径 ".repeat(3000)).unwrap();
+        let bin = dir.join("app.apk");
+        std::fs::write(&bin, b"PK\x03\x04\x00\x00").unwrap();
+        assert!(FileTarget::of(&text).text);
+        assert!(!FileTarget::of(&bin).text);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

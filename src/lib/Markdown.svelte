@@ -6,6 +6,7 @@
 	import { renderMermaid } from '$lib/mermaid';
 	import { themeState } from '$lib/theme.svelte';
 	import { t } from '$lib/i18n';
+	import { useFileCheck } from '$lib/fileCheck';
 
 	let {
 		text,
@@ -53,6 +54,21 @@
 		}
 	});
 
+	// A file link whose path names no file reads as plain text, where the
+	// conversation provides the check (fileCheck.ts, ChatPane).
+	const fileCheck = useFileCheck();
+	$effect(() => {
+		void html;
+		if (!fileCheck || !root) return;
+		for (const a of root.querySelectorAll<HTMLAnchorElement>('a.fileref')) {
+			const href = a.getAttribute('href');
+			if (!href) continue;
+			const known = fileCheck.known(href);
+			if (known !== undefined) a.classList.toggle('dead', !known);
+			else fileCheck.check(href).then((ok) => a.classList.toggle('dead', !ok));
+		}
+	});
+
 	// Only hand a link to the system opener if it carries an explicit, allowed
 	// scheme. The test is anchored and case-insensitive so tricks like
 	// "JavaScript:" or " javascript:" (already trimmed by the browser) can't slip
@@ -76,6 +92,7 @@
 		}
 		const a = el.closest('a');
 		const href = a?.getAttribute('href');
+		if (a?.classList.contains('dead')) return void e.preventDefault();
 		if (href) {
 			// Always stop the webview from navigating to a markdown link (it's
 			// LLM/file-supplied). Safe external schemes go to the system opener;
@@ -161,6 +178,12 @@
 	.md :global(a.fileref code) {
 		font-size: 1em;
 		color: inherit;
+	}
+	/* Names no file: plain text (inline code stays code). */
+	.md :global(a.fileref.dead) {
+		color: inherit;
+		text-decoration: none;
+		cursor: text;
 	}
 	.md :global(.cb-head .fileref) {
 		margin: 0 auto 0 10px;

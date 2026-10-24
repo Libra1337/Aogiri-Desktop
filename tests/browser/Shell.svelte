@@ -30,6 +30,11 @@
 	//                           `window.__opened` "changes" for the Changes panel
 	//   &diagram                a third turn whose reply has a mermaid flowchart,
 	//                           a sequence diagram and a block that does not parse
+	//   &files                  a third turn whose reply names a text file, a
+	//                           file the editor cannot show and a missing one
+	//                           (main.ts resolves them); with &editors the
+	//                           computer has VS Code, Zed and Xcode (the title
+	//                           bar's editor button, the file menu's entry)
 	//   &states                 the other conversations in the navigator wait
 	//                           for an answer, run, or failed
 	//   &busy[=<n>]             n more conversations (8 by default), in a third
@@ -80,6 +85,8 @@
 	import Sidebar from '../../src/lib/Sidebar.svelte';
 	import TabChromePopover from '../../src/lib/workbench/TabChromePopover.svelte';
 	import TitleBar from '../../src/lib/shell/TitleBar.svelte';
+	import OpenInEditor from '../../src/lib/shell/OpenInEditor.svelte';
+	import ContextMenuHost from '../../src/lib/ui/ContextMenuHost.svelte';
 	import ConfirmHost from '../../src/lib/ui/ConfirmHost.svelte';
 	import Toaster from '../../src/lib/ui/Toaster.svelte';
 	import TrialGrantCard from '../../src/lib/TrialGrantCard.svelte';
@@ -333,6 +340,21 @@
 		feed({ type: 'status', message: 'ready' });
 	}
 
+	// ?shell&files: a reply naming files that exist and one that does not.
+	if (mode.has('files') && !mode.has('empty')) {
+		feed({ type: 'user_message', content: '列宽的代码在哪？安装包打好了吗？' });
+		feed({ type: 'status', message: 'streaming' });
+		feed({
+			type: 'assistant_delta',
+			delta: [
+				'列宽在 `src/lib/chatWidth.ts#L12` 里算，`src/lib/ChatPane.svelte` 用它。',
+				'',
+				'安装包在 `build/aogiri.dmg`。旧的说明 `docs/old-width.md` 已经删掉了。'
+			].join('\n')
+		});
+		feed({ type: 'status', message: 'ready' });
+	}
+
 	// ?shell&recap: a third turn that ends with changes and a suggestion.
 	const recapMode = mode.get('recap');
 	if (recapMode !== null && !mode.has('empty')) {
@@ -490,6 +512,7 @@
 {/snippet}
 
 <ConfirmHost />
+{#if mode.has('files')}<ContextMenuHost />{/if}
 <Toaster />
 <TrialGrantCard />
 <div class="app">
@@ -502,7 +525,11 @@
 		subtitle={settings || home ? '' : 'lynshen-desktop'}
 		addOptions={settings ? [] : [{ key: 'term', label: '终端' }]}
 		onAdd={() => {}}
-	/>
+	>
+		{#snippet actions()}
+			{#if !settings && !home}<OpenInEditor path={first.path} />{/if}
+		{/snippet}
+	</TitleBar>
 	<div class="body">
 		<div class="panel" class:covered={settings}>
 			<Sidebar

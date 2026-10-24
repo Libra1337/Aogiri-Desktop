@@ -55,6 +55,7 @@
 		gitCheckpointCapture,
 		gitCheckpointRestore,
 		resolveFileRef,
+		type FileTarget,
 		readConfig,
 		writeConfig,
 		type ImportSkipKind,
@@ -97,7 +98,14 @@
 	import { agentChanges } from '$lib/agents/agentChanges.svelte';
 	import { confirmStop } from '$lib/agents/confirmStop';
 	import { parseToolOutput, toolTarget, toolVerb } from '$lib/toolSummary';
-	import { dirHints, joinPath, parseFileHref, pathExt } from '$lib/fileRefs';
+	import { dirHints, parseFileHref, pathExt, type FileRef } from '$lib/fileRefs';
+	import { provideFileCheck } from '$lib/fileCheck';
+	import { editors } from '$lib/editors.svelte';
+	import { revealItemInDir } from '@tauri-apps/plugin-opener';
+	import { copyText } from '$lib/clipboard';
+	import PopMenu, { type PopMenuItem } from '$lib/ui/PopMenu.svelte';
+	import { imageViewer } from '$lib/ui/imageViewer.svelte';
+	import { isMac } from '$lib/shortcuts';
 	import type { Msg, ModelOption } from '$lib/chat.svelte';
 	import type { SessionSwitch } from '$lib/composer/SessionSwitches.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
@@ -1558,32 +1566,138 @@
 			.catch((e) => toast.error(t('chat.rewindRestoreFailed', { error: String(e) })));
 	}
 
-	// Open a workspace file referenced by a chat link. HTML opens in the built-in
-	// browser (rendered) or the editor (source) per preference; everything else
-	// opens in the editor. Paths resolve relative to this session's project root.
-	async function openChatFile(href: string, context?: string) {
-		const cwd = project?.path;
-		if (!cwd) return;
-		// A file a reply names, maybe at a line (`src/a.ts#L12:4`).
+	// Where a reply's relative paths are read from: the directory the engine
+	// runs in, then the project root and its added directories.
+	const fileRoots = $derived([...new Set([chat.cwd, project?.path, ...(project?.dirs ?? [])].filter((r): r is string => !!r))]);
+	/** The project directory a file is in (the root first): for its relative
+	 *  path and the editor's root. */
+	function rootOf(abs: string): string | undefined {
+		const under = (r: string) => {
+			const base = r.replace(/[\\/]+$/, '');
+			return abs.startsWith(base) && /[\\/]/.test(abs.charAt(base.length));
+		};
+		return [project?.path, ...(project?.dirs ?? []), chat.cwd].find((r): r is string => !!r && under(r));
+	}
+	const folderOf = (abs: string) => abs.replace(/[\\/][^\\/]*$/, '');
+	/** The file a link names, looked for in the roots and, for a bare name
+	 *  (`index.html`), first in the folders the same reply named (`…/starcore/`). */
+	function fileTarget(href: string, context?: string) {
 		const ref = parseFileHref(href);
-		const rel = ref.path;
-		if (!rel) return;
-		// Absolute, from the home directory (`~/`) or relative to the project
-		// (or a repo inside it). A bare name (`index.html`) is looked for first
-		// in the folders the same reply named (`…/starcore/`).
 		const hints = context ? dirHints(context) : undefined;
-		const abs = (await resolveFileRef(cwd, rel, hints).catch(() => null)) ?? joinPath(cwd, rel);
+		const target = ref.path && fileRoots.length ? resolveFileRef(fileRoots, ref.path, hints).catch(() => null) : Promise.resolve(null);
+		return { ref, target };
+	}
+
+	// A path in a reply that names no file reads as plain text.
+	provideFileCheck(async (href) => {
+		const { ref, target } = fileTarget(href);
+		return !!ref.path && !!(await target);
+	});
+
+	// Open a file a chat link names (maybe at a line: `src/a.ts#L12:4`). HTML
+	// opens in the built-in browser (rendered) or the editor (source) per
+	// preference, images in the viewer, other text in the editor; what the
+	// editor cannot show (an .apk, a PDF) is shown in the file manager. A file
+	// outside the project opens with its own folder as the editor's root.
+	async function openChatFile(href: string, context?: string) {
+		const { ref, target: pending } = fileTarget(href, context);
+		if (!ref.path) return;
+		const target = await pending;
+		if (!target) return void toast.error(t('chat.fileNotFound', { path: ref.path }));
+		openTarget(target, ref);
+	}
+	function openTarget(target: FileTarget, ref: FileRef) {
+		const abs = target.path;
+		const failed = (e: unknown) => toast.error(t('chat.fileOpenFailed', { path: ref.path, error: String(e) }));
 		const ext = pathExt(abs);
 		if ((ext === 'html' || ext === 'htm') && prefs.htmlOpenInBrowser) {
 			// The embedded browser loads http(s) only; a loopback URL also lets the
 			// page load its own relative scripts and styles.
 			invoke<string>('preview_url', { path: abs })
 				.then((url) => browser.open(url))
-				.catch((e) => toast.error(t('chat.fileOpenFailed', { path: ref.path, error: String(e) })));
-		} else {
+				.catch(failed);
+		} else if (isImage(abs)) imageViewer.open([{ path: abs }]);
+		else if (!target.text) revealItemInDir(abs).catch(failed);
+		else {
 			const at = ref.line ? { line: ref.line, col: ref.col } : undefined;
-			editorStore.open(abs, cwd, at).catch((e) => toast.error(t('chat.fileOpenFailed', { path: ref.path, error: String(e) })));
+			editorStore.open(abs, rootOf(abs) ?? folderOf(abs), at).catch(failed);
 		}
+	}
+
+	// Right-click on a file link (or a file the user sent): open it here or
+	// in the external editor, attach it, copy its path or name, show it in
+	// the file manager. A link that names no file offers its text only.
+	let fileMenu = $state<{ x: number; y: number; ref: FileRef; target: FileTarget | null } | null>(null);
+	let fileMenuEl = $state<HTMLDivElement>();
+	let fileMenuPos = $state({ x: 0, y: 0 });
+	async function onFileMenu(e: MouseEvent) {
+		const el = (e.target as Element).closest('a.fileref[href], [data-file]');
+		const href = el?.getAttribute('data-file') ?? el?.getAttribute('href');
+		if (!href || /^(https?:|mailto:|#)/i.test(href) || el?.classList.contains('dead')) return;
+		e.preventDefault(); // before the await: the app's text menu stays out
+		const context = el?.closest('.answer')?.textContent ?? undefined;
+		const { ref, target } = fileTarget(href, context);
+		if (!ref.path) return;
+		const at = { x: e.clientX, y: e.clientY };
+		const [found] = await Promise.all([target, editors.list.length ? null : editors.load()]);
+		fileMenu = { ...at, ref, target: found };
+		fileMenuPos = at;
+	}
+	const revealLabel = isMac() ? 'chat.fileMenu.revealMac' : typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent) ? 'chat.fileMenu.revealWin' : 'chat.fileMenu.revealLinux';
+	const fileMenuItems = $derived.by((): PopMenuItem[] => {
+		if (!fileMenu) return [];
+		if (!fileMenu.target)
+			return [
+				{ key: 'copyPath', label: t('chat.fileMenu.copyPath') },
+				{ key: 'copyName', label: t('chat.fileMenu.copyName') }
+			];
+		const editor = fileMenu.target.text ? editors.preferred : undefined;
+		return [
+			{ key: 'open', label: t('chat.fileMenu.open') },
+			...(editor ? [{ key: 'editor', label: t('editor.external.openIn', { name: editor.name }) }] : []),
+			{ key: 'attach', label: t('chat.fileMenu.attach') },
+			{ key: 'copyAbs', label: t('chat.fileMenu.copyAbs') },
+			...(rootOf(fileMenu.target.path) ? [{ key: 'copyRel', label: t('chat.fileMenu.copyRel') }] : []),
+			{ key: 'copyName', label: t('chat.fileMenu.copyName') },
+			{ key: 'reveal', label: t(revealLabel) }
+		];
+	});
+	// Inside the window once its size is known.
+	$effect(() => {
+		if (!fileMenu || !fileMenuEl) return;
+		const r = fileMenuEl.querySelector('.pm')?.getBoundingClientRect();
+		if (!r) return;
+		fileMenuPos = {
+			x: Math.min(fileMenu.x, window.innerWidth - r.width - 8),
+			y: fileMenu.y + r.height + 8 > window.innerHeight ? Math.max(8, fileMenu.y - r.height) : fileMenu.y
+		};
+	});
+	function runFileMenu(key: string) {
+		const m = fileMenu;
+		fileMenu = null;
+		if (!m) return;
+		const abs = m.target?.path ?? '';
+		const root = abs ? rootOf(abs) : undefined;
+		const copy = (text: string) =>
+			void copyText(text).then((ok) => (ok ? toast.success(t('common.copied')) : toast.error(t('common.copyFailed'))));
+		if (key === 'open' && m.target) openTarget(m.target, m.ref);
+		else if (key === 'editor' && abs && editors.preferred) {
+			const { id, name } = editors.preferred;
+			editors.open(id, abs, m.ref, root ?? folderOf(abs)).catch((e) => toast.error(t('editor.external.failed', { name, error: String(e) })));
+		} else if (key === 'attach' && abs) {
+			addAttachment(abs);
+			composerEl?.focus();
+		} else if (key === 'copyAbs') copy(abs);
+		else if (key === 'copyRel' && root) copy(abs.slice(root.replace(/[\\/]+$/, '').length + 1));
+		else if (key === 'copyPath') copy(m.ref.path);
+		else if (key === 'copyName') copy((abs || m.ref.path).split(/[\\/]/).pop() ?? '');
+		else if (key === 'reveal' && abs) revealItemInDir(abs).catch((e) => toast.error(String(e)));
+	}
+	// Under <body>: the transcript is masked under glass and a pane animates
+	// in with a transform; either would hold a fixed menu inside it.
+	function portal(node: HTMLElement) {
+		document.body.appendChild(node);
+		return { destroy: () => node.remove() };
 	}
 
 	// Ticket #40: a started Claude Code / Codex conversation stays on its
@@ -1746,7 +1860,8 @@
 		onOpenTeam={teamPanel ? openTeam : undefined}
 	/>
 	<main bind:this={scroller} onscroll={onScroll} onwheel={onWheel} onpointerdown={reader.down}>
-		<div bind:this={contentEl}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div bind:this={contentEl} oncontextmenu={onFileMenu}>
 			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} />
 		</div>
 		{#if chat.booting && chat.engineState !== 'exited'}
@@ -1895,6 +2010,12 @@
 	</div>
 </div>
 
+{#if fileMenu}
+	<div class="file-menu" use:portal bind:this={fileMenuEl} style:left="{fileMenuPos.x}px" style:top="{fileMenuPos.y}px">
+		<PopMenu items={fileMenuItems} title={fileMenu.target ? undefined : t('chat.fileMenu.missing')} placement="down-left" fit={false} onSelect={runFileMenu} onClose={() => (fileMenu = null)} />
+	</div>
+{/if}
+
 {#if isActive && chat.trustPrompt}
 	<!-- The engine waits for an answer: no close button, Escape or scrim close. -->
 	<Modal label={t('shell.trustLabel')} dismissible={false} onClose={() => {}}>
@@ -1947,6 +2068,17 @@
 {#snippet statusBell()}<StatusStrip {chat} />{/snippet}
 
 <style>
+	/* The file link menu, at the pointer (as ContextMenuHost places its own). */
+	.file-menu {
+		position: fixed;
+		z-index: 300;
+		width: 0;
+		height: 0;
+	}
+	.file-menu :global(.pm) {
+		top: 0;
+		min-width: 180px;
+	}
 	/* Whose session this is: a quiet line above the transcript. */
 	.owner {
 		display: flex;

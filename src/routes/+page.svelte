@@ -101,6 +101,7 @@
 	import Mosaic from '$lib/workbench/Mosaic.svelte';
 	import HomePage from '$lib/HomePage.svelte';
 	import TitleBar from '$lib/shell/TitleBar.svelte';
+	import OpenInEditor from '$lib/shell/OpenInEditor.svelte';
 	import TabChromePopover from '$lib/workbench/TabChromePopover.svelte';
 	import ChatPane, { type ChatPaneApi, type ProviderOption } from '$lib/ChatPane.svelte';
 	import SettingsPage from '$lib/settings/SettingsPage.svelte';
@@ -1685,6 +1686,8 @@
 		onAdd={(key) => mosaicAdd(focusedLeaf, key)}
 	>
 		{#snippet actions()}
+			{@const editorProject = showSettings || showDesk || showSetup || homeShown ? undefined : (pageProject ?? activeProject)}
+			{#if editorProject && !editorProject.chats && !editorProject.home && !editorProject.agents && !editorProject.stale}<OpenInEditor path={editorProject.path} />{/if}
 			{#if !showSettings && !showDesk && !showSetup && active && active.surface === 'tui'}
 				<button class="tile-action" title={t('dock.tui.backToGui')} aria-label={t('dock.tui.backToGui')} onclick={() => active && tuiPanels[active.id]?.backToGui()}>
 					<ChatCircleTextIcon size={16} />
