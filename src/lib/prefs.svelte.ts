@@ -70,7 +70,7 @@ type PrefsShape = {
 export const BACKGROUND_STRENGTHS = ['faint', 'medium', 'strong'] as const;
 export type BackgroundStrength = (typeof BACKGROUND_STRENGTHS)[number];
 
-export const TURN_STAT_KEYS = ['elapsed', 'ttft', 'tokens', 'files', 'tools', 'cost', 'model'] as const;
+export const TURN_STAT_KEYS = ['elapsed', 'ttft', 'tokens', 'tps', 'files', 'tools', 'cost', 'model'] as const;
 export type TurnStatKey = (typeof TURN_STAT_KEYS)[number];
 
 const DEFAULTS: PrefsShape = {
