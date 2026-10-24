@@ -215,3 +215,17 @@ describe('overrides', () => {
 		expect(shortcutLabel('stop', true)).toBe('⌘.');
 	});
 });
+
+describe('zoom keys', () => {
+	it('reads ⌘= as ⌘+ and takes the key from its physical place', () => {
+		expect(shortcutLabel('zoomIn', true)).toBe('⌘+');
+		expect(shortcutLabel('zoomOut', false)).toBe('Ctrl+-');
+		expect(shortcutLabel('zoomReset', true)).toBe('⌘0');
+		const press = (k: string, code: string) => key({ key: k, code, metaKey: true });
+		expect(matches(press('=', 'Equal'), 'zoomIn', true)).toBe(true);
+		// ⌘⇧= (⌘+ on a US layout) holds Shift: not the zoom-in combo.
+		expect(matches(key({ key: '+', code: 'Equal', metaKey: true, shiftKey: true }), 'zoomIn', true)).toBe(false);
+		expect(matches(press('-', 'Minus'), 'zoomOut', true)).toBe(true);
+		expect(matches(press('0', 'Digit0'), 'zoomReset', true)).toBe(true);
+	});
+});

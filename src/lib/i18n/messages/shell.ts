@@ -71,10 +71,14 @@ const shell = {
 			approvalMode: '切换审批模式',
 			stop: '停止生成',
 			captureRequirement: '记下想法',
+			zoomIn: '放大界面',
+			zoomOut: '缩小界面',
+			zoomReset: '恢复默认大小',
 			customize: '自定义快捷键',
 			none: '未设置'
 		},
 		panelGroup: { session: '本次对话', code: '代码', tools: '工具' },
+		zoomLevel: '界面大小 {n}%',
 		updatePrompt: {
 			label: '应用更新',
 			foundTitle: '发现新版本 Aogiri {version}',
@@ -1194,10 +1198,14 @@ const shell = {
 			approvalMode: 'Switch approval mode',
 			stop: 'Stop generating',
 			captureRequirement: 'Note an idea',
+			zoomIn: 'Zoom in',
+			zoomOut: 'Zoom out',
+			zoomReset: 'Actual size',
 			customize: 'Customize shortcuts',
 			none: 'None'
 		},
 		panelGroup: { session: 'This conversation', code: 'Code', tools: 'Tools' },
+		zoomLevel: 'Interface size {n}%',
 		updatePrompt: {
 			label: 'App update',
 			foundTitle: 'Aogiri {version} is available',

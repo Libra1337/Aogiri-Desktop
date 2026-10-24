@@ -1368,6 +1368,14 @@
 		}
 	}
 
+	// A zoom step says the new size for a moment.
+	let zoomToast = 0;
+	function stepZoom(dir: 1 | -1 | 0) {
+		if (!prefs.stepZoom(dir)) return;
+		if (zoomToast) toast.dismiss(zoomToast);
+		zoomToast = toast.info(t('shell.zoomLevel', { n: Math.round(prefs.zoom * 100) }), { duration: 1200 });
+	}
+
 	function onWindowKey(e: KeyboardEvent) {
 		// Something closer to the target already claimed this key (e.g. the code
 		// editor's own ⌘K / ⌘S keymap, or a pane's picker) — never double-fire.
@@ -1382,6 +1390,9 @@
 		const pane = panes.get(activeId);
 		if (matches(e, 'palette')) return act(() => (showPalette = !showPalette));
 		if (matches(e, 'shortcuts')) return act(() => (showShortcuts = !showShortcuts));
+		if (matches(e, 'zoomIn')) return act(() => stepZoom(1));
+		if (matches(e, 'zoomOut')) return act(() => stepZoom(-1));
+		if (matches(e, 'zoomReset')) return act(() => stepZoom(0));
 		if (matches(e, 'captureRequirement'))
 			return act(() => {
 				openRequirements();

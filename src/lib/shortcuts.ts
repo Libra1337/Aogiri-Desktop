@@ -28,7 +28,10 @@ export type ShortcutId =
 	| 'terminal'
 	| 'approvalMode'
 	| 'captureRequirement'
-	| 'shortcuts';
+	| 'shortcuts'
+	| 'zoomIn'
+	| 'zoomOut'
+	| 'zoomReset';
 
 /** A key and the modifiers held with it. */
 export interface Combo {
@@ -62,6 +65,9 @@ export const SHORTCUTS: Record<ShortcutId, Shortcut> = {
 	terminal: { key: '`', ctrl: true, group: 'general' },
 	shortcuts: { key: '/', mod: true, group: 'general' },
 	captureRequirement: { key: 'n', mod: true, shift: true, group: 'general' },
+	zoomIn: { key: '=', mod: true, group: 'general' },
+	zoomOut: { key: '-', mod: true, group: 'general' },
+	zoomReset: { key: '0', mod: true, group: 'general' },
 	newSession: { key: 'n', mod: true, group: 'session' },
 	history: { key: 'h', mod: true, shift: true, group: 'session' },
 	prevSession: { key: '[', mod: true, shift: true, group: 'session' },
@@ -174,8 +180,9 @@ export function parseCombo(text: unknown): Combo | null {
 	return c;
 }
 
+// The zoom-in key reads as +, as other apps show it.
 const keyCap = (key: string, mac: boolean) =>
-	key === '1-9' ? '1…9' : key === 'Tab' && mac ? '⇥' : key.length === 1 ? key.toUpperCase() : key;
+	key === '1-9' ? '1…9' : key === 'Tab' && mac ? '⇥' : key === '=' ? '+' : key.length === 1 ? key.toUpperCase() : key;
 
 /** The key caps of `c` in the order the system writes them: ⌃ ⌥ ⇧ ⌘ K on
  *  macOS, Ctrl Alt Shift K elsewhere. A combo without a key gives only its

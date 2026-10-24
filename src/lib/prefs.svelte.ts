@@ -1,6 +1,7 @@
 // Lightweight user preferences (localStorage-backed, reactive). Kept separate
 // from engine/backend settings — these are pure UI choices.
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { leastVeil, parseColor, sampleImage, softImage, SECONDARY_CONTRAST, TEXT_CONTRAST, type RGB } from './readability';
 import { isChatWidthMode, type ChatWidthMode } from './chatWidth';
 import { applyFont, fontChoice, type FontSlot } from './fonts';
@@ -72,6 +73,8 @@ type PrefsShape = {
 	thinkingSummaries: boolean;
 	/** A sound when a task ends or needs the user, unless they are watching it (chime.ts). */
 	sounds: boolean;
+	/** Interface zoom (the webview's page zoom), one of ZOOM_STEPS. */
+	zoom: number;
 };
 
 export const BACKGROUND_STRENGTHS = ['faint', 'medium', 'strong'] as const;
@@ -106,7 +109,8 @@ const DEFAULTS: PrefsShape = {
 	footContext: true,
 	footCost: true,
 	thinkingSummaries: true,
-	sounds: true
+	sounds: true,
+	zoom: 1
 };
 
 /** A glass level within 0–100 (whole numbers); anything else is the default. */
@@ -192,6 +196,10 @@ type WindowFrost = {
 };
 
 const inApp = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+/** The zoom levels ⌘+ / ⌘- step through. */
+export const ZOOM_STEPS = [0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const zoomLevel = (v: unknown) => (typeof v === 'number' && ZOOM_STEPS.includes(v) ? v : 1);
 const onMac = () => typeof navigator !== 'undefined' && /Macintosh|Mac OS X/.test(navigator.userAgent);
 
 /** This system can frost the window (the app reports it: set_window_frost).
@@ -230,6 +238,7 @@ class PrefsStore {
 	footCost = $state(DEFAULTS.footCost);
 	thinkingSummaries = $state(DEFAULTS.thinkingSummaries);
 	sounds = $state(DEFAULTS.sounds);
+	zoom = $state(DEFAULTS.zoom);
 
 	init() {
 		const { prefs: p, outdated } = load();
@@ -267,6 +276,8 @@ class PrefsStore {
 		this.footCost = p.footCost !== false;
 		this.thinkingSummaries = p.thinkingSummaries !== false;
 		this.sounds = p.sounds !== false;
+		this.zoom = zoomLevel(p.zoom);
+		if (this.zoom !== 1) this.#applyZoom();
 		if (outdated) this.#save();
 		this.#applyVibrancy();
 		this.#applyBackground();
@@ -322,7 +333,8 @@ class PrefsStore {
 					footContext: this.footContext,
 					footCost: this.footCost,
 					thinkingSummaries: this.thinkingSummaries,
-					sounds: this.sounds
+					sounds: this.sounds,
+					zoom: this.zoom
 				})
 			);
 		} catch {
@@ -504,6 +516,26 @@ class PrefsStore {
 		this[`${slot}Font`] = choice;
 		applyFont(slot, choice);
 		this.#save();
+	}
+
+	/** Steps the interface zoom up (1) or down (-1), or resets it (0).
+	 *  Whether it changed. */
+	stepZoom(dir: 1 | -1 | 0): boolean {
+		const i = ZOOM_STEPS.indexOf(this.zoom);
+		const next = dir === 0 ? 1 : ZOOM_STEPS[Math.min(Math.max(i + dir, 0), ZOOM_STEPS.length - 1)];
+		if (next === this.zoom) return false;
+		this.zoom = next;
+		this.#applyZoom();
+		this.#save();
+		return true;
+	}
+
+	// The webview's page zoom. The title bar holds the system's traffic
+	// lights, which do not zoom (and Tauri cannot move at run time): it is
+	// scaled back to its size through --ui-zoom (TitleBar.svelte).
+	#applyZoom() {
+		if (typeof document !== 'undefined') document.documentElement.style.setProperty('--ui-zoom', String(this.zoom));
+		if (inApp()) getCurrentWebview().setZoom(this.zoom).catch((e) => console.error('setZoom', e));
 	}
 
 	setTerminalFontSize(v: number) {
