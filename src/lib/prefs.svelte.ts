@@ -70,6 +70,8 @@ type PrefsShape = {
 	footCost: boolean;
 	/** Engines that can summarize their thinking (Claude, Codex) do, before replying. */
 	thinkingSummaries: boolean;
+	/** A sound when a task ends or needs the user, unless they are watching it (chime.ts). */
+	sounds: boolean;
 };
 
 export const BACKGROUND_STRENGTHS = ['faint', 'medium', 'strong'] as const;
@@ -103,7 +105,8 @@ const DEFAULTS: PrefsShape = {
 	scrollOnSend: true,
 	footContext: true,
 	footCost: true,
-	thinkingSummaries: true
+	thinkingSummaries: true,
+	sounds: true
 };
 
 /** A glass level within 0–100 (whole numbers); anything else is the default. */
@@ -226,6 +229,7 @@ class PrefsStore {
 	footContext = $state(DEFAULTS.footContext);
 	footCost = $state(DEFAULTS.footCost);
 	thinkingSummaries = $state(DEFAULTS.thinkingSummaries);
+	sounds = $state(DEFAULTS.sounds);
 
 	init() {
 		const { prefs: p, outdated } = load();
@@ -262,6 +266,7 @@ class PrefsStore {
 		this.footContext = p.footContext !== false;
 		this.footCost = p.footCost !== false;
 		this.thinkingSummaries = p.thinkingSummaries !== false;
+		this.sounds = p.sounds !== false;
 		if (outdated) this.#save();
 		this.#applyVibrancy();
 		this.#applyBackground();
@@ -316,7 +321,8 @@ class PrefsStore {
 					scrollOnSend: this.scrollOnSend,
 					footContext: this.footContext,
 					footCost: this.footCost,
-					thinkingSummaries: this.thinkingSummaries
+					thinkingSummaries: this.thinkingSummaries,
+					sounds: this.sounds
 				})
 			);
 		} catch {
@@ -483,7 +489,7 @@ class PrefsStore {
 	}
 
 	/** The switches without side effects of their own. */
-	setFlag(name: 'footContext' | 'footCost' | 'thinkingSummaries', v: boolean) {
+	setFlag(name: 'footContext' | 'footCost' | 'thinkingSummaries' | 'sounds', v: boolean) {
 		this[name] = v;
 		this.#save();
 	}

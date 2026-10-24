@@ -67,6 +67,7 @@
 	import { trial } from '$lib/trial.svelte';
 	import { browser, type WebRef } from '$lib/browser.svelte';
 	import { prefs } from '$lib/prefs.svelte';
+	import { playChime, unlockChimes, type Chime } from '$lib/chime';
 	import { fmtTokens } from '$lib/usageStats';
 	import { cloudSync } from '$lib/cloudSync.svelte';
 	import { t } from '$lib/i18n';
@@ -210,6 +211,9 @@
 			/* ignore */
 		}
 	}
+	const chime = (kind: Chime) => {
+		if (prefs.sounds) playChime(kind);
+	};
 	const notifyDone = (title: string) =>
 		notify('Aogiri', t('shell.notifyDone', { title: shownTitle(title) }));
 	// How many conversations wait for the user: the Dock badge, the Windows
@@ -218,6 +222,7 @@
 	// An agent's question, pending action or report while the window is in
 	// the background.
 	agentDirectory.onArrival = (kind, agent, text, agentId) => {
+		if (kind === 'question' || kind === 'action') chime('attention');
 		const message = t(`shell.notify.${kind}`, { text });
 		if (!document.hasFocus()) void notify(agent, message);
 		// In front: a notice that leads to the agent on the workbench.
@@ -1407,6 +1412,8 @@
 	}
 
 	onMount(() => {
+		// The webview's audio starts locked; the first click or key unlocks it.
+		unlockChimes();
 		cloudSync.start();
 		// Anonymous usage counts; told once, off in Settings → General.
 		if (telemetry.start(sendTelemetry))
@@ -1492,6 +1499,14 @@
 				if (wasBusy && !s.chat.busy && s.id !== curActive) {
 					s.chat.unseen = true;
 					notifyDone(s.chat.title);
+				}
+				// A sound unless the user is looking at this session: its turn
+				// ended, or an action, a question or a plan waits on them.
+				if (prefs.sounds && (!document.hasFocus() || s.id !== curActive)) {
+					const asking = s.chat.pendingApproval;
+					const planning = planless ? undefined : s.chat.messages.findLast((m) => m.kind === 'plan' && m.status === 'pending');
+					if ((asking && asking.callId !== hadApproval) || (planning && planning !== hadPlan)) chime('attention');
+					else if (wasBusy && !s.chat.busy) chime('done');
 				}
 				// Something waits on the user while the window is in the
 				// background: an action to allow, or a plan to approve.

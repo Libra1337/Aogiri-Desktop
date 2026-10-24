@@ -1080,6 +1080,10 @@ const settings = {
 			thinkingSummariesHint: '支持的引擎（Claude Code、Codex）在回复前展示思考过程的摘要。对已打开的会话同样生效。',
 			cacheMissAlert: '缓存未命中提醒',
 			cacheMissAlertHint: '一次请求没命中提示缓存（这次输入按全价计费）时在顶部提示几秒，可以顺手停止任务。不会暂停执行',
+			sounds: '提示音',
+			soundsHint: '任务完成，或需要你确认操作、回答问题、审批计划时播放提示音。正在看的会话不播放。',
+			soundsDone: '试听完成',
+			soundsAttention: '试听提醒',
 			turnStatsPreview: '预览',
 			turnStatsNone: '不显示统计',
 			turnStat: {
@@ -2391,6 +2395,10 @@ const settings = {
 			thinkingSummariesHint: 'Engines that support it (Claude Code, Codex) show a summary of their thinking before replying. Applies to open sessions too.',
 			cacheMissAlert: 'Cache miss alert',
 			cacheMissAlertHint: 'A note for a few seconds when a request missed the prompt cache (its input is billed in full), with a button to stop the task. It does not pause anything',
+			sounds: 'Sounds',
+			soundsHint: 'Play a sound when a task finishes, or when an action, a question or a plan waits for you. Not for the conversation you are looking at.',
+			soundsDone: 'Play done',
+			soundsAttention: 'Play alert',
 			turnStatsPreview: 'Preview',
 			turnStatsNone: 'No stats shown',
 			turnStat: {
