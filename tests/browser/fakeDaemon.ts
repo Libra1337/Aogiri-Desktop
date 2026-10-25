@@ -63,6 +63,10 @@ export const daemonState = {
 	 *  paired iPhone may do. */
 	pendingPhone: false,
 	phoneScopes: [] as string[],
+	/** The scheduled tasks (schedule_list / schedule_save). */
+	schedules: [] as Frame[],
+	/** The app tools' switches (app_tools / app_tools_set). */
+	appTools: { present_files: true, propose_schedule: true, sessions: 'on' } as Frame,
 	/** Leave the catalog's first request unanswered (a stuck daemon). */
 	stall: false,
 	/** 安卓手机（Android-Use）: installed, switched on, a phone set up. */
@@ -447,6 +451,23 @@ function reply(op: Frame): Frame | null {
 			};
 			// An engine before the cached catalog reports no sources.
 			return s.old ? catalog : { ...catalog, sources: s.sources, refreshing: s.refreshing };
+		}
+		// Scheduled tasks (?shell&deliver: a task created from a proposal keeps
+		// its origin, as LynShen CLI 0.7.9 does; daemonState.old: before it).
+		case 'schedule_list':
+			return { type: 'schedules', schedules: s.schedules };
+		case 'schedule_save': {
+			const made = { id: `sch-${s.schedules.length + 1}`, enabled: true, new_session: true, created_at: 1, last_run_at: null, last_session: null, next_run_at: null, days: [], date: null, ...op.schedule, origin: s.old ? undefined : (op.schedule.origin ?? null) };
+			s.schedules.push(made);
+			return { type: 'schedule_saved', schedule: made };
+		}
+		// The app tools' switches (Settings → 应用工具).
+		case 'app_tools':
+		case 'app_tools_set': {
+			if (s.old) return { type: 'error', message: `unknown op ${op.op}` };
+			for (const k of ['present_files', 'propose_schedule'] as const) if (typeof op[k] === 'boolean') s.appTools[k] = op[k];
+			if (typeof op.sessions === 'string') s.appTools.sessions = op.sessions;
+			return { type: 'app_tools', ...s.appTools };
 		}
 		case 'skill_install': {
 			const item = s.catalog.find((x) => x.id === op.skill);

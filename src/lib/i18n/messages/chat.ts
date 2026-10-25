@@ -368,6 +368,20 @@ const chat = {
 			sourceGone: '找不到这个对话，它可能已被删除。'
 		},
 		appTools: { present: '展示了交付物', propose: '提议了定时任务' },
+		artifacts: { label: '交付物' },
+		proposal: {
+			title: '定时任务提议',
+			create: '创建',
+			created: '已创建',
+			decline: '不用了',
+			declined: '未采用',
+			noAgent: '定时任务由 Agent 执行。先在工作台新建一个 Agent，再回来创建。'
+		},
+		children: {
+			label: '启动的对话',
+			open: '打开这个对话',
+			status: { queued: '排队中', delivered: '已发送', replied: '已回复', waiting_approval: '等你批准', running: '进行中' }
+		},
 		sessionTools: {
 			list: '列出对话',
 			read: '读取对话',
@@ -996,6 +1010,20 @@ const chat = {
 			sourceGone: 'That conversation is gone. It may have been deleted.'
 		},
 		appTools: { present: 'Presented deliverables', propose: 'Proposed a scheduled task' },
+		artifacts: { label: 'Deliverables' },
+		proposal: {
+			title: 'Proposed scheduled task',
+			create: 'Create',
+			created: 'Created',
+			decline: 'Not now',
+			declined: 'Not created',
+			noAgent: 'An agent runs scheduled tasks. Create one on the desk first, then come back to create the task.'
+		},
+		children: {
+			label: 'Conversations started',
+			open: 'Open this conversation',
+			status: { queued: 'Queued', delivered: 'Sent', replied: 'Replied', waiting_approval: 'Waiting for your approval', running: 'Working' }
+		},
 		sessionTools: {
 			list: 'Listed conversations',
 			read: 'Read conversation',

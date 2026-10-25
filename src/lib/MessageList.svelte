@@ -18,6 +18,10 @@
 	import PlanCard, { type PlanAction } from '$lib/PlanCard.svelte';
 	import CompactionCard from '$lib/CompactionCard.svelte';
 	import RecapReceipt from '$lib/RecapReceipt.svelte';
+	import ArtifactCards from '$lib/ArtifactCards.svelte';
+	import ScheduleProposal from '$lib/ScheduleProposal.svelte';
+	import ChildSessions from '$lib/ChildSessions.svelte';
+	import { turnSummary, USER_TOOLS, type Proposal, type TurnSummary } from '$lib/turnSummary';
 	import type { ApprovalMode } from '$lib/approval';
 	import { attemptGroups, SPAWN_TOOLS, spawnAgentRow, WAIT_TOOLS, type AgentRow } from '$lib/agentProgress';
 	import type { OpenHow } from '$lib/agents/subagentPages.svelte';
@@ -97,6 +101,10 @@
 		busy = false,
 		foldTurns = false,
 		root = '',
+		onReveal,
+		onSchedule,
+		onDeclineSchedule,
+		scheduleState,
 		mark = $bindable(-1)
 	}: {
 		messages: Msg[];
@@ -187,6 +195,15 @@
 		busy?: boolean;
 		/** A finished turn folds its work into one line (turnFold.ts). */
 		foldTurns?: boolean;
+		/** Shows a deliverable in the file manager (absent: no button). */
+		onReveal?: (path: string) => void;
+		/** Opens the task dialog for a proposed scheduled task (absent: the
+		 *  card only shows it). */
+		onSchedule?: (proposal: Proposal) => void;
+		/** Sets a proposal aside (absent: no 不用了). */
+		onDeclineSchedule?: (proposal: Proposal) => void;
+		/** Whether a task was created from proposal `id`, or it was set aside. */
+		scheduleState?: (id: string) => 'created' | 'declined' | null;
 	} = $props();
 
 	// ── Virtual list (dynamic-height windowing) ─────────────────────────────
@@ -590,7 +607,8 @@
 	function hasContent(m: Msg): boolean {
 		// Meta/status notices render in the collapsible status strip, not inline.
 		if (m.kind === 'system') return false;
-		if (m.kind === 'tool') return !!(m.name || m.output);
+		// present_files / propose_schedule show in the turn's summary (turnSummary.ts).
+		if (m.kind === 'tool') return !!(m.name || m.output) && !USER_TOOLS.has(m.name);
 		if (m.kind === 'plan') return !!(m.title || m.text);
 		if (m.kind === 'agent_message') return !!m.summary;
 		if (m.kind === 'compaction' || m.kind === 'escalation' || m.kind === 'cut') return true;
@@ -698,6 +716,37 @@
 			}
 		});
 	});
+	// Each finished turn's deliverables, proposed tasks and started
+	// conversations, under its last row (its final reply, as a rule). Only
+	// turns with such a call are looked at further.
+	const SUMMARY_TOOLS = new Set([...USER_TOOLS, 'start_session']);
+	const summaries = $derived.by(() => {
+		const out = new Map<Msg, TurnSummary>();
+		let from = -1;
+		let has = false;
+		const close = (to: number) => {
+			if (!has || from < 0) return;
+			const turn = messages.slice(from, to);
+			const summary = turnSummary(turn);
+			if (!summary) return;
+			const last = turn.findLast((m) => shown(m)) ?? turn[0]!;
+			out.set(last, summary);
+		};
+		for (let i = 0; i < messages.length; i++) {
+			const m = messages[i]!;
+			if (m.kind === 'user' && !parseDelivery(m.text)) {
+				close(i);
+				from = i;
+				has = false;
+			} else if (m.kind === 'tool' && SUMMARY_TOOLS.has(m.name)) has = true;
+		}
+		// The running turn (or one waiting on work it handed off) has none yet.
+		if (!busy) close(messages.length);
+		return out;
+	});
+	/** The phone page reads them through `loadImage`; the desktop itself. */
+	const canMedia = $derived(!!loadImage || (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window));
+
 	/** The fold line's first words: how long the turn took, else its steps. */
 	function foldWords(f: TurnFold): string {
 		return f.elapsed !== null ? t('chat.fold.worked', { t: fmtDur(f.elapsed) }) : t('chat.fold.steps', { n: f.calls });
@@ -967,6 +1016,7 @@
 				onDismiss={onDismiss ? () => onDismiss(m) : undefined}
 			/>
 				{/if}
+				{#if summaries.has(m)}{@render summaryOf(summaries.get(m)!)}{/if}
 			</div>
 		{/if}
 	{/each}
@@ -993,6 +1043,18 @@
 		{/if}
 	</div>
 {/if}
+
+<!-- What a finished turn leaves (turnSummary.ts): the conversations it
+     started, its deliverables (images and videos shown), the tasks it
+     proposed. -->
+{#snippet summaryOf(summary: TurnSummary)}
+	{#if summary.children.length}<ChildSessions sessions={summary.children} onOpen={onOpenSession} />{/if}
+	{#if summary.artifacts.length}<ArtifactCards files={summary.artifacts} onOpen={onFile ? (path) => onFile(path) : undefined} {onReveal} load={loadImage} media={canMedia} />{/if}
+	{#each summary.proposals as p (p.id)}
+		{@const state = scheduleState?.(p.id) ?? null}
+		<ScheduleProposal proposal={p} created={state === 'created'} declined={state === 'declined'} onCreate={onSchedule} onDecline={onDeclineSchedule} />
+	{/each}
+{/snippet}
 
 <!-- A thinking block: its head line (how long it thought), its latest words
      while it streams, its text opened. -->

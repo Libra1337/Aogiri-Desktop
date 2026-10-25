@@ -103,6 +103,10 @@
 	import { provideFileCheck } from '$lib/fileCheck';
 	import { editors } from '$lib/editors.svelte';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
+	import ScheduleDialog from '$lib/ScheduleDialog.svelte';
+	import { proposals } from '$lib/proposals.svelte';
+	import type { Proposal } from '$lib/turnSummary';
+	import type { ScheduleDraft } from '$lib/schedules';
 	import { copyText } from '$lib/clipboard';
 	import PopMenu, { type PopMenuItem } from '$lib/ui/PopMenu.svelte';
 	import { imageViewer } from '$lib/ui/imageViewer.svelte';
@@ -1559,6 +1563,33 @@
 	// (preview/FilePreview.svelte), whatever it is and wherever it lies; the
 	// tab says when it is gone and offers its folder and its default app.
 	// Only a file in that message's list (`files`) is previewed.
+	// A scheduled task the agent proposed (propose_schedule): 创建 opens the
+	// task dialog filled in from it, for the conversation's agent or one the
+	// reader picks (a task belongs to an agent); the task keeps the
+	// proposal's id. Without an agent, it says where to make one.
+	let proposing = $state<{ preset: Partial<ScheduleDraft>; id: string } | null>(null);
+	const proposalAgents = $derived(agentDirectory.agents.map((a) => ({ id: a.id, name: a.name })));
+	function scheduleFrom(p: Proposal) {
+		if (!proposalAgents.length) {
+			toast.info(t('chat.proposal.noAgent'));
+			return;
+		}
+		proposing = {
+			id: p.id,
+			preset: {
+				name: p.name,
+				prompt: p.prompt,
+				repeat: p.repeat,
+				time: p.time,
+				...(p.days ? { days: p.days } : {}),
+				...(p.date ? { date: p.date } : {}),
+				...(chat.agent ? { agent: chat.agent } : {}),
+				origin: p.id
+			}
+		};
+	}
+	const revealFile = (path: string) => revealItemInDir(path).catch((e) => toast.error(String(e)));
+
 	function openAttachment(path: string, files: string[]) {
 		filePreviews.open(session.id, path, files);
 	}
@@ -1916,7 +1947,7 @@
 	<main bind:this={scroller} onscroll={onScroll} onwheel={onWheel} onpointerdown={reader.down}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div bind:this={contentEl} oncontextmenu={onFileMenu}>
-			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} busy={turnOpen} foldTurns={prefs.foldTurns} root={project?.path || chat.cwd || ''} />
+			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} busy={turnOpen} foldTurns={prefs.foldTurns} root={project?.path || chat.cwd || ''} onReveal={revealFile} onSchedule={scheduleFrom} onDeclineSchedule={(p) => proposals.set(p.id, 'declined')} scheduleState={(id) => proposals.state(id, agentDirectory.schedules)} />
 		</div>
 		{#if chat.booting && chat.engineState !== 'exited'}
 			<div class="welcome spawning">
@@ -2085,6 +2116,10 @@
 	</div>
 </div>
 
+{#if proposing}
+	{@const made = proposing}
+	<ScheduleDialog agent={chat.agent ?? ''} agents={proposalAgents} preset={made.preset} onSaved={() => proposals.set(made.id, 'created')} onClose={() => (proposing = null)} />
+{/if}
 {#if fileMenu}
 	<div class="file-menu" use:portal bind:this={fileMenuEl} style:left="{fileMenuPos.x}px" style:top="{fileMenuPos.y}px">
 		<PopMenu items={fileMenuItems} title={fileMenu.target ? undefined : t('chat.fileMenu.missing')} placement="down-left" fit={false} onSelect={runFileMenu} onClose={() => (fileMenu = null)} />
