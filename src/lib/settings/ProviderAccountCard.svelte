@@ -9,7 +9,7 @@
 	import WalletIcon from 'phosphor-svelte/lib/WalletIcon';
 	import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon';
 	import { t } from '$lib/i18n';
-	import { shownBalanceText } from '$lib/money';
+	import { balanceWithBonusText, shownBalanceText, type BalanceInfo } from '$lib/money';
 	import { prefs } from '$lib/prefs.svelte';
 	import Vendor from '$lib/Vendor.svelte';
 	import ProviderBalance from '$lib/settings/ProviderBalance.svelte';
@@ -68,7 +68,7 @@
 		deepseekBal: DeepseekBalance | null;
 		deepseekTotal: { total_balance: string; currency: string } | null;
 		monoizeBal: DeepseekBalance | null;
-		monoizeTotal: { total_balance: string; currency: string } | null;
+		monoizeTotal: BalanceInfo | null;
 		monoizeModelsMsg: string;
 		monoizeUser: { username: string } | null;
 		keyInput: string;
@@ -104,15 +104,15 @@
 		</span>
 		<span class="pcard-right">
 			{#if provider.id === 'lynshen' && monoizeUser && monoizeTotal}
-				<span class="bal"><WalletIcon size={12} /> {monoizeUser.username} · {shownBalanceText(monoizeTotal.total_balance, monoizeTotal.currency, prefs.balanceCurrency)}</span>
+				<span class="bal"><WalletIcon size={12} /> {monoizeUser.username} · {balanceWithBonusText(monoizeTotal, prefs.balanceCurrency)}</span>
 			{:else if provider.id === 'lynshen' && !monoizeUser}
 				<span class="stat">{t('settings.account.notLoggedIn')}</span>
 			{:else if authed && provider.id === 'deepseek' && deepseekTotal}
 				<span class="bal"><WalletIcon size={12} /> {shownBalanceText(deepseekTotal.total_balance, deepseekTotal.currency, prefs.balanceCurrency)}</span>
 			{:else if provider.id === 'monoize' && monoizeUser && monoizeTotal}
-				<span class="bal"><WalletIcon size={12} /> {monoizeUser.username} · {shownBalanceText(monoizeTotal.total_balance, monoizeTotal.currency, prefs.balanceCurrency)}</span>
+				<span class="bal"><WalletIcon size={12} /> {monoizeUser.username} · {balanceWithBonusText(monoizeTotal, prefs.balanceCurrency)}</span>
 			{:else if authed && provider.id === 'monoize' && monoizeTotal}
-				<span class="bal"><WalletIcon size={12} /> {shownBalanceText(monoizeTotal.total_balance, monoizeTotal.currency, prefs.balanceCurrency)}</span>
+				<span class="bal"><WalletIcon size={12} /> {balanceWithBonusText(monoizeTotal, prefs.balanceCurrency)}</span>
 			{:else if provider.id === 'monoize' && !monoizeUser && !authed}
 				<span class="stat">{t('settings.account.notLoggedIn')}</span>
 			{:else if authed}
