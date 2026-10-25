@@ -87,7 +87,8 @@
 	import RecapCard from '$lib/RecapCard.svelte';
 	import { markStopped, recapOf, type Recap } from '$lib/recap';
 	import { collapse } from '$lib/ui/motion';
-	import RateLimitBanner from '$lib/RateLimitBanner.svelte';
+	import UsageLimit from '$lib/UsageLimit.svelte';
+	import { limitResume } from '$lib/limitResume.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import SideAnswers from '$lib/SideAnswers.svelte';
 	import ProgressCards from '$lib/agents/ProgressCards.svelte';
@@ -391,9 +392,14 @@
 		void chat.busy;
 		if (viaGateway) untrack(() => trial.funding === 'plan' && trial.refreshSoon());
 	});
-	// A new turn (sent, retried, from another device) ends the wait.
+	// A new turn (sent, retried, from another device) ends the waits: the
+	// plan's window and a usage limit's reset.
 	$effect(() => {
-		if (chat.busy) untrack(() => planWaits.cancel(session.id));
+		if (chat.busy)
+			untrack(() => {
+				planWaits.cancel(session.id);
+				if (chat.resumeAtReset) limitResume.cancel(chat);
+			});
 	});
 
 	// An error notice's fix button.
@@ -1182,6 +1188,7 @@
 	function stop() {
 		if (chat.busy) markStopped(chat.messages);
 		autoRetry.cancel(chat);
+		limitResume.cancel(chat);
 		planWaits.cancel(session.id);
 		send({ op: 'interrupt' });
 	}
@@ -1913,7 +1920,17 @@
 			<p class="interm">{t('chat.inTerminal')}</p>
 		{/if}
 		{#if chat.rateLimit}
-			<RateLimitBanner rateLimit={chat.rateLimit} onDismiss={() => (chat.rateLimit = null)} />
+			<UsageLimit
+				limit={chat.rateLimit}
+				backend={chat.backendId}
+				resumeArmed={chat.resumeAtReset}
+				onResume={() => limitResume.arm(chat)}
+				onCancelResume={() => limitResume.cancel(chat)}
+				onDismiss={() => {
+					limitResume.cancel(chat);
+					chat.rateLimit = null;
+				}}
+			/>
 		{/if}
 
 		{#if chat.planRevising}

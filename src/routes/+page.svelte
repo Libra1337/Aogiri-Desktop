@@ -70,6 +70,7 @@
 	import { SessionStore, listedSessions } from '$lib/session.svelte';
 	import { workspaces } from '$lib/workbench/workspaceStore.svelte';
 	import { autoRetry } from '$lib/autoRetry.svelte';
+	import { limitResume } from '$lib/limitResume.svelte';
 	import { refreshLynShenModels } from '$lib/lynshenModels';
 	import {
 		activateTab,
@@ -1594,6 +1595,8 @@
 			cleanups.push(() => (ChatState.onFilesEdited = null));
 			// A turn that failed on the connection is picked back up (autoRetry.ts).
 			autoRetry.store = store;
+			// A turn a plan's usage limit stopped goes on at the reset, if asked (limitResume.ts).
+			limitResume.store = store;
 			ChatState.onTurnFailed = (c, message, started) => autoRetry.failed(c, message, started);
 			cleanups.push(() => (ChatState.onTurnFailed = null));
 			if (disposed) {

@@ -41,6 +41,7 @@
 	import MessageList from '$lib/MessageList.svelte';
 	import ApprovalCard from '$lib/ApprovalCard.svelte';
 	import RecapCard from '$lib/RecapCard.svelte';
+	import UsageLimit from '$lib/UsageLimit.svelte';
 	import { recapOf, type Recap } from '$lib/recap';
 	import { collapse } from '$lib/ui/motion';
 	import Vendor from '$lib/Vendor.svelte';
@@ -914,6 +915,9 @@
 		{/if}
 		{#if chat.inTerminal}
 			<p class="interm">{t('chat.inTerminal')}</p>
+		{/if}
+		{#if chat.rateLimit}
+			<div class="approval"><UsageLimit limit={chat.rateLimit} backend={chat.backendId} resumeArmed={false} onDismiss={() => (chat.rateLimit = null)} /></div>
 		{/if}
 		{#if recap && !chat.pendingApproval}
 			<!-- The end of a turn hands control back, as on the desktop: the

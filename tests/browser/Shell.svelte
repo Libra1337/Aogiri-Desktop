@@ -267,6 +267,14 @@
 		feed({ type: 'status', message: 'ready' });
 	}
 
+	// ?shell&limit=warning|limited: a subscription's usage limit, as Claude
+	// Code reports it through the daemon (window, used, resets_at).
+	const limitMode = mode.get('limit');
+	if (limitMode !== null) {
+		const hit = limitMode === 'limited';
+		feed({ type: 'rate_limit', level: hit ? 'limited' : 'warning', message: '', resets_at: Date.now() + (hit ? 2 * 3_600_000 + 17 * 60_000 : 26 * 3_600_000), window: hit ? 'five_hour' : 'seven_day', used: hit ? 100 : 83, overage: false });
+	}
+
 	// A sandbox request, as the engine sends it.
 	const escalation = (callId: string) => ({
 		type: 'approval_request',
