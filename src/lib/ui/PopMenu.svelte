@@ -22,6 +22,7 @@
 </script>
 
 <script lang="ts">
+	import { overBrowser } from '$lib/browser.svelte';
 	import { popOut } from '$lib/ui/motion';
 	// The app's list popover: an optional gray question on top, then rows of
 	// icon · label (· gray description) with a check on the current choice.
@@ -133,7 +134,7 @@
 <svelte:window onkeydown={onKey} onpointerdowncapture={onPress} onresize={place} />
 
 <button class="pm-backdrop" aria-label={t('common.close')} tabindex="-1" onclick={onClose}></button>
-<div class="pop pm {shown}" role="menu" bind:this={menu} out:popOut|global>
+<div use:overBrowser class="pop pm {shown}" role="menu" bind:this={menu} out:popOut|global>
 	{#if title}<div class="pop-head">{title}</div>{/if}
 	{#each items as it, i (it.key)}
 		{#if it.group && it.group !== items[i - 1]?.group}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { overBrowser } from '$lib/browser.svelte';
 	import { popOut } from '$lib/ui/motion';
 	import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
@@ -44,7 +45,7 @@
 	</button>
 	{#if open}
 		<button class="backdrop" aria-label={t('common.close')} onclick={() => (open = false)}></button>
-		<div class="menu" out:popOut|global>
+		<div use:overBrowser class="menu" out:popOut|global>
 			{#each options as o, i (o.value)}
 				{#if o.group && (i === 0 || options[i - 1]?.group !== o.group)}
 					<div class="opt-group">{o.group}</div>

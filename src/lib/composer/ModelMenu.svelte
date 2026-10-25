@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { overBrowser } from '$lib/browser.svelte';
 	import { popOut } from '$lib/ui/motion';
 	import { onMount, tick } from 'svelte';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
@@ -245,7 +246,7 @@
 	/>
 {:else}
 <button class="mm-backdrop" aria-label={t('common.close')} tabindex="-1" onclick={onClose}></button>
-<div class="pop mm" role="dialog" out:popOut|global aria-label={t('chat.switchModel')} bind:this={popEl} style:left="{popLeft}px" style:top="{popTop}px">
+<div use:overBrowser class="pop mm" role="dialog" out:popOut|global aria-label={t('chat.switchModel')} bind:this={popEl} style:left="{popLeft}px" style:top="{popTop}px">
 	{#if page === 'main'}
 		<section class="current">
 			{#if canPickModel}

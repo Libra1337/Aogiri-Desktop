@@ -7,6 +7,7 @@
 	import SelectionIcon from 'phosphor-svelte/lib/SelectionIcon';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { browser } from '$lib/browser.svelte';
+	import { devServers, shortUrl } from '$lib/devServers.svelte';
 	import { prefs } from '$lib/prefs.svelte';
 	import { t } from '$lib/i18n';
 
@@ -82,8 +83,23 @@
 			<SelectionIcon size={14} />
 		</button>
 	</form>
+	<!-- The servers the agents' commands started: one click opens one. -->
+	{#if devServers.list.length}
+		<div class="servers">
+			<span class="slabel">{t('shell.devServer.list')}</span>
+			{#each devServers.list as s (s.port)}
+				<button type="button" class="server" class:current={browser.url.startsWith(s.url)} title={s.url} onclick={() => browser.open(s.url)}>{shortUrl(s.url)}</button>
+			{/each}
+		</div>
+	{/if}
 	{#if browser.picking}
 		<div class="pickhint">{t('dock.browser.pickHint')}</div>
+	{/if}
+	{#if browser.error}
+		<div class="loaderr" role="alert">
+			<span>{browser.error}</span>
+			<button type="button" onclick={() => browser.open(browser.url)}>{t('dock.browser.retry')}</button>
+		</div>
 	{/if}
 	<div class="ph" bind:this={placeholder}>
 		{#if !browser.created}
@@ -155,6 +171,79 @@
 		background: var(--accent-soft);
 		padding: 5px 10px;
 		flex-shrink: 0;
+	}
+	.servers {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 5px 10px;
+		border-bottom: 1px solid var(--hairline);
+		overflow-x: auto;
+		flex-shrink: 0;
+	}
+	.slabel {
+		flex-shrink: 0;
+		color: var(--dim2);
+		font-size: var(--fs-2xs);
+	}
+	.server {
+		flex-shrink: 0;
+		padding: 2px 7px;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		background: none;
+		color: var(--dim);
+		font-family: var(--font-mono);
+		font-size: var(--fs-2xs);
+		cursor: pointer;
+		transition:
+			color var(--t-fast) var(--ease-base),
+			border-color var(--t-fast) var(--ease-base);
+	}
+	.server:hover,
+	.server.current {
+		color: var(--text);
+		border-color: var(--border-strong);
+	}
+	/* A page that would not load: the --err dot, why, and 重试. */
+	.loaderr {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 6px 10px;
+		border-bottom: 1px solid var(--hairline);
+		color: var(--text);
+		font-size: var(--fs-xs);
+		flex-shrink: 0;
+	}
+	.loaderr span {
+		flex: 1;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.loaderr span::before {
+		content: '';
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		margin-right: 7px;
+		border-radius: 50%;
+		background: var(--err);
+		vertical-align: 1px;
+	}
+	.loaderr button {
+		flex-shrink: 0;
+		padding: 2px 8px;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		background: none;
+		color: var(--dim);
+		font: inherit;
+		cursor: pointer;
+	}
+	.loaderr button:hover {
+		color: var(--text);
+		background: var(--surface2);
 	}
 	.ph {
 		flex: 1;

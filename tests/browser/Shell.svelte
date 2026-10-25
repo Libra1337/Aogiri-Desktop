@@ -79,6 +79,7 @@
 	//   &openfile               the app's editor beside the conversation (a Read
 	//                           row opens its file there); `window.__editor`
 	//   &drop=<n>               files dragged over the window (the drop layer)
+	//   &devserver              a dev server comes up: the corner notice
 	//   &deliver[=old]          a third turn that presented an image, a video and
 	//                           a page, proposed a scheduled task and started a
 	//                           conversation (=old: a daemon whose tasks carry no
@@ -104,6 +105,8 @@
 	import ContextMenuHost from '../../src/lib/ui/ContextMenuHost.svelte';
 	import ConfirmHost from '../../src/lib/ui/ConfirmHost.svelte';
 	import Toaster from '../../src/lib/ui/Toaster.svelte';
+	import CornerNotices from '../../src/lib/ui/CornerNotices.svelte';
+	import { devServers } from '../../src/lib/devServers.svelte';
 	import TrialGrantCard from '../../src/lib/TrialGrantCard.svelte';
 	import { trial } from '../../src/lib/trial.svelte';
 	import { SessionStore } from '../../src/lib/session.svelte';
@@ -562,6 +565,15 @@
 		if (adapter) adapter.encodeOp = (op: Op) => (sent.push(op), []);
 	}
 	Object.assign(window, { __shellChat: session.chat, __shellSession: session.id, __shellStore: store, __opened: opened, __sent: sent });
+	// ?shell&devserver: the daemon lists no server when the window connects,
+	// then one this conversation's command started (as +page.svelte wires it);
+	// `window.__devServers(frame)` sends another list.
+	if (mode.has('devserver')) {
+		devServers.titleOf = (sid) => (sid === 's-shell' ? session.chat.title : '');
+		devServers.handle({ type: 'dev_servers', servers: [] });
+		setTimeout(() => devServers.handle({ type: 'dev_servers', servers: [{ port: 5173, url: 'http://localhost:5173/', pid: 4242, name: 'node', session: 's-shell' }] }), 300);
+		Object.assign(window, { __devServers: (frame: Record<string, unknown>) => devServers.handle(frame) });
+	}
 	$effect(() => {
 		const request = subagentPages.request;
 		if (request) untrack(() => opened.push(`agent:${request.agentId}:${request.place}`));
@@ -622,6 +634,7 @@
 {#if mode.get('drop')}<DropLayer count={Number(mode.get('drop'))} />{/if}
 {#if mode.has('files') || mode.has('tabmenu')}<ContextMenuHost />{/if}
 <Toaster />
+<CornerNotices />
 <TrialGrantCard />
 <div class="app">
 	<TitleBar

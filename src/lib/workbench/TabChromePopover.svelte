@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { overBrowser } from '$lib/browser.svelte';
 	import { popOut } from '$lib/ui/motion';
 	import { tick, type Snippet } from 'svelte';
 	import ProhibitIcon from 'phosphor-svelte/lib/ProhibitIcon';
@@ -110,6 +111,7 @@
 
 <button class="backdrop" aria-label={t('common.close')} onclick={onClose} oncontextmenu={(e) => { e.preventDefault(); onClose(); }}></button>
 <div
+	use:overBrowser
 	class="pop"
 	out:popOut|global
 	role="dialog"

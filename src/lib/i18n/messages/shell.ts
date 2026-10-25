@@ -102,6 +102,12 @@ const shell = {
 			retry: '重试',
 			openDownload: '打开下载页'
 		},
+		devServer: {
+			started: '开发服务器已启动',
+			opened: '开发服务器已启动，已在内置浏览器打开',
+			open: '打开',
+			list: '本地服务'
+		},
 		daemonUpdate: {
 			idle: '后台服务会在没有任务运行时更新到 {version}',
 			idleRebuilt: '后台服务会在没有任务运行时换成新构建的 lynshen',
@@ -1257,6 +1263,12 @@ const shell = {
 			later: 'Later',
 			retry: 'Try again',
 			openDownload: 'Open download page'
+		},
+		devServer: {
+			started: 'A dev server started',
+			opened: 'A dev server started and opened in the built-in browser',
+			open: 'Open',
+			list: 'Local servers'
 		},
 		daemonUpdate: {
 			idle: 'The background service updates to {version} once no task is running',
