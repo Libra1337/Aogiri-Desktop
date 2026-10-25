@@ -13,6 +13,13 @@ describe('packaged-app CSP', () => {
 		expect(sec.dangerousDisableAssetCspModification).toContain('style-src');
 	});
 
+	it('plays the videos an agent presents', () => {
+		// A presented video plays from the asset protocol, which default-src
+		// 'self' would block.
+		expect(sec.csp['media-src']).toContain('asset:');
+		expect(sec.csp['media-src']).toContain('http://asset.localhost');
+	});
+
 	it('allows inlined fonts', () => {
 		// Vite inlines small font files as data: URLs (a KaTeX font is one).
 		expect(sec.csp['font-src']).toContain('data:');

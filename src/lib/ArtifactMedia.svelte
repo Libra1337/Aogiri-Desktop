@@ -49,11 +49,21 @@
 
 	let gone = false;
 	onDestroy(() => (gone = true));
+	/** A data URL's bytes as a blob (no fetch: the phone page's CSP lets
+	 *  it connect only to its own origin and the relay). */
+	function blobOf(dataUrl: string): Blob {
+		const comma = dataUrl.indexOf(',');
+		const mime = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? 'application/octet-stream';
+		const bin = atob(dataUrl.slice(comma + 1));
+		const bytes = new Uint8Array(bin.length);
+		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+		return new Blob([bytes], { type: mime });
+	}
 	async function fetchVideo() {
 		if (!load) return;
 		fetching = true;
 		try {
-			const blob = await (await fetch(await load(path))).blob();
+			const blob = blobOf(await load(path));
 			if (!gone) loaded = URL.createObjectURL(blob);
 		} catch {
 			failed = true;
