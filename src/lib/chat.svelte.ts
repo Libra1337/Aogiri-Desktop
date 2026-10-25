@@ -2454,11 +2454,11 @@ export class ChatState {
 				const status = str(ev.status) === 'message' ? (prev?.status ?? 'running') : str(ev.status);
 				const now = Date.now();
 				const ended = FINAL_AGENT.includes(status);
-				// The end of a subagent this conversation never saw start (one
-				// from before the engine process started), with nothing to say:
-				// no row. One with a label or a message (the agent team's failure)
-				// still shows.
-				if (ended && !prev && !str(ev.label) && !str(ev.message)) break;
+				// Claude Code and Codex: the end of a subagent this conversation
+				// never saw start (one from before the engine process started),
+				// with nothing to say, starts no row. LynShen's agent team reports
+				// some of its agents only by their end: those keep their row.
+				if (ended && !prev && this.backendId !== 'lynshen' && !str(ev.label) && !str(ev.message)) break;
 				this.subagents[path] = {
 					status,
 					message: str(ev.message) || (str(ev.status) === 'message' ? (prev?.message ?? '') : ''),

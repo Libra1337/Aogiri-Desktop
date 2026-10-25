@@ -348,10 +348,16 @@ describe('ChatState.handle', () => {
 
 	it('starts no row for the bare end of a subagent it never saw, and keeps one that says something', () => {
 		const c = new ChatState();
+		c.backendId = 'claude';
 		c.handle({ type: 'subagent_lifecycle', path: 'old', status: 'completed' });
 		expect(c.subagents.old).toBeUndefined();
 		c.handle({ type: 'subagent_lifecycle', path: '/root/fix', status: 'failed', message: 'worktree conflict' });
 		expect(c.subagents['/root/fix']).toMatchObject({ status: 'failed' });
+		// LynShen's agent team: an end alone keeps its row.
+		const team = new ChatState();
+		team.backendId = 'lynshen';
+		team.handle({ type: 'subagent_lifecycle', path: '/root/z', status: 'completed' });
+		expect(team.subagents['/root/z']).toMatchObject({ status: 'completed' });
 	});
 
 	it('resolves a pencil rewind intent from checkpoint_view by position', () => {
