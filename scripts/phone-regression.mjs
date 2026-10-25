@@ -457,6 +457,20 @@ try {
 			await desk.locator('.code').getByRole('button', { name: '关闭' }).click();
 			await expect.poll(async () => (await deskOps()).some((o) => o.op === 'pair_cancel')).toBe(true);
 			await desk.close();
+			// The images and videos an agent presented (B07 P07): the computer
+			// reads them (fs_image), a video only when tapped; no file manager.
+			const shown = await ctx.newPage();
+			shown.on('pageerror', (e) => errors.push(e.message));
+			await shown.goto(`${base}?remoteHost&open=s-cache&scopes=full_access&deliver`);
+			await expect(shown.locator('.deliver .card')).toHaveCount(3);
+			await expect(shown.locator('.deliver img')).toHaveCount(1);
+			await expect(shown.locator('.deliver .card .ib')).toHaveCount(0);
+			const presentedOps = () => shown.evaluate(() => window.__remoteOps.filter((o) => o.op === 'fs_image').map((o) => o.path.split('/').pop()));
+			await expect.poll(presentedOps).toEqual(['q3-mau.png']);
+			await shown.locator('.deliver button.ph').tap();
+			await expect(shown.locator('.deliver video')).toHaveCount(1);
+			await expect.poll(presentedOps).toEqual(['q3-mau.png', 'demo.webm']);
+			await shown.close();
 			assert.deepEqual(errors, [], 'no page errors');
 			console.log(`${name}: PHONE CHECKS PASSED`);
 		} catch (e) {

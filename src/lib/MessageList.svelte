@@ -779,6 +779,20 @@
 		return { lead, hidden };
 	});
 	type ToolMsg = Extract<Msg, { kind: 'tool' }>;
+	/** One call as a run's line reads it, kept while its output is the same:
+	 *  a streaming call's updates parse only its own output again. */
+	type CallFacts = { failed: boolean; edit: boolean; paths: string[]; stat: { add: number; del: number } | null };
+	const callFacts = new WeakMap<Msg, { output: string; isError: boolean; facts: CallFacts }>();
+	function factsOf(x: ToolMsg): CallFacts {
+		const known = callFacts.get(x);
+		if (known && known.output === x.output && known.isError === x.isError) return known.facts;
+		const parsed = parseToolOutput(x.output);
+		const failed = toolFailed(x, parsed);
+		const edit = isEdit(x.name, parsed);
+		const facts = { failed, edit, paths: edit && !failed ? editedPaths(parsed) : [], stat: edit && !failed ? diffStat(parsed) : null };
+		callFacts.set(x, { output: x.output, isError: x.isError, facts });
+		return facts;
+	}
 	/** A run's line: its calls, whether one runs, how many failed, the
 	 *  latest call, and — for a run that only edits — the files it edited;
 	 *  the lines its edits added and removed. */
@@ -792,26 +806,20 @@
 		let counted = false;
 		const files = new Set<string>();
 		for (const x of tools) {
-			const parsed = parseToolOutput(x.output);
-			const bad = toolFailed(x, parsed);
+			const f = factsOf(x);
 			if (x.running) running = true;
-			if (bad) failed++;
-			if (!isEdit(x.name, parsed)) {
-				onlyEdits = false;
-				continue;
-			}
-			if (bad) continue;
-			for (const p of editedPaths(parsed)) files.add(p);
-			const stat = diffStat(parsed);
-			if (stat) {
+			if (f.failed) failed++;
+			if (!f.edit) onlyEdits = false;
+			for (const p of f.paths) files.add(p);
+			if (f.stat) {
 				counted = true;
-				add += stat.add;
-				del += stat.del;
+				add += f.stat.add;
+				del += f.stat.del;
 			}
 		}
-		const last = tools[tools.length - 1];
-		const latest = last ? { Icon: toolIcon(last.name), verb: toolVerb(last.name), target: toolTarget(last.name, parseToolOutput(last.output)) } : null;
 		const edited = onlyEdits && files.size ? [...files].map((p) => p.split(/[\\/]/).pop() || p) : null;
+		const last = tools[tools.length - 1];
+		const latest = last && !edited ? { Icon: toolIcon(last.name), verb: toolVerb(last.name), target: toolTarget(last.name, parseToolOutput(last.output)) } : null;
 		return { tools, running, failed, latest, edited, stat: counted ? { add, del } : null };
 	}
 

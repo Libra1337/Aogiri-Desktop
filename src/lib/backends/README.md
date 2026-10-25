@@ -74,6 +74,18 @@ from before sends none, and the app keeps its old behaviour:
 
 A `steer` takes the message in once a running tool ends; it never cuts the tool.
 
+### App tools and dev servers (LynShen CLI 0.7.9+)
+
+These have no `features` entry: the app reads what the daemon sends and
+does without when it sends nothing.
+
+| what | with it | without it |
+|------|---------|------------|
+| `present_files` / `propose_schedule` / `start_session` / `wait_session` cards (`tool_output`) | the turn's summary under its last row (`turnSummary.ts`): deliverables, images and videos shown (desktop: the asset protocol; phone: `fs_image`), proposals with 创建 / 不用了, the conversations it started | no such calls, so no summary |
+| `schedule_save` `origin` and `schedules[].origin` | a proposal's card says 已创建 on every device | the choice is kept on this device (`proposals.svelte.ts`) |
+| `app_tools` / `app_tools_set` | Settings → 应用工具 has all three switches | only 跨对话消息, written to config.json |
+| `dev_servers` (daemon-wide, on connect and on change) | a corner notice for each new server (`devServers.svelte.ts`), the browser lists them | nothing shows |
+
 ### Capability flags → UI surfaces
 
 `caps.ts` says which protocol features each backend's engine supports.
