@@ -487,6 +487,7 @@
 	const work = mode.get('work');
 	if (work && !mode.has('empty')) {
 		feed({ type: 'user_message', content: '把会话缓存改成按会话分片，跑完单元测试再提交。' });
+		feed({ type: 'connecting' });
 		feed({ type: 'status', message: 'streaming' });
 		const tool = (id: string, name: string, update?: string) => {
 			feed({ type: 'tool_start', call_id: id, name });

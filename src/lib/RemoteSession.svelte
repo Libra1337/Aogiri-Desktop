@@ -485,7 +485,10 @@
 	/** A queued message's row, picked by its place and text in the queue as
 	 *  shown. Stopping the turn shows Stop at once, as the stop button does. */
 	function queueAction(action: QueueAction) {
-		if (action.kind === 'interrupt') stopping = true;
+		if (action.kind === 'interrupt') {
+			stopping = true;
+			if (chat.busy) chat.stopAsked = true;
+		}
 		if (action.kind === 'steer') chat.steerPick = chat.pendingMessages.at(action.index) ?? null;
 		send(queueOp(action, chat.pendingMessages));
 	}
@@ -620,6 +623,7 @@
 	}
 	function stop() {
 		stopping = true;
+		if (chat.busy) chat.stopAsked = true;
 		send({ op: 'interrupt' });
 	}
 
@@ -900,6 +904,7 @@
 				{streamingReasoning}
 				phase={chat.phase}
 				call={chat.call}
+				turnSince={chat.busy ? chat.turnStartedAt : 0}
 				compactionTokens={chat.compactionTokens}
 				traceOf={bcaps.agentTrace ? traceOf : undefined}
 				agents={allAgents}

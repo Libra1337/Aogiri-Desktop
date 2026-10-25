@@ -116,6 +116,13 @@ export interface CallTiming {
 	since: number;
 }
 
+/** A step of the conversation's course the reader should see where it
+ *  happened: a turn the reader stopped, the engine restarting or the app
+ *  reconnecting to the daemon, another model or provider, a turn picked up
+ *  again, background work done, a deferred action. (Compaction has its own
+ *  card, CompactionCard.svelte.) */
+export type Flow = { type: 'interrupted' | 'restart' | 'reconnect' | 'switch' | 'fallback' | 'retry' | 'task' | 'action' };
+
 export type Msg =
 	/** `files`: what it sent besides images, as attachments the engine echoes
 	 *  (`files`), not listed in the text (a daemon before them gets the list
@@ -183,7 +190,10 @@ export type Msg =
 			 *  which its later updates (the output so far) replace. */
 			target?: string;
 	  }
-	| { kind: 'system'; text: string }
+	/** A note. With `flow` it marks a step of the conversation's own course
+	 *  where it happened (a divider in the transcript, FlowMarker.svelte);
+	 *  without, engine chatter for the notices strip (statusLog). */
+	| { kind: 'system'; text: string; flow?: Flow }
 	| { kind: 'error'; text: string }
 	/** The engine went away during the turn (it exited, or the connection to
 	 *  the daemon dropped): the turn ended here, unfinished (ChatState.cutShort). */
@@ -644,7 +654,7 @@ function replayMessages(items: Record<string, unknown>[]): Msg[] {
 
 function replayMessage(it: Record<string, unknown>): Msg | null {
 	const role = str(it.role);
-	if (role === 'user' && str(it.content) === AUTO_CONTINUE) return { kind: 'system', text: t('chat.autoRetry.resumed') };
+	if (role === 'user' && str(it.content) === AUTO_CONTINUE) return { kind: 'system', text: t('chat.autoRetry.resumed'), flow: { type: 'retry' } };
 	if (role === 'user') {
 		const images = arr<string>(it.images).filter((p) => typeof p === 'string');
 		const files = arr<string>(it.files).filter((p) => typeof p === 'string');
@@ -1355,9 +1365,22 @@ export class ChatState {
 		if (at >= 0) this.messages.splice(at, 1);
 	}
 
+	/** The model the engine last reported (model_status). */
+	#reportedModel = '';
+
+	/** The reader asked to stop the running turn (ChatPane's stop, 中断并
+	 *  发送): where it ends, a divider says so. */
+	stopAsked = false;
+
 	/** Stamp the turn's total elapsed onto its last assistant message. */
 	#endTurn() {
 		this.activeAt = Date.now();
+		// A turn the reader stopped says so where it stopped, once.
+		const stopped = this.stopAsked;
+		this.stopAsked = false;
+		const tail = this.messages[this.messages.length - 1];
+		if (stopped && this.#turnStart !== null && !(tail?.kind === 'system' && tail.flow?.type === 'interrupted'))
+			this.messages.push({ kind: 'system', text: '', flow: { type: 'interrupted' } });
 		// A compaction cut short (stopped, the engine gone) is not left spinning.
 		const compaction = this.#compaction();
 		if (compaction) {
@@ -1565,7 +1588,7 @@ export class ChatState {
 
 	get statusLog(): string[] {
 		const out: string[] = [];
-		for (const m of this.messages) if (m.kind === 'system') out.push(m.text);
+		for (const m of this.messages) if (m.kind === 'system' && !m.flow) out.push(m.text);
 		return out;
 	}
 
@@ -1975,6 +1998,15 @@ export class ChatState {
 			}
 			case 'model_status':
 				if (str(ev.model) !== this.model) this.#cacheWatch.reset();
+				// Another model in the same engine (/model, a pick in the menu):
+				// a divider where the conversation goes on with it. The first
+				// report, and a switch that restarts the engine (its own note),
+				// make none.
+				const tail = this.messages[this.messages.length - 1];
+				const noted = tail?.kind === 'system' && tail.flow?.type === 'switch';
+				if (str(ev.model) && this.#reportedModel && str(ev.model) !== this.#reportedModel && !this.switching && !noted && this.messages.some((m) => m.kind === 'user'))
+					this.messages.push({ kind: 'system', text: t('chat.flow.model', { model: str(ev.model_label) || str(ev.model) }), flow: { type: 'switch' } });
+				if (str(ev.model)) this.#reportedModel = str(ev.model);
 				this.provider = str(ev.provider);
 				this.model = str(ev.model);
 				this.modelLabel = str(ev.model_label);
@@ -2663,6 +2695,7 @@ export class ChatState {
 			case 'task_done':
 				this.messages.push({
 					kind: 'system',
+					flow: { type: 'task' },
 					text: t('chat.taskDone', {
 						kind: taskKindLabel(str(ev.kind)),
 						status: t(`chat.taskStatus.${['completed', 'failed', 'stopped'].includes(str(ev.status)) ? str(ev.status) : 'completed'}`),
@@ -2691,6 +2724,7 @@ export class ChatState {
 			case 'model_fallback':
 				this.messages.push({
 					kind: 'system',
+					flow: { type: 'fallback' },
 					text: t('chat.modelFallback', { from: str(ev.from), to: str(ev.to), reason: fallbackReason(str(ev.reason)) })
 				});
 				break;
@@ -2882,6 +2916,7 @@ export class ChatState {
 				const why = str(ev.justification).trim();
 				this.messages.push({
 					kind: 'system',
+					flow: { type: 'action' },
 					text: why
 						? t('chat.actionDeferredWhy', { name: str(ev.name), summary: str(ev.summary), why })
 						: t('chat.actionDeferred', { name: str(ev.name), summary: str(ev.summary) })
@@ -2891,6 +2926,7 @@ export class ChatState {
 			case 'action_decided':
 				this.messages.push({
 					kind: 'system',
+					flow: { type: 'action' },
 					text: t(ev.decision === 'allow' ? 'chat.actionAllowed' : 'chat.actionDenied', {
 						id: str(ev.id)
 					})

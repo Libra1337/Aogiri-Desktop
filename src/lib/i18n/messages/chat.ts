@@ -368,6 +368,8 @@ const chat = {
 			sourceGone: '找不到这个对话，它可能已被删除。'
 		},
 		appTools: { present: '展示了交付物', propose: '提议了定时任务' },
+		flow: { interrupted: '你停止了这一轮', model: '已换成 {model}' },
+		turnClock: '本轮用时',
 		artifacts: { label: '交付物' },
 		proposal: {
 			title: '定时任务提议',
@@ -1010,6 +1012,8 @@ const chat = {
 			sourceGone: 'That conversation is gone. It may have been deleted.'
 		},
 		appTools: { present: 'Presented deliverables', propose: 'Proposed a scheduled task' },
+		flow: { interrupted: 'You stopped this turn', model: 'Now on {model}' },
+		turnClock: 'This turn so far',
 		artifacts: { label: 'Deliverables' },
 		proposal: {
 			title: 'Proposed scheduled task',

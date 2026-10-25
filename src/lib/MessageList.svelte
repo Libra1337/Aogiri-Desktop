@@ -17,6 +17,7 @@
 	import EscalationLine from '$lib/sandbox/EscalationLine.svelte';
 	import PlanCard, { type PlanAction } from '$lib/PlanCard.svelte';
 	import CompactionCard from '$lib/CompactionCard.svelte';
+	import FlowMarker from '$lib/FlowMarker.svelte';
 	import RecapReceipt from '$lib/RecapReceipt.svelte';
 	import ArtifactCards from '$lib/ArtifactCards.svelte';
 	import ScheduleProposal from '$lib/ScheduleProposal.svelte';
@@ -64,6 +65,7 @@
 		streamingReasoning,
 		phase,
 		call = null,
+		turnSince = 0,
 		compactionTokens = 0,
 		retry = null,
 		autoRetry = null,
@@ -113,6 +115,8 @@
 		phase: string | null;
 		/** The model request in flight, timed live (see CallTiming). */
 		call?: CallTiming | null;
+		/** When the running turn began (the status line's turn clock). */
+		turnSince?: number;
 		compactionTokens?: number;
 		/** A failed model request being re-sent: shown instead of the phase. */
 		retry?: RetryState | null;
@@ -288,6 +292,7 @@
 			case 'reasoning':
 			case 'agent_message':
 			case 'escalation':
+			case 'system':
 				return 28;
 			case 'user':
 				return 48 + 24 * Math.floor(m.text.length / 60);
@@ -605,8 +610,9 @@
 
 	// Skip empty placeholders (e.g. an assistant message before its first delta).
 	function hasContent(m: Msg): boolean {
-		// Meta/status notices render in the collapsible status strip, not inline.
-		if (m.kind === 'system') return false;
+		// A step of the conversation's course shows where it happened
+		// (FlowMarker); other notes go to the notices strip.
+		if (m.kind === 'system') return !!m.flow;
 		// present_files / propose_schedule show in the turn's summary (turnSummary.ts).
 		if (m.kind === 'tool') return !!(m.name || m.output) && !USER_TOOLS.has(m.name);
 		if (m.kind === 'plan') return !!(m.title || m.text);
@@ -1000,6 +1006,8 @@
 			<AgentMessageLine from={m.from} to={m.to} summary={m.summary} />
 		{:else if m.kind === 'escalation'}
 			<EscalationLine record={m.record} />
+		{:else if m.kind === 'system' && m.flow}
+			<FlowMarker flow={m.flow} text={m.text} />
 		{:else if m.kind === 'cut'}
 			<!-- The engine went away during the turn: it ends here, unfinished. -->
 			<div class="cutmark" role="note" title={t('chat.cut.markerDetail')}>
@@ -1026,7 +1034,7 @@
 	{:else if autoRetry}
 		<RetryNotice retry={autoRetry} {backend} onNow={onAutoRetryNow} onCancel={onAutoRetryCancel} />
 	{:else}
-		<Indicator phase={shownPhase} tokens={compactionTokens} {call} {messages} onDetails={revealCall} />
+		<Indicator phase={shownPhase} tokens={compactionTokens} {call} {messages} {turnSince} onDetails={revealCall} />
 	{/if}
 </div>
 {#if cite}
