@@ -991,6 +991,8 @@ const shell = {
 			manage: '账号设置',
 			expires: '{date} 到期',
 			balance: '余额',
+			/** After the total balance: the gifted part of it. */
+			bonusSuffix: '（赠 {bonus}）',
 			unlimited: '不限额',
 			plan: '套餐',
 			noPlan: '未分配订阅套餐',
@@ -2139,6 +2141,8 @@ const shell = {
 			manage: 'Account settings',
 			expires: 'Expires {date}',
 			balance: 'Balance',
+			/** After the total balance: the gifted part of it. */
+			bonusSuffix: ' (incl. {bonus} bonus)',
 			unlimited: 'Unlimited',
 			plan: 'Plan',
 			noPlan: 'No subscription plan',

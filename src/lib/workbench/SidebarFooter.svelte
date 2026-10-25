@@ -6,7 +6,7 @@
 	import { t } from '$lib/i18n';
 	import { fetchMonoizeBalance } from '$lib/protocol';
 	import { account } from '$lib/accountSession.svelte';
-	import { shownBalanceText } from '$lib/money';
+	import { balanceWithBonusText, type BalanceInfo } from '$lib/money';
 	import { prefs } from '$lib/prefs.svelte';
 	import { avatarInitial } from '$lib/account';
 	import { accountAvatar } from '$lib/accountAvatar.svelte';
@@ -49,13 +49,13 @@
 	// The account as last read, kept from the last run (accountSession):
 	// its name shows at once, before this run's read answers.
 	const user = $derived(loggedIn ? account.user : null);
-	let raw = $state<{ total_balance: string; currency: string } | null>(null);
+	let raw = $state<BalanceInfo | null>(null);
 	let failed = $state(false);
 	const balance = $derived(
 		user?.balance_unlimited
 			? t('shell.account.unlimited')
 			: raw
-				? shownBalanceText(raw.total_balance, raw.currency, prefs.balanceCurrency)
+				? balanceWithBonusText(raw, prefs.balanceCurrency)
 				: null
 	);
 	const name = $derived(user?.username ?? (loggedIn ? 'LynShen' : t('shell.notLoggedIn')));

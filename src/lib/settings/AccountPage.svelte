@@ -32,7 +32,7 @@
 	import { accountAvatar } from '$lib/accountAvatar.svelte';
 	import { t } from '$lib/i18n';
 	import { prefs } from '$lib/prefs.svelte';
-	import { shownBalanceText } from '$lib/money';
+	import { balanceWithBonusText, shownBalanceText } from '$lib/money';
 	import { openExternal } from '$lib/openExternal';
 	import { avatarInitial, cacheHitText, liveCount, roleBadgeKey } from '$lib/account';
 	import { fetchMonoizeLiveUsage, readConfig, type LiveUsage, type MonoizeUser } from '$lib/protocol';
@@ -78,7 +78,7 @@
 	const billingPlan = $derived(user.billing_plan?.name?.trim() || '');
 	const money = (amount: string | undefined) =>
 		balance && amount != null ? shownBalanceText(amount, balance.currency, prefs.balanceCurrency) : '—';
-	const balanceText = $derived(user.balance_unlimited ? t('shell.account.unlimited') : balance ? money(balance.total_balance) : t('common.loading'));
+	const balanceText = $derived(user.balance_unlimited ? t('shell.account.unlimited') : balance ? balanceWithBonusText(balance, prefs.balanceCurrency) : t('common.loading'));
 
 	// The console's web address (the update prompt reads it the same way).
 	let web = $state('https://www.lynshen.org');

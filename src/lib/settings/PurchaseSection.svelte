@@ -10,7 +10,7 @@
 	import Notice from '$lib/ui/Notice.svelte';
 	import { t } from '$lib/i18n';
 	import { prefs } from '$lib/prefs.svelte';
-	import { shownBalanceText } from '$lib/money';
+	import { balanceWithBonusText, type BalanceInfo } from '$lib/money';
 	import { openExternal } from '$lib/openExternal';
 	import { account } from '$lib/accountSession.svelte';
 	import { GatewayError, fetchMonoizeBalance, fetchStoreCatalog, fetchStoreOrders, readConfig } from '$lib/protocol';
@@ -44,7 +44,7 @@
 	let loadError = $state<unknown>(null);
 	let loading = $state(true);
 	let orders = $state<StoreOrder[]>([]);
-	let balance = $state<{ total_balance: string; currency: string } | null>(null);
+	let balance = $state<BalanceInfo | null>(null);
 	let web = $state('https://www.lynshen.org');
 
 	async function load() {
@@ -91,7 +91,7 @@
 		account.user?.balance_unlimited
 			? t('shell.account.unlimited')
 			: balance
-				? shownBalanceText(balance.total_balance, balance.currency, prefs.balanceCurrency)
+				? balanceWithBonusText(balance, prefs.balanceCurrency)
 				: '—'
 	);
 	const storeUrl = $derived(`${web}/dashboard/store`);
