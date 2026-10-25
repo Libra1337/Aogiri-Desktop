@@ -190,7 +190,7 @@
 	// streaming/auto-scroll path is completely untouched. Heights are measured per
 	// message (cached by object identity) with an estimate for not-yet-seen rows.
 	const VIRTUAL_MIN = 40; // messages before windowing engages
-	const EST_ROW = 120; // px estimate for an unmeasured row
+	const EST_ROW = 120; // px estimate for an unmeasured row of no known kind
 	const GAP = 16; // px, matches .list gap
 	const OVERSCAN = 800; // px rendered beyond the viewport on each side
 
@@ -248,12 +248,34 @@
 		for (let i = 0; i < messages.length; i++) {
 			const m = messages[i];
 			// Unshown placeholders occupy no row (and no gap).
-			const h = shown(m) ? (heights.get(m) ?? EST_ROW) + GAP : 0;
+			const h = shown(m) ? (heights.get(m) ?? estimate(m)) + GAP : 0;
 			offs[i + 1] = offs[i] + h;
 		}
 		return offs;
 	});
 	const totalH = $derived(offsets[messages.length] ?? 0);
+
+	/** An unmeasured row's height by its kind and length, so the window a
+	 *  conversation opens with holds about a view of it: a folded turn or a
+	 *  run of tool calls is one line, a reply as tall as its text. (One
+	 *  guess for every row made the window hold twice the replies once
+	 *  turns folded.) */
+	function estimate(m: Msg): number {
+		if (folds.head.has(m) && folded(m)) return 24;
+		switch (m.kind) {
+			case 'tool':
+			case 'reasoning':
+			case 'agent_message':
+			case 'escalation':
+				return 28;
+			case 'user':
+				return 48 + 24 * Math.floor(m.text.length / 60);
+			case 'assistant':
+				return Math.min(2400, 40 + Math.round(m.text.length * 0.45));
+			default:
+				return EST_ROW;
+		}
+	}
 
 	// [first, last] inclusive window of rows to render.
 	const range = $derived.by(() => {
