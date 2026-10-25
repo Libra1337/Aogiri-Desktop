@@ -70,6 +70,13 @@
 	//                           hours), the plan ended, no plan at all, a model
 	//                           outside the plan, a fourth device (429
 	//                           plan_device_limit) (with &trial and &funding=plan)
+	//   &queue[=claude]         a turn at work with messages queued (Claude Code's
+	//                           first one fixed); `window.__sent` the ops. With
+	//                           ?features=queue,files the daemon's hello has
+	//                           them (fakeDaemon.ts); without, it is an old one
+	//   &openfile               the app's editor beside the conversation (a Read
+	//                           row opens its file there); `window.__editor`
+	//   &drop=<n>               files dragged over the window (the drop layer)
 	// `window.__prefs` is the preferences store (the regressions change the
 	// conversation width through it); `window.__shellChat` the conversation's
 	// chat (to send it more events), `window.__shellStore` its sessions,
@@ -108,6 +115,10 @@
 	import SettingsPage from '../../src/lib/settings/SettingsPage.svelte';
 	import { SIDEBAR_RAIL_WIDTH } from '../../src/lib/shell/sidebarState';
 	import { SAMPLE_PLAIN_IDS } from '../../src/lib/models/catalogSample';
+	import EditorPane from '../../src/lib/editor/EditorPane.svelte';
+	import { editorStore } from '../../src/lib/editor/editorStore.svelte';
+	import DropLayer from '../../src/lib/shell/DropLayer.svelte';
+	import { engine } from '../../src/lib/engineVersion.svelte';
 
 	const mode = new URL(location.href).searchParams;
 	const NAV_W = Number(mode.get('nav')) || 272;
@@ -462,7 +473,34 @@
 	// ?shell&styles: the engine says which reply style the conversation
 	// uses, so the "+" menu lists the styles (fakeDaemon.ts answers styles_list).
 	if (mode.has('styles')) feed({ type: 'reply_style', style: 'default', name: '默认', source: 'builtin', chosen: false, missing: false });
-	if (mode.has('cards') || mode.has('styles') || mode.has('recap')) {
+	// ?shell&queue: the third turn at work, a tool running, three messages
+	// sent meanwhile.
+	const queueMode = mode.get('queue');
+	if (queueMode !== null) {
+		if (queueMode === 'claude') {
+			session.backendId = 'claude';
+			session.chat.backendId = 'claude';
+		}
+		feed({ type: 'user_message', content: '把会话缓存改成按会话分片，跑完单元测试再提交。' });
+		feed({ type: 'connecting' });
+		feed({ type: 'status', message: 'streaming' });
+		feed({ type: 'tool_start', call_id: 'q1', name: 'bash' });
+		feed({ type: 'tool_update', call_id: 'q1', name: 'bash', output: 'started: pnpm vitest run src/lib/cache.test.ts' });
+		feed({
+			type: 'pending_messages',
+			messages: ['顺便把 README 里的缓存一节也改了', '测试过了再提交，别推送', '提交信息用中文'],
+			...(queueMode === 'claude' ? { fixed: 1 } : {})
+		});
+	}
+	// As +page.svelte does: the daemon's hello says what it takes.
+	if (queueMode !== null || mode.has('openfile')) {
+		daemon.onHello = (version, features) => {
+			engine.version = version;
+			engine.features = features;
+		};
+		void daemon.connect();
+	}
+	if (mode.has('cards') || mode.has('styles') || mode.has('recap') || queueMode !== null || mode.has('openfile')) {
 		clearDraft(session.id);
 		const adapter = adapterFor(session.id);
 		if (adapter) adapter.encodeOp = (op: Op) => (sent.push(op), []);
@@ -505,7 +543,7 @@
 		const backdrop = mode.get('backdrop');
 		if (backdrop) document.documentElement.style.background = backdrop === 'black' ? '#000' : '#fff';
 		prefs.init();
-		Object.assign(window, { __prefs: prefs, __chat: session.chat });
+		Object.assign(window, { __prefs: prefs, __chat: session.chat, __editor: editorStore });
 		// As +page.svelte does once the sign-in is known.
 		if (mode.has('trial')) Object.assign(window, { __trial: trial, __trialDone: trial.signedIn() });
 	});
@@ -525,6 +563,7 @@
 {/snippet}
 
 <ConfirmHost />
+{#if mode.get('drop')}<DropLayer count={Number(mode.get('drop'))} />{/if}
 {#if mode.has('files') || mode.has('tabmenu')}<ContextMenuHost />{/if}
 <Toaster />
 <TrialGrantCard />
@@ -608,6 +647,12 @@
 							{/if}
 						{/snippet}
 					</Mosaic>
+				{:else if mode.has('openfile')}
+					<!-- The app's editor beside the conversation, shown once a file opens. -->
+					<div class="with-editor">
+						<div class="ed-chat">{@render chat()}</div>
+						{#if editorStore.visible}<div class="ed-pane"><EditorPane /></div>{/if}
+					</div>
 				{:else}
 					{@render chat()}
 				{/if}
@@ -684,5 +729,22 @@
 		border-left: 1px solid var(--divider);
 		background: var(--bg);
 		position: relative;
+	}
+	.with-editor {
+		flex: 1;
+		display: flex;
+		min-height: 0;
+	}
+	.ed-chat {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		position: relative;
+	}
+	.ed-pane {
+		width: 46%;
+		display: flex;
+		border-left: 1px solid var(--divider);
 	}
 </style>

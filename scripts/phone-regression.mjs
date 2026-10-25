@@ -368,6 +368,69 @@ try {
 			assert.match(await calmCard.evaluate((el) => getComputedStyle(el).animationName), /fade-only/);
 			await calm.close();
 
+			// P05: the queue tray on the phone, on a computer whose daemon says
+			// \`queue\` and \`files\` in its hello: every row action, always shown,
+			// on its own line; the taken-back message and its file come back;
+			// Claude Code's fixed row only shows; a file goes as \`files\`. On an
+			// older computer (no \`features\`): take-back and the single 插入 only.
+			{
+				const qops = () => page.evaluate(() => window.__remoteOps.map((o) => JSON.parse(JSON.stringify({ ...o, id: undefined, session: undefined }))));
+				const Q = ['顺便把 README 里的缓存一节也改了', '测试过了再提交，别推送', '提交信息用中文'];
+				const queue = () =>
+					page.evaluate((q) => {
+						const f = (frame) => window.__remoteSend({ session: 's-docs', ...frame });
+						f({ type: 'user_message', content: '跑一遍单元测试' });
+						f({ type: 'connecting' });
+						f({ type: 'status', message: 'streaming' });
+						f({ type: 'tool_start', call_id: 'p1', name: 'bash' });
+						f({ type: 'pending_messages', messages: q });
+					}, Q);
+				await page.goto(`${base}?remoteHost&open=s-docs&features=queue,files`);
+				await expect(page.locator('.session .title')).toHaveText('翻译文档', { timeout: 30000 });
+				await queue();
+				const tray = page.locator('.session .composer .qtray');
+				const row = (i) => tray.locator('.qrow[data-qrow]').nth(i);
+				await expect(tray.locator('.qrow[data-qrow] .qtext')).toHaveText(Q);
+				await expect(row(1).getByRole('button', { name: '插入' })).toBeVisible();
+				assert.ok((await row(1).getByRole('button', { name: '撤回' }).boundingBox()).height >= 32, 'a thumb-sized take-back');
+				const textBox = await row(0).locator('.qtext').boundingBox();
+				assert.ok(textBox.width > 250, `the message keeps its line (${textBox.width})`);
+				await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => {}))));
+				await page.screenshot({ path: `/tmp/phone-queue-${name}.png` });
+				const before = (await qops()).length;
+				await row(1).getByRole('button', { name: '插入' }).tap();
+				await row(2).getByRole('button', { name: '中断并发送' }).tap();
+				await row(0).getByRole('button', { name: '撤回' }).tap();
+				await row(2).getByRole('button', { name: '删除这条' }).tap();
+				assert.deepEqual(
+					(await qops()).slice(before).filter((o) => ['steer', 'interrupt', 'unqueue', 'queue_move'].includes(o.op)),
+					[
+						{ op: 'steer', index: 1, text: Q[1] },
+						{ op: 'interrupt', index: 2, text: Q[2] },
+						{ op: 'unqueue', index: 0, text: Q[0] },
+						{ op: 'unqueue', index: 2, text: Q[2], discard: true }
+					]
+				);
+				await page.evaluate((q) => window.__remoteSend({ session: 's-docs', type: 'unqueued', content: q, text: q, images: [], files: ['/Users/me/code/docs/README.md'] }), Q[0]);
+				await expect(page.locator('.session textarea')).toHaveValue(Q[0]);
+				await expect(page.locator('.session .att-name')).toHaveText(['README.md']);
+				await page.evaluate((q) => window.__remoteSend({ session: 's-docs', type: 'pending_messages', messages: q, fixed: 1 }), Q);
+				await expect(row(0).locator('.qstate')).toHaveText('即将发送');
+				await expect(row(0).locator('button')).toHaveCount(0);
+				await page.locator('.session textarea').fill('就这条');
+				await page.locator('.session .composer').getByRole('button', { name: '发送', exact: true }).tap();
+				await expect.poll(async () => (await qops()).filter((o) => o.op === 'user_message').at(-1)).toEqual({ op: 'user_message', content: '就这条', files: ['/Users/me/code/docs/README.md'] });
+				await page.goto(`${base}?remoteHost&open=s-docs`);
+				await expect(page.locator('.session .title')).toHaveText('翻译文档', { timeout: 30000 });
+				await queue();
+				await expect(tray.locator('.qrow[data-qrow]')).toHaveCount(3);
+				await expect(tray.locator('.qrow button')).toHaveCount(3);
+				await expect(tray.locator('.qrow button[aria-label="撤回"]')).toHaveCount(3);
+				const n = (await qops()).length;
+				await tray.locator('.qhead').getByRole('button', { name: '插入' }).tap();
+				assert.deepEqual((await qops()).slice(n).filter((o) => o.op === 'steer'), [{ op: 'steer' }]);
+			}
+
 			// The computer's side: a phone that paired asks to be confirmed with
 			// its check code; a paired phone's scopes are switched there.
 			const desk = await browser.newPage({ viewport: { width: 1280, height: 860 } });

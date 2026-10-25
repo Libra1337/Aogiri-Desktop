@@ -62,7 +62,7 @@ export function recapOf(messages: readonly Msg[], c: RecapContext): Recap | null
 			if (stopped.has(m)) return null;
 			break;
 		}
-		if (m.kind === 'error') return null;
+		if (m.kind === 'error' || m.kind === 'cut') return null;
 		// The turn's totals are stamped on its last reply when it ends.
 		if (!reply && m.kind === 'assistant' && m.turn && !m.interrupted) reply = m;
 	}

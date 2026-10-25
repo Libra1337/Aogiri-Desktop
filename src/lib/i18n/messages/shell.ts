@@ -2,6 +2,10 @@
 // Populated during the shell-area i18n migration.
 const shell = {
 	zh: {
+		drop: {
+			title: '松开以添加到对话',
+			count: '{n} 个文件'
+		},
 		// notifications / runtime
 		notifyDone: '对话完成：{title}',
 		notifyApproval: '等你批准：{what}',
@@ -70,6 +74,8 @@ const shell = {
 			model: '切换模型',
 			approvalMode: '切换审批模式',
 			stop: '停止生成',
+			sendNow: '插入正在进行的回合（工具结束后插入）',
+			interruptSend: '中断当前回合并发送',
 			captureRequirement: '记下想法',
 			zoomIn: '放大界面',
 			zoomOut: '缩小界面',
@@ -1151,6 +1157,10 @@ const shell = {
 		switchingTo: '正在切换到 {provider} · {model}…'
 	},
 	en: {
+		drop: {
+			title: 'Drop to add to the conversation',
+			count: '{n} files'
+		},
 		// notifications / runtime
 		notifyDone: 'Conversation done: {title}',
 		notifyApproval: 'Waiting for your approval: {what}',
@@ -1219,6 +1229,8 @@ const shell = {
 			model: 'Switch model',
 			approvalMode: 'Switch approval mode',
 			stop: 'Stop generating',
+			sendNow: 'Add to the running turn (after the running tool)',
+			interruptSend: 'Stop the turn and send',
 			captureRequirement: 'Note an idea',
 			zoomIn: 'Zoom in',
 			zoomOut: 'Zoom out',

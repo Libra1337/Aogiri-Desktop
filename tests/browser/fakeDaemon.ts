@@ -467,7 +467,11 @@ export function installFakeDaemon() {
 		onerror: (() => void) | null = null;
 		onclose: (() => void) | null = null;
 		constructor() {
-			setTimeout(() => this.onmessage?.({ data: JSON.stringify({ type: 'hello', protocol: 2, version: 'test' }) }));
+			// ?features=queue,files: what a daemon with the queue and files ops
+			// says in its hello; without it the hello has none, as an old one.
+			const features = new URL(location.href).searchParams.get('features');
+			const hello = { type: 'hello', protocol: 2, version: 'test', ...(features !== null ? { features: features.split(',').filter(Boolean) } : {}) };
+			setTimeout(() => this.onmessage?.({ data: JSON.stringify(hello) }));
 		}
 		send(text: string) {
 			const op = JSON.parse(text) as Frame;

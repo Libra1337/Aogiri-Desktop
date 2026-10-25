@@ -117,7 +117,10 @@ export interface CallTiming {
 }
 
 export type Msg =
-	| { kind: 'user'; text: string; state?: SendState; images?: string[] }
+	/** `files`: what it sent besides images, as attachments the engine echoes
+	 *  (`files`), not listed in the text (a daemon before them gets the list
+	 *  in the text: attachments.ts). */
+	| { kind: 'user'; text: string; state?: SendState; images?: string[]; files?: string[] }
 	| {
 			kind: 'assistant';
 			text: string;
@@ -180,6 +183,9 @@ export type Msg =
 	  }
 	| { kind: 'system'; text: string }
 	| { kind: 'error'; text: string }
+	/** The engine went away during the turn (it exited, or the connection to
+	 *  the daemon dropped): the turn ended here, unfinished (ChatState.cutShort). */
+	| { kind: 'cut' }
 	/** Context compaction: running (summary tokens `written` so far), then
 	 *  done (the context's tokens `before` and `after`, the `summary`) or
 	 *  failed. `live`: it ran in front of the user, not a replay. */
@@ -639,7 +645,8 @@ function replayMessage(it: Record<string, unknown>): Msg | null {
 	if (role === 'user' && str(it.content) === AUTO_CONTINUE) return { kind: 'system', text: t('chat.autoRetry.resumed') };
 	if (role === 'user') {
 		const images = arr<string>(it.images).filter((p) => typeof p === 'string');
-		return { kind: 'user', text: str(it.content), ...(images.length ? { images } : {}) };
+		const files = arr<string>(it.files).filter((p) => typeof p === 'string');
+		return { kind: 'user', text: str(it.content), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) };
 	}
 	if (role === 'assistant') return { kind: 'assistant', text: str(it.content) };
 	if (role === 'tool')
@@ -912,18 +919,28 @@ export class ChatState {
 	#billingTurns: Record<string, BillingCost> = {};
 	#turnBillingIds: string[] = [];
 	pendingMessages = $state<string[]>([]);
+	/** Claude Code: the first `pendingFixed` queued messages are with the CLI
+	 *  already (steered, or taken as the next turn started): they can no
+	 *  longer be taken back, moved or picked. */
+	pendingFixed = $state(0);
 	/** The queued message being steered into the running turn: it left the
 	 *  queue (`status: steering`) and shows once its `user_message` comes,
 	 *  after the running tool if one runs. */
 	steering = $state<string | null>(null);
+	/** The queued message the tray picked to steer (by place), so the
+	 *  steering line names it rather than the first one. One-shot. */
+	steerPick: string | null = null;
 	/** The last queued message the engine took back (`unqueued`), for the
-	 *  pane to return its text to the message box; `seq` tells repeats apart. */
-	unqueued = $state<{ text: string; seq: number } | null>(null);
+	 *  pane to return it to the message box, with its images and files;
+	 *  `seq` tells repeats apart. */
+	unqueued = $state<{ text: string; images: string[]; files: string[]; seq: number } | null>(null);
 	picker = $state<Picker>(null);
 	/** The daemon names the conversation (and keeps a rename); until then
 	 *  this placeholder. */
 	title = $state(UNTITLED);
 	pendingFill = $state<string | null>(null);
+	/** The files of the message `pendingFill` puts back (`fill_input`). */
+	pendingFillFiles: string[] = [];
 	// Files to attach in the composer once its pane is up (a requirement's
 	// screenshots when a session starts on it).
 	pendingAttach = $state<string[]>([]);
@@ -1129,8 +1146,8 @@ export class ChatState {
 	// A rewind targeted at a specific rendered user message: the page sets this
 	// before sending `/rewind`, and the checkpoint_view handler resolves it to a
 	// concrete turn id (positional: the i-th user turn matches the i-th user message).
-	rewindIntent = $state<{ userIndex: number; text: string } | null>(null);
-	pendingRewind = $state<{ id: string; text: string } | null>(null);
+	rewindIntent = $state<{ userIndex: number; text: string; files?: string[] } | null>(null);
+	pendingRewind = $state<{ id: string; text: string; files?: string[] } | null>(null);
 
 	// Engine crash auto-restart bookkeeping (driven by the page on agent-exit).
 	// $state so the diagnostics panel reflects restarts live.
@@ -1237,15 +1254,16 @@ export class ChatState {
 
 	/** Show a just-sent user message immediately, before the engine echoes it.
 	 *  The echo is de-duplicated in the `user_message` handler. */
-	optimisticUser(content: string, images?: string[], auto = false) {
+	optimisticUser(content: string, images?: string[], auto = false, files?: string[]) {
 		this.activeAt = Date.now();
+		this.cutTurn = null;
 		if (!auto) {
 			this.autoRetries = 0;
 			this.autoRetry = null;
 		}
 		this.lastTurnAuto = false;
 		this.lastError = null;
-		this.#trackSend({ kind: 'user', text: content, state: 'sending', ...(images?.length ? { images } : {}) });
+		this.#trackSend({ kind: 'user', text: content, state: 'sending', ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}) });
 		this.#pendingUserEcho = content;
 		this.#resetCurrent();
 	}
@@ -1253,6 +1271,7 @@ export class ChatState {
 	/** Sends an automatic "continue" without a bubble: its echo (and its turn
 	 *  in a reloaded transcript) shows as a note. */
 	autoContinue(content: string) {
+		this.cutTurn = null;
 		this.lastTurnAuto = true;
 		this.#autoFrom = this.messages.length;
 		this.lastError = null;
@@ -1261,7 +1280,7 @@ export class ChatState {
 	}
 
 	/** The last user bubble: its index among user turns, and what it said. */
-	lastUserTurn(): { index: number; text: string; images?: string[] } | null {
+	lastUserTurn(): { index: number; text: string; images?: string[]; files?: string[] } | null {
 		let index = -1;
 		let last: Extract<Msg, { kind: 'user' }> | null = null;
 		for (const m of this.messages)
@@ -1269,7 +1288,9 @@ export class ChatState {
 				index++;
 				last = m;
 			}
-		return last ? { index, text: last.text, ...(last.images?.length ? { images: last.images } : {}) } : null;
+		return last
+			? { index, text: last.text, ...(last.images?.length ? { images: last.images } : {}), ...(last.files?.length ? { files: last.files } : {}) }
+			: null;
 	}
 
 	/** The engine's last turn produced something worth keeping: text or a tool
@@ -1294,6 +1315,40 @@ export class ChatState {
 		if (user?.kind === 'user' && user.state === 'failed') delete user.state;
 		this.lastError = null;
 		this.#resetCurrent();
+	}
+
+	/** The engine went away mid-turn (it exited, or the daemon connection
+	 *  dropped): the turn is over, and the user may continue it once the
+	 *  engine is back. `started`: the engine had begun it (else its message
+	 *  never got there). */
+	cutTurn = $state<{ started: boolean } | null>(null);
+
+	/** The engine is gone (see `cutTurn`): a turn it was running ends here,
+	 *  with what it ran, since nothing is left to finish it; a `cut` row marks
+	 *  it unfinished. Returns whether there was one. */
+	cutShort(): boolean {
+		const started = this.#turnStart !== null;
+		if (!started && this.#sending === null) return false;
+		this.retry = null;
+		this.steering = null;
+		this.#clearApprovals();
+		this.#endTurn();
+		this.#finishStuckTools();
+		this.#resetCurrent();
+		const now = Date.now();
+		for (const a of Object.values(this.subagents)) a.endedAt ??= now;
+		if (this.messages.at(-1)?.kind !== 'cut') this.messages.push({ kind: 'cut' });
+		this.cutTurn = { started };
+		return true;
+	}
+
+	/** The engine is back and its turn never stopped (a dropped connection
+	 *  to a daemon that kept it running): the turn goes on, not cut. */
+	#uncut() {
+		if (!this.cutTurn) return;
+		this.cutTurn = null;
+		const at = this.messages.findLastIndex((m) => m.kind === 'cut');
+		if (at >= 0) this.messages.splice(at, 1);
 	}
 
 	/** Stamp the turn's total elapsed onto its last assistant message. */
@@ -1923,6 +1978,8 @@ export class ChatState {
 				this.fastAvailable = ev.fast_available === true;
 				this.thinkingSummaries = typeof ev.thinking_summaries === 'boolean' ? ev.thinking_summaries : null;
 				this.engineState = str(ev.state) || this.engineState;
+				// A snapshot of a turn that went on while this chat could not see it.
+				if (this.busy) this.#uncut();
 				this.contextWindow = num(ev.context_window);
 				this.contextLimit = num(ev.context_limit);
 				this.#remember({
@@ -1937,6 +1994,8 @@ export class ChatState {
 			case 'user_message': {
 				const text = str(ev.content);
 				this.steering = null;
+				// A new turn: the cut one stays marked unfinished.
+				this.cutTurn = null;
 				// Skip the echo of a message we already showed optimistically. The
 				// echo need not be the last message: claude's --replay-user-messages
 				// re-emits the user turn AFTER the assistant reply, so the optimistic
@@ -1966,7 +2025,8 @@ export class ChatState {
 				if (own) for (const m of parseSessionMessage(text) ?? []) sessionInbox.arrived(own, m.from, m.body);
 				// No send state: claude echoes after the reply, when it would stick.
 				const images = arr<string>(ev.images).filter((p) => typeof p === 'string');
-				this.messages.push({ kind: 'user', text, ...(images.length ? { images } : {}) });
+				const files = arr<string>(ev.files).filter((p) => typeof p === 'string');
+				this.messages.push({ kind: 'user', text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) });
 				this.#resetCurrent();
 				break;
 			}
@@ -2188,11 +2248,21 @@ export class ChatState {
 					this.#engineCost = true;
 				}
 				break;
-			case 'pending_messages':
-				this.pendingMessages = arr<string>(ev.messages);
+			case 'pending_messages': {
+				const messages = arr<string>(ev.messages);
+				this.pendingMessages = messages;
+				// Only Claude Code sends `fixed`; never more than what waits.
+				this.pendingFixed = Math.min(messages.length, Math.max(0, Math.floor(num(ev.fixed))));
 				break;
+			}
 			case 'unqueued':
-				this.unqueued = { text: str(ev.text), seq: (this.unqueued?.seq ?? 0) + 1 };
+				this.unqueued = {
+					// `content` since the queue ops; `text` repeats it for older clients.
+					text: typeof ev.content === 'string' ? ev.content : str(ev.text),
+					images: arr<string>(ev.images).filter((p) => typeof p === 'string'),
+					files: arr<string>(ev.files).filter((p) => typeof p === 'string'),
+					seq: (this.unqueued?.seq ?? 0) + 1
+				};
 				break;
 			case 'tree_view':
 				this.picker = { kind: 'tree', nodes: arr<TreeNode>(ev.nodes) };
@@ -2227,10 +2297,10 @@ export class ChatState {
 				// resolve it to a turn id and confirm instead of opening the picker.
 				if (this.rewindIntent) {
 					const target = items[this.rewindIntent.userIndex];
-					const text = this.rewindIntent.text;
+					const { text, files } = this.rewindIntent;
 					this.rewindIntent = null;
 					if (target) {
-						this.pendingRewind = { id: target.id, text };
+						this.pendingRewind = { id: target.id, text, ...(files?.length ? { files } : {}) };
 						break;
 					}
 				}
@@ -2277,10 +2347,22 @@ export class ChatState {
 					if (last?.kind === 'user' && last.text === pending) this.#pendingUserEcho = null;
 					else if (sent && !this.messages.includes(sent)) this.messages.push(sent);
 				}
+				// The engine keeps no mark of a turn it never finished: the cut
+				// one stays marked after its replay, unless the replay has it
+				// finished (its stats recorded: the daemon kept it running while
+				// this chat could not see it, and it ended meanwhile).
+				// (The engine's own replay decides: the stats this chat stamped
+				// when it cut the turn are no finish.)
+				if (this.cutTurn) {
+					const from = replay.findLastIndex((m) => m.kind === 'user');
+					if (from >= 0 && replay.slice(from + 1).some((m) => m.kind === 'assistant' && !!m.turn)) this.#uncut();
+					else if (this.messages.at(-1)?.kind !== 'cut') this.messages.push({ kind: 'cut' });
+				}
 				this.#resetCurrent();
 				break;
 			}
 			case 'fill_input':
+				this.pendingFillFiles = arr<string>(ev.files).filter((p) => typeof p === 'string');
 				this.pendingFill = str(ev.content);
 				break;
 			case 'trust_prompt':
@@ -2721,6 +2803,9 @@ export class ChatState {
 				break;
 			}
 			case 'connecting':
+				// Still cut: nothing was sent since, so this is the turn the
+				// engine kept running while this chat could not see it.
+				this.#uncut();
 				this.engineState = 'connecting';
 				this.suggestion = '';
 				this.#startTurn();
@@ -2736,9 +2821,15 @@ export class ChatState {
 				const msg = str(ev.message);
 				const m = msg.match(/^(?:new|resumed) session (\S+)/);
 				if (m) this.sessionId = m[1];
-				// Steering takes the first queued message (the queue update follows).
-				if (msg === 'steering' && this.engineState !== 'steering') this.steering = this.pendingMessages[0] ?? null;
+				// Steering takes the queued message the tray picked, else the first
+				// (the queue update follows).
+				if (msg === 'steering' && this.engineState !== 'steering') {
+					const picked = this.steerPick;
+					this.steering = picked !== null && this.pendingMessages.includes(picked) ? picked : (this.pendingMessages[this.pendingFixed] ?? this.pendingMessages[0] ?? null);
+				}
+				if (msg === 'steering') this.steerPick = null;
 				this.engineState = msg;
+				if (this.busy) this.#uncut();
 				// A status event with no error means the (possibly just-restarted) engine
 				// is healthy again, so clear the crash auto-restart budget. This replaces
 				// the old time-window reset, which cleared the counter merely because 30s

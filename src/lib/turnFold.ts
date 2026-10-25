@@ -3,8 +3,8 @@
 // them. The line says how long the turn took and how many files it changed
 // ("处理了 4m12s · 改了 3 个文件 +42 −7"). What the reader still has to see or
 // act on stays out: the final reply, plans and their approval, errors. A
-// turn that failed or that the reader stopped does not fold, so what went
-// wrong stays in view. Its open state is kept by its user message.
+// turn that failed, that the reader stopped or that the engine left
+// unfinished does not fold, so what went wrong stays in view. Its open state is kept by its user message.
 import type { Msg } from './chat.svelte';
 import { parseDelivery } from './delivery';
 import { wasStopped } from './recap';
@@ -48,7 +48,7 @@ export function turnFolds(messages: readonly Msg[], shows: (m: Msg) => boolean, 
 			body = all.slice(0, ended + 1);
 		}
 		// Failed or stopped: left open.
-		if (wasStopped(key) || body.some((m) => m.kind === 'error' || (m.kind === 'tool' && m.cut))) return;
+		if (wasStopped(key) || body.some((m) => m.kind === 'error' || m.kind === 'cut' || (m.kind === 'tool' && m.cut))) return;
 		const stats = body.findLast((m) => m.kind === 'assistant' && !!m.turn);
 		const turn = stats?.kind === 'assistant' ? stats.turn : undefined;
 		if (stats?.kind === 'assistant' && stats.interrupted) return;

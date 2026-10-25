@@ -13,9 +13,9 @@
 	import FilesIcon from 'phosphor-svelte/lib/FilesIcon';
 	import GitDiffIcon from 'phosphor-svelte/lib/GitDiffIcon';
 	import DesktopIcon from 'phosphor-svelte/lib/DesktopIcon';
-	import FastForwardIcon from 'phosphor-svelte/lib/FastForwardIcon';
-	import ArrowUUpLeftIcon from 'phosphor-svelte/lib/ArrowUUpLeftIcon';
-	import { engineAtLeast, UNQUEUE_SINCE } from '$lib/engineVersion.svelte';
+	import { engineAtLeast, engineHas, UNQUEUE_SINCE } from '$lib/engineVersion.svelte';
+	import QueueTray from '$lib/composer/QueueTray.svelte';
+	import { queueActions, queueOp, type QueueAction } from '$lib/composer/queue';
 	import HandIcon from 'phosphor-svelte/lib/HandIcon';
 	import ClipboardTextIcon from 'phosphor-svelte/lib/ClipboardTextIcon';
 	import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheckIcon';
@@ -56,7 +56,7 @@
 	import { useHost } from '$lib/remote/connection.svelte';
 	import { confirm } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { BACKEND_LABELS, caps } from '$lib/backends';
+	import { BACKEND_LABELS, caps, type BackendId } from '$lib/backends';
 	import { approvalModeKeys, buildSetApprovalModeOp, type ApprovalMode, type ApproveOp } from '$lib/approval';
 	import { commandsIsolated, firstLine } from '$lib/sandbox/request';
 	import { notifyHere } from '$lib/remote/push';
@@ -382,15 +382,18 @@
 			shown.findIndex((a) => a.key === key)
 		);
 	}
-	/** A sent message back in the box: its files (already on the computer)
-	 *  attach again, and its typed text is returned without the list. */
-	function takeBack(message: string): string {
+	/** A sent message back in the box: its files and images (already on the
+	 *  computer) attach again, from its `files` and `images` or the list after
+	 *  its text, and its typed text is returned without the list. */
+	function takeBack(message: string, files: readonly string[] = [], images: readonly string[] = []): string {
 		const sent = splitAttachments(message);
-		for (const path of sent.files)
-			if (!attachments.some((a) => a.done?.path === path)) {
-				const name = fileName(path);
-				attachments.push({ key: ++attachKey, name, sent: 0, total: 0, done: { path, name, size: 0, image: false } });
-			}
+		const again = (path: string, image: boolean) => {
+			if (attachments.some((a) => a.done?.path === path)) return;
+			const name = fileName(path);
+			attachments.push({ key: ++attachKey, name, sent: 0, total: 0, done: { path, name, size: 0, image } });
+		};
+		for (const path of [...sent.files, ...files]) again(path, false);
+		for (const path of images) again(path, true);
 		return sent.text;
 	}
 	function detach(key: number) {
@@ -410,7 +413,11 @@
 		if ((!typed && !attached.length) || uploading) return;
 		const images = attached.filter((a) => a.image).map((a) => a.path);
 		const files = attached.filter((a) => !a.image).map((a) => a.path);
-		const content = withFiles(typed, files);
+		// A computer that takes files (`files`) gets them with the message;
+		// one from before reads them from a list after the text.
+		const native = engineHas('files');
+		const content = native ? typed : withFiles(typed, files);
+		const sentFiles = native && files.length ? files : undefined;
 		if (draft) {
 			draft = false;
 			await connect();
@@ -447,9 +454,9 @@
 		// A busy session queues the message: the engine lists it (lynshen) or
 		// runs it as the next turn (others, listed here until that turn).
 		if (chat.busy) {
-			if (!bcaps.steer) queued = [...queued, content];
-		} else chat.optimisticUser(content, images.length ? images : undefined);
-		send({ op: 'user_message', content, images: images.length ? images : undefined });
+			if (!bcaps.steer && !engineHas('queue')) queued = [...queued, content];
+		} else chat.optimisticUser(content, images.length ? images : undefined, false, sentFiles);
+		send({ op: 'user_message', content, images: images.length ? images : undefined, ...(sentFiles ? { files: sentFiles } : {}) });
 		text = '';
 		for (const a of attachments) if (a.url) URL.revokeObjectURL(a.url);
 		attachments = [];
@@ -473,18 +480,23 @@
 		if (!chat.busy) queued = [];
 	});
 	const waiting = $derived(chat.pendingMessages.length ? chat.pendingMessages : queued);
-	/** Takes a queued message back into the message box before it runs. */
-	function unqueue(index: number, message: string) {
-		send({ op: 'unqueue', index, text: message });
+	// What the queue tray offers here: as on the desktop (composer/queue.ts).
+	const queue = $derived(queueActions((engine ?? view?.engine ?? 'lynshen') as BackendId, bcaps, engineHas('queue'), engineAtLeast(UNQUEUE_SINCE)));
+	/** A queued message's row, picked by its place and text in the queue as
+	 *  shown. Stopping the turn shows Stop at once, as the stop button does. */
+	function queueAction(action: QueueAction) {
+		if (action.kind === 'interrupt') stopping = true;
+		if (action.kind === 'steer') chat.steerPick = chat.pendingMessages.at(action.index) ?? null;
+		send(queueOp(action, chat.pendingMessages));
 	}
-	// The text comes back once the engine took the message (`unqueued`).
+	// The message comes back once the engine took it (`unqueued`).
 	let unqueuedSeen = chat.unqueued?.seq ?? 0;
 	$effect(() => {
 		const taken = chat.unqueued;
 		if (!taken || taken.seq === unqueuedSeen) return;
 		unqueuedSeen = taken.seq;
 		untrack(() => {
-			const typed = takeBack(taken.text);
+			const typed = takeBack(taken.text, taken.files, taken.images);
 			text = text.trim() ? `${text.replace(/\s+$/, '')}\n${typed}` : typed;
 			tick().then(autosize);
 		});
@@ -529,15 +541,15 @@
 	// for that message is confirmed, then restored, and the message comes
 	// back into the box.
 	const canRewind = $derived(bcaps.checkpoints && (engine ?? view?.engine ?? 'lynshen') === 'lynshen' && !isAgent);
-	function rewindTo(message: string, userIndex: number) {
+	function rewindTo(message: string, userIndex: number, files?: string[]) {
 		if (chat.busy) return;
-		chat.rewindIntent = { userIndex, text: message };
+		chat.rewindIntent = { userIndex, text: message, ...(files?.length ? { files } : {}) };
 		send({ op: 'command', input: '/rewind' });
 	}
 	function openRewind() {
 		const last = chat.messages.filter((m) => m.kind === 'user').length;
 		const lastUser = chat.messages.findLast((m) => m.kind === 'user');
-		if (lastUser && lastUser.kind === 'user') rewindTo(lastUser.text, last - 1);
+		if (lastUser && lastUser.kind === 'user') rewindTo(lastUser.text, last - 1, lastUser.files);
 	}
 	let rewindAsked = '';
 	$effect(() => {
@@ -555,7 +567,7 @@
 			rewindAsked = '';
 			if (!ok) return;
 			send({ op: 'command', input: `/rewind ${pending.id}` });
-			text = takeBack(pending.text);
+			text = takeBack(pending.text, pending.files);
 			tick().then(() => (autosize(), input?.focus()));
 		});
 	});
@@ -892,8 +904,8 @@
 				{loadImage}
 				onFile={onFile ? openReplyFile : undefined}
 				{scroller}
-				onEdit={(value) => {
-					text = takeBack(value);
+				onEdit={(value, files) => {
+					text = takeBack(value, files);
 					tick().then(() => (autosize(), input?.focus()));
 				}}
 				onRewind={canRewind && connected ? rewindTo : undefined}
@@ -966,35 +978,22 @@
 					<button type="button" class="qsteer" onclick={stop}>{t('chat.modeApplyNow')}</button>
 				</div>
 			{/if}
-			{#if chat.steering && chat.busy}
-				<div class="queued">
-					<span class="queued-label">{t(chat.phase === 'tool' ? 'chat.steeringWait' : 'chat.steeringNow')}</span>
-					<span class="qchip"><span class="qtext">{sentLabel(chat.steering)}</span></span>
-				</div>
-			{/if}
-			{#if waiting.length}
-				<div class="queued">
-					<span class="queued-label">{t('chat.queuedLabel', { n: waiting.length })}</span>
-					{#each waiting as q, i (i)}
-						<span class="qchip"
-							><span class="qtext">{sentLabel(q)}</span
-							>{#if bcaps.unqueue && chat.pendingMessages.length && engineAtLeast(UNQUEUE_SINCE)}<button
-									type="button"
-									class="qtake"
-									onclick={() => unqueue(i, q)}
-									title={t('chat.unqueueTitle')}
-									aria-label={t('chat.unqueueTitle')}><ArrowUUpLeftIcon size={12} /></button
-								>{/if}</span
-						>
-					{/each}
-					{#if bcaps.steer && chat.pendingMessages.length}
-						<button type="button" class="qsteer" onclick={() => send({ op: 'steer' })} title={t('chat.steerTitle')}
-							><FastForwardIcon size={12} />{t('chat.steerAction')}</button
-						>
-					{/if}
-				</div>
-			{/if}
 			<form class="composer" onsubmit={(e) => (e.preventDefault(), submit())}>
+				{#if waiting.length || (chat.steering && chat.busy)}
+					<!-- Messages sent while the turn runs, as on the desktop. Only
+					     those the engine lists can be picked (by their place). -->
+					<QueueTray
+						messages={waiting}
+						fixed={chat.pendingMessages.length ? chat.pendingFixed : waiting.length}
+						actions={queue}
+						busy={chat.busy}
+						steering={chat.busy ? chat.steering : null}
+						toolRunning={chat.phase === 'tool'}
+						touch
+						onAction={queueAction}
+						onSteerFirst={() => send({ op: 'steer' })}
+					/>
+				{/if}
 				{#if slashOpen}
 					<ComposerTray
 						bind:this={tray}
@@ -1371,6 +1370,10 @@
 	.composer:focus-within {
 		box-shadow: var(--shadow-float-strong);
 	}
+	/* The queue tray sits in the box above the text, edge to edge. */
+	.composer :global(.qtray) {
+		margin: -6px -6px 8px -10px;
+	}
 	textarea {
 		display: block;
 		width: 100%;
@@ -1602,32 +1605,6 @@
 	}
 	.queued-label {
 		flex-shrink: 0;
-	}
-	.qchip {
-		display: inline-flex;
-		align-items: center;
-		gap: 2px;
-		max-width: 180px;
-		padding: 2px 8px;
-		border-radius: var(--r-full);
-		background: var(--surface2);
-		color: var(--text);
-	}
-	.qtext {
-		min-width: 0;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	/* A touch target over the chip's right end. */
-	.qtake {
-		display: inline-flex;
-		flex-shrink: 0;
-		margin: -6px -8px -6px 0;
-		padding: 6px 8px 6px 4px;
-		border: none;
-		background: none;
-		color: var(--dim);
 	}
 	.qsteer {
 		display: inline-flex;

@@ -27,7 +27,7 @@ class FakeSocket implements SocketLike {
 	}
 }
 
-function setup(protocol = 2) {
+function setup(protocol = 2, features?: unknown) {
 	const sockets: FakeSocket[] = [];
 	const frames: [string, Record<string, unknown>][] = [];
 	const exits: string[] = [];
@@ -39,7 +39,7 @@ function setup(protocol = 2) {
 			// Greet once the client has attached its handlers.
 			queueMicrotask(() => {
 				socket.readyState = 1;
-				socket.push({ type: 'hello', protocol, version: '0.3.0' });
+				socket.push({ type: 'hello', protocol, version: '0.3.0', ...(features !== undefined ? { features } : {}) });
 			});
 			return socket;
 		}
@@ -72,6 +72,20 @@ describe('DaemonClient', () => {
 		expect(socket.sent[1]).toEqual({ op: 'watch', session: 'sess-1' });
 		expect(env.client.owns('desk-1')).toBe(true);
 		expect(env.client.sessionOf('desk-1')).toBe('sess-1');
+	});
+
+	it('says what the daemon takes beyond its protocol, and nothing for one from before', async () => {
+		const greeted = async (env: ReturnType<typeof setup>) => {
+			const seen: [string, string[]][] = [];
+			env.client.onHello = (version, features) => seen.push([version, features]);
+			await env.client.connect();
+			return seen;
+		};
+		expect(await greeted(setup(2, ['queue', 'files']))).toEqual([['0.3.0', ['queue', 'files']]]);
+		// An old daemon sends no `features`: none, so the app keeps its old ways.
+		expect(await greeted(setup())).toEqual([['0.3.0', []]]);
+		expect(await greeted(setup(2, ['queue', 7, null]))).toEqual([['0.3.0', ['queue']]]);
+		expect(await greeted(setup(2, 'queue'))).toEqual([['0.3.0', []]]);
 	});
 
 	it('reopens an existing daemon session instead of creating one', async () => {

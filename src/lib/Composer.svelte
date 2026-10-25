@@ -14,16 +14,15 @@
 	import type { Snippet } from 'svelte';
 	import { prefs } from '$lib/prefs.svelte';
 	import { costText } from '$lib/sessionCost';
-	import { sentLabel } from '$lib/attachments';
 	import ArrowUpIcon from 'phosphor-svelte/lib/ArrowUpIcon';
-	import ArrowUUpLeftIcon from 'phosphor-svelte/lib/ArrowUUpLeftIcon';
-	import { engineAtLeast, UNQUEUE_SINCE } from '$lib/engineVersion.svelte';
+	import { engineAtLeast, engineHas, UNQUEUE_SINCE } from '$lib/engineVersion.svelte';
+	import QueueTray from '$lib/composer/QueueTray.svelte';
+	import { queueActions, type QueueAction } from '$lib/composer/queue';
 	import SquareIcon from 'phosphor-svelte/lib/SquareIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import PaperclipIcon from 'phosphor-svelte/lib/PaperclipIcon';
 	import TargetIcon from 'phosphor-svelte/lib/TargetIcon';
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecksIcon';
-	import FastForwardIcon from 'phosphor-svelte/lib/FastForwardIcon';
 	import StopCircleIcon from 'phosphor-svelte/lib/StopCircleIcon';
 	import MicrophoneIcon from 'phosphor-svelte/lib/MicrophoneIcon';
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotchIcon';
@@ -41,7 +40,7 @@
 	import VoiceWave from '$lib/composer/VoiceWave.svelte';
 	import { buildEntries, mentionMatches, type AtEntry } from '$lib/mention';
 	import { t } from '$lib/i18n';
-	import { matches, withShortcut } from '$lib/shortcuts';
+	import { matches, shortcutLabel, withShortcut } from '$lib/shortcuts';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import MentionMenu from '$lib/composer/MentionMenu.svelte';
 	import AttachmentChips from '$lib/composer/AttachmentChips.svelte';
@@ -89,8 +88,9 @@
 		onContinueOnLynShen,
 		onSubmit,
 		onStop,
-		onSteer,
-		onUnqueue,
+		onQueue,
+		onSteerFirst,
+		onSendNow,
 		onPick,
 		images = [],
 		onImage,
@@ -149,9 +149,14 @@
 		onContinueOnLynShen?: () => void;
 		onSubmit: () => void;
 		onStop: () => void;
-		onSteer: () => void;
-		/** Takes the queued message at `index` back into the message box. */
-		onUnqueue?: (index: number, text: string) => void;
+		/** A queued message's row: into the turn, stop and send, back to the
+		 *  message box, dropped or moved (QueueTray). */
+		onQueue: (action: QueueAction) => void;
+		/** A daemon before the queue ops: the first queued message into the turn. */
+		onSteerFirst: () => void;
+		/** ⌘↵ / ⌘⇧↵ while a turn runs: the typed message goes into it, or
+		 *  stops it and goes now (the queue's last place, at once). */
+		onSendNow: (how: 'steer' | 'interrupt') => void;
 		onPick: () => void;
 		/** Images placed in the text as [图片 #N] tokens (N → file). */
 		images?: { n: number; path: string }[];
@@ -235,6 +240,9 @@
 
 	// Capability gating for the session's engine backend (lynshen = everything).
 	const bcaps = $derived(caps(chat));
+	// What the queue tray offers: every row action on a daemon with the
+	// `queue` feature, else what that daemon took before (composer/queue.ts).
+	const queue = $derived(queueActions(chat.backendId, bcaps, engineHas('queue'), engineAtLeast(UNQUEUE_SINCE)));
 
 	// --- rich contenteditable editing surface ------------------------------
 	// `input` (bindable) stays the plain-text source of truth: a web-element chip
@@ -840,8 +848,12 @@
 		if (e.key === 'Enter') {
 			// contenteditable would otherwise insert a <div>/<br>; we control both:
 			// plain Enter submits, Shift+Enter inserts a newline (rendered via pre-wrap).
+			// While a turn runs, ⌘↵ adds the message to it and ⌘⇧↵ stops it and
+			// sends, where the daemon takes queued messages by place.
 			e.preventDefault();
-			if (e.shiftKey) insertTextAtCaret('\n');
+			const now = chat.busy && !currentQ && queue.keys ? (matches(e, 'interruptSend') ? 'interrupt' : matches(e, 'sendNow') ? 'steer' : null) : null;
+			if (now && (now === 'steer' ? queue.join : queue.interrupt)) onSendNow(now);
+			else if (e.shiftKey && !e.metaKey && !e.ctrlKey) insertTextAtCaret('\n');
 			else submit();
 		}
 	}
@@ -967,34 +979,24 @@
 			<button class="qsteer" onclick={onStop}>{t('chat.modeApplyNow')}</button>
 		</div>
 	{/if}
-	{#if chat.steering && chat.busy}
-		<!-- Taken from the queue into the running turn: it shows in the
-		     conversation once the engine reads it, after a running tool. -->
-		<div class="queued">
-			<span class="queued-label">{t(chat.phase === 'tool' ? 'chat.steeringWait' : 'chat.steeringNow')}</span>
-			<span class="qchip" title={sentLabel(chat.steering)}><span class="qtext">{sentLabel(chat.steering)}</span></span>
-		</div>
-	{/if}
-	{#if chat.pendingMessages.length}
-		<div class="queued">
-			<span class="queued-label">{t('chat.queuedLabel', { n: chat.pendingMessages.length })}</span>
-			{#each chat.pendingMessages as q, i (i)}
-				<span class="qchip" title={sentLabel(q)}
-					><span class="qtext">{sentLabel(q)}</span
-					>{#if bcaps.unqueue && onUnqueue && engineAtLeast(UNQUEUE_SINCE)}<button
-							class="qtake"
-							onclick={() => onUnqueue(i, q)}
-							title={t('chat.unqueueTitle')}
-							aria-label={t('chat.unqueueTitle')}><ArrowUUpLeftIcon size={11} /></button
-						>{/if}</span
-				>
-			{/each}
-			{#if bcaps.steer}
-				<button class="qsteer" onclick={onSteer} title={t('chat.steerTitle')}><FastForwardIcon size={12} />{t('chat.steerAction')}</button>
-			{/if}
-		</div>
-	{/if}
 	<div class="composer">
+		{#if chat.pendingMessages.length || (chat.steering && chat.busy)}
+			<!-- Messages sent while the turn runs, and the one on its way into
+			     it (shown in the conversation once the engine reads it, after
+			     a running tool). -->
+			<QueueTray
+				messages={chat.pendingMessages}
+				fixed={chat.pendingFixed}
+				actions={queue}
+				busy={chat.busy}
+				steering={chat.busy ? chat.steering : null}
+				toolRunning={chat.phase === 'tool'}
+				joinKey={shortcutLabel('sendNow')}
+				interruptKey={shortcutLabel('interruptSend')}
+				onAction={onQueue}
+				{onSteerFirst}
+			/>
+		{/if}
 		{#if trayMode}
 			<ComposerTray
 				bind:this={tray}
@@ -1572,41 +1574,6 @@
 		border-radius: var(--r-full);
 		padding: 2px 9px;
 		flex-shrink: 0;
-	}
-	.qchip {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		font-size: var(--fs-xs);
-		max-width: 260px;
-		color: var(--dim);
-		background: var(--surface2);
-		border: 1px solid var(--border);
-		border-radius: var(--r-sm);
-		padding: 3px 9px;
-		animation: rise var(--t-med) var(--ease-out);
-	}
-	.qtext {
-		min-width: 0;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.qtake {
-		display: inline-flex;
-		flex-shrink: 0;
-		margin: -2px -5px -2px 0;
-		padding: 2px;
-		border: none;
-		border-radius: var(--r-xs);
-		background: none;
-		color: var(--dim);
-		cursor: pointer;
-		transition: color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
-	}
-	.qtake:hover {
-		color: var(--text);
-		background: var(--surface2);
 	}
 	.qsteer {
 		display: inline-flex;
