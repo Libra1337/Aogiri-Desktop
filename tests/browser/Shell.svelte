@@ -272,6 +272,9 @@
 	const limitMode = mode.get('limit');
 	if (limitMode !== null) {
 		const hit = limitMode === 'limited';
+		// Only a subscription's engine sends it.
+		session.backendId = 'claude';
+		session.chat.backendId = 'claude';
 		feed({ type: 'rate_limit', level: hit ? 'limited' : 'warning', message: '', resets_at: Date.now() + (hit ? 2 * 3_600_000 + 17 * 60_000 : 26 * 3_600_000), window: hit ? 'five_hour' : 'seven_day', used: hit ? 100 : 83, overage: false });
 	}
 
