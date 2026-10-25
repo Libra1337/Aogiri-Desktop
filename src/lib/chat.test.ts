@@ -282,34 +282,25 @@ describe('ChatState.handle', () => {
 		expect(last.tokens).toBe(42);
 	});
 
-	it('builds a per-turn diff timeline from edit tool outputs', () => {
+	it('lists the files each turn changed under its reply, with their line counts', () => {
 		const c = new ChatState();
-		// Turn 1: edit a.ts (+2/-1)
-		c.handle({ type: 'user_message', content: 'edit a' });
-		c.handle({ type: 'tool_start', call_id: 't1', name: 'str_replace' });
-		c.handle({
-			type: 'tool_output',
-			call_id: 't1',
-			name: 'str_replace',
-			output: JSON.stringify({ path: '/proj/a.ts', diff: '-old\n+new1\n+new2' })
-		});
-		// Turn 2: edit b.ts (+1/-0)
-		c.handle({ type: 'user_message', content: 'edit b' });
-		c.handle({ type: 'tool_start', call_id: 't2', name: 'write' });
-		c.handle({
-			type: 'tool_output',
-			call_id: 't2',
-			name: 'write',
-			output: JSON.stringify({ path: '/proj/b.ts', diff: '+only' })
-		});
-		const tl = c.turnTimeline;
-		expect(tl.map((t) => t.index)).toEqual([1, 0]); // newest first
-		expect(tl[1]).toMatchObject({ index: 0, text: 'edit a', added: 2, removed: 1 });
-		expect(tl[1].files).toEqual([{ path: '/proj/a.ts', added: 2, removed: 1 }]);
-		expect(tl[0]).toMatchObject({ index: 1, text: 'edit b', added: 1, removed: 0 });
+		const turn = (content: string, name: string, path: string, diff: string) => {
+			c.handle({ type: 'user_message', content });
+			c.handle({ type: 'connecting' });
+			c.handle({ type: 'status', message: 'streaming' });
+			c.handle({ type: 'tool_start', call_id: content, name });
+			c.handle({ type: 'tool_output', call_id: content, name, output: JSON.stringify({ path, diff }) });
+			c.handle({ type: 'assistant_delta', delta: 'done' });
+			c.handle({ type: 'status', message: 'ready' });
+		};
+		turn('edit a', 'str_replace', '/proj/a.ts', '-old\n+new1\n+new2');
+		turn('edit b', 'write', '/proj/b.ts', '+only');
+		const stats = c.messages.flatMap((m) => (m.kind === 'assistant' && m.turn ? [m.turn] : []));
+		expect(stats.map((s) => s.changes)).toEqual([[{ path: '/proj/a.ts', added: 2, removed: 1 }], [{ path: '/proj/b.ts', added: 1, removed: 0 }]]);
+		expect(stats[0]).toMatchObject({ files: 1, added: 2, removed: 1 });
 	});
 
-	it('drops per-turn diffs when truncating to an earlier turn', () => {
+	it('drops per-turn edits when truncating to an earlier turn', () => {
 		const c = new ChatState();
 		c.handle({ type: 'user_message', content: 'edit a' });
 		c.handle({ type: 'tool_start', call_id: 't1', name: 'write' });
@@ -318,35 +309,7 @@ describe('ChatState.handle', () => {
 		c.handle({ type: 'tool_start', call_id: 't2', name: 'write' });
 		c.handle({ type: 'tool_output', call_id: 't2', name: 'write', output: JSON.stringify({ path: '/b', diff: '+y' }) });
 		c.truncateToUserTurn(1); // drop turn 2 (index 1)
-		expect(c.turnTimeline.map((t) => t.index)).toEqual([0]);
-	});
-
-	it('summarizes raw frames for the diagnostics trace (incl. unparseable)', () => {
-		const c = new ChatState();
-		c.captureFrame(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', name: 'Bash' } } }));
-		c.captureFrame(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_9' }] } }));
-		c.captureFrame(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use' }] }, parent_tool_use_id: 'toolu_p' }));
-		c.captureFrame('{not json');
-		expect(c.frameTrace[0]).toBe('stream_event/content_block_start tool_use:Bash');
-		expect(c.frameTrace[1]).toBe('user/tool_result toolu_9');
-		expect(c.frameTrace[2]).toContain('⤷sub');
-		expect(c.frameTrace[3]).toMatch(/^⚠ unparseable/);
-	});
-
-	it('caps the frame trace ring buffer at 200', () => {
-		const c = new ChatState();
-		for (let i = 0; i < 250; i++) c.captureFrame(JSON.stringify({ type: 'system', subtype: `s${i}` }));
-		expect(c.frameTrace.length).toBe(200);
-		expect(c.frameTrace[c.frameTrace.length - 1]).toBe('system/s249');
-	});
-
-	it('aggregates turn timing and message stats for diagnostics', () => {
-		const c = new ChatState();
-		const a1 = { kind: 'assistant', text: 'x', elapsed: 1000 } as const;
-		const a2 = { kind: 'assistant', text: 'y', elapsed: 3000 } as const;
-		c.messages.push({ kind: 'user', text: 'q1' }, { ...a1 }, { kind: 'user', text: 'q2' }, { ...a2 });
-		expect(c.turnTiming).toEqual({ turns: 2, totalMs: 4000, meanMs: 2000 });
-		expect(c.messageStats).toMatchObject({ user: 2, assistant: 2 });
+		expect(Object.keys(c.turnEdits)).toEqual(['0']);
 	});
 
 	it('aggregates a tool card by call_id and marks it done', () => {

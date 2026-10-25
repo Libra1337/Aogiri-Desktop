@@ -155,8 +155,6 @@ describe('cross-session messages: the receiver’s turn', () => {
 		// marks do not (they skip deliveries).
 		expect(c.userTurns).toBe(2);
 		expect(users.filter((m) => m.kind === 'user' && !parseDelivery(m.text))).toHaveLength(1);
-		c.turnEdits = { 1: { 'src/api.ts': { added: 4, removed: 1 } } };
-		expect(c.turnTimeline[0]!.text).toBe('来自对话「项目 A：重构接口」：');
 	});
 });
 

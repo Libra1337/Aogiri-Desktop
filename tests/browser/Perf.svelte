@@ -32,7 +32,6 @@
       ready: () => !!session && !!api,
       deliver(ev: Record<string, unknown>) {
         const chat = session!.chat;
-        chat.captureFrame(JSON.stringify(ev), ev);
         chat.handle(ev as never);
         api?.scrollToEnd();
       },

@@ -93,6 +93,7 @@
 		onOpenSession,
 		busy = false,
 		foldTurns = false,
+		root = '',
 		mark = $bindable(-1)
 	}: {
 		messages: Msg[];
@@ -172,9 +173,11 @@
 		onOpenSession?: (session: string) => void;
 		/** Ordinal of the user message in view: at or above the upper third. */
 		mark?: number;
-		/** Opens the Changes panel: a turn's change pill (absent: the files
-		 *  it changed show as text). */
+		/** Shows the project's changes in the Git panel: the end of a turn's
+		 *  list of changed files. */
 		onChanges?: () => void;
+		/** The session's folder: a changed file shows relative to it. */
+		root?: string;
 		/** The last turn still runs, or waits on work it handed off: it does
 		 *  not fold yet. */
 		busy?: boolean;
@@ -603,6 +606,14 @@
 		return { members, headOf };
 	});
 	const openGroups = new SvelteSet<Msg>();
+	// The replies whose list of changed files is open (the change pill).
+	const openChanges = new SvelteSet<Msg>();
+	/** A changed file as the list names it: inside the session's folder,
+	 *  relative to it. */
+	function shownPath(path: string): string {
+		const base = root.replace(/[\\/]+$/, '');
+		return base && path.startsWith(base + '/') ? path.slice(base.length + 1) : path;
+	}
 	// The last message with something to show (a plan's actions show there only).
 	const lastShown = $derived(messages.findLast((m) => hasContent(m)));
 	const lastError = $derived(messages.findLast((m) => m.kind === 'error'));
@@ -778,9 +789,10 @@
 							{#if m.turn}
 								{#each turnParts(m.turn, prefs.turnStats) as part, j (j)}
 									{#if part.change}
-										<!-- The files the turn changed: a change pill that opens the Changes panel. -->
-										<svelte:element this={onChanges ? 'button' : 'span'} class="change" class:open={!!onChanges} title={onChanges ? t('chat.stat.openChanges') : part.title} onclick={onChanges} role={onChanges ? undefined : 'note'}
-											><FileTextIcon size={14} /><span>{t('chat.stat.filesCount', { n: part.change.files })}</span><span class="add">+{part.change.added}</span><span class="del">−{part.change.removed}</span></svelte:element
+										<!-- The files the turn changed: a change pill that lists them under the reply. -->
+										{@const listed = !!m.turn.changes?.length}
+										<svelte:element this={listed ? 'button' : 'span'} class="change" class:open={listed} class:shown={openChanges.has(m)} title={listed ? t('chat.stat.listChanges') : part.title} aria-expanded={listed ? openChanges.has(m) : undefined} onclick={listed ? () => (openChanges.has(m) ? openChanges.delete(m) : openChanges.add(m)) : undefined} role={listed ? undefined : 'note'}
+											><FileTextIcon size={14} /><span>{t('chat.stat.filesCount', { n: part.change.files })}</span><span class="add">+{part.change.added}</span><span class="del">−{part.change.removed}</span>{#if listed}<span class="rchev"><CaretRightIcon size={12} /></span>{/if}</svelte:element
 										>
 									{:else}
 										<span class="stat" class:mono={part.mono} title={part.title}>{part.text}</span>
@@ -796,6 +808,20 @@
 								</button>
 							{/if}
 						</div>
+					{/if}
+					{#if m.turn?.changes?.length}
+						<Collapse open={openChanges.has(m)}>
+							<!-- The turn's changed files: a click opens one; the last row shows the project's changes in Git. -->
+							<div class="changed" aria-label={t('chat.stat.files')}>
+								{#each m.turn.changes as f (f.path)}
+									<button class="cfile" title={f.path} onclick={() => onFile?.(f.path, m.text)}>
+										<span class="cpath">{shownPath(f.path)}</span>
+										<span class="mono add">+{f.added}</span><span class="mono del">−{f.removed}</span>
+									</button>
+								{/each}
+								{#if onChanges}<button class="cfile cgit" onclick={onChanges}>{t('chat.stat.openGit')}</button>{/if}
+							</div>
+						</Collapse>
 					{/if}
 					{#if m.recap && m.recap.choice !== 'closed'}<RecapReceipt outcome={m.recap} />{/if}
 				{/if}
@@ -1314,6 +1340,58 @@
 	button.change:hover {
 		background: var(--surface2);
 	}
+	.change .rchev {
+		margin-left: -2px;
+	}
+	.change.shown .rchev {
+		transform: rotate(90deg);
+	}
+	/* The turn's changed files under its reply: one 24px row each, the
+	   path in mono (relative to the session's folder), its line counts. */
+	.changed {
+		display: flex;
+		flex-direction: column;
+		margin-top: 6px;
+		padding-bottom: 2px;
+	}
+	.cfile {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 24px;
+		padding: 2px 8px;
+		border: none;
+		border-radius: var(--r-sm);
+		background: none;
+		color: var(--dim);
+		font: inherit;
+		font-size: var(--fs-xs);
+		line-height: 16px;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			background var(--t-fast) var(--ease-out),
+			color var(--t-fast) var(--ease-out);
+	}
+	.cfile:hover {
+		background: var(--surface2);
+		color: var(--text);
+	}
+	.cpath {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
+	}
+	.cfile .add {
+		color: var(--ok);
+	}
+	.cfile .del {
+		color: var(--err);
+	}
+
 	.reason-row {
 		display: flex;
 		align-items: center;

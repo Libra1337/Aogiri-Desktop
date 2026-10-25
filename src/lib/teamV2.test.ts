@@ -293,9 +293,6 @@ describe('agent team v2: a result that starts a turn', () => {
 		const marked = c.messages[2];
 		expect(marked?.kind === 'user' && parseDelivery(marked.text)?.kind).toBe('message');
 		expect(c.agentMessages.map((m) => [m.from, m.to, m.summary])).toEqual([['/root/fix', '/root', 'Tests pass']]);
-		// The turn list names that turn by its line.
-		c.turnEdits = { 1: { 'src/auth.ts': { added: 3, removed: 1 } } };
-		expect(c.turnTimeline[0]!.text).toBe('子智能体 fix 完成，继续处理');
 		expect(agentName('/root')).toBe('主智能体');
 	});
 });

@@ -35,8 +35,6 @@ import { CacheWatch } from './cacheMiss';
 import { breakdownTotal, parseBreakdown, type RequestParts } from './composer/contextUsage';
 import { parseMcpServersEvent, type McpServerView } from './mcp';
 import { parseSubagentResult } from './agents/subagentResult';
-import { parseDelivery } from './delivery';
-import { sentLabel } from './attachments';
 import { parseReplyStyle, type ReplyStyleState } from './styles';
 import {
 	matchMessage,
@@ -66,6 +64,9 @@ export interface TurnStats {
 	files: number;
 	added: number;
 	removed: number;
+	/** The files the turn's edit tools changed, with their line counts: the
+	 *  list under its reply (MessageList). */
+	changes?: { path: string; added: number; removed: number }[];
 	tools: number;
 	cost: number;
 	billingTurns?: string[];
@@ -733,15 +734,6 @@ export function countDiffLines(diff: string): { added: number; removed: number }
 	return { added, removed };
 }
 
-/** One user turn's worth of file edits, for the turn-level diff timeline. */
-export interface TurnDiff {
-	index: number;
-	text: string;
-	files: { path: string; added: number; removed: number }[];
-	added: number;
-	removed: number;
-}
-
 /** Reactive chat state projected from the engine's AgentEvent stream. */
 /** A failed model request being re-sent: attempt `attempt` of `max`, after
  *  `delayMs` from `at` (ms), because of `reason` (the provider's error). */
@@ -1060,9 +1052,6 @@ export class ChatState {
 		plan: string | null;
 		windows: { key: string; used: number; resetsAt: number | null; minutes: number | null }[];
 	} | null>(null);
-	// Compact ring buffer of the most recent raw engine frames (summarized), for the
-	// diagnostics trace — lets a mis-parsed / dropped tool frame be inspected.
-	frameTrace = $state<string[]>([]);
 	commands = $state<CommandItem[]>([]);
 	totalIn = $state(0);
 	totalOut = $state(0);
@@ -1081,14 +1070,11 @@ export class ChatState {
 	/** The model request failed and is being re-sent (lynshen engine); null
 	 *  once output flows again or the turn ends. */
 	retry = $state<RetryState | null>(null);
-	// Files the agent edited this session (drives the Changes panel).
+	// Files the agent edited this session (⌘E opens the latest in the editor).
 	changedFiles = $state<string[]>([]);
 	// Per user-turn file edits (path → added/removed line counts), keyed by the
-	// 0-based user-turn index — drives the turn-level diff timeline.
+	// 0-based user-turn index: the turn's figures and its list of files.
 	turnEdits = $state<Record<number, Record<string, { added: number; removed: number }>>>({});
-	/** The agent's own edits per file (the edit tools' unified diffs, oldest
-	 *  first), so 还原 can undo exactly them and keep the user's changes. */
-	agentDiffs: Record<string, string[]> = {};
 	// Approval policy, enforced engine-side ('ask' ↔ read-only, 'edits' ↔
 	// auto-edit, 'all' ↔ full-auto). The engine is the source of truth: this
 	// mirrors its `approval_mode` events, except right after engine startup where
@@ -1313,7 +1299,8 @@ export class ChatState {
 		this.#closeSegment(now);
 		const elapsed = now - this.#turnStart;
 		this.#addRun(elapsed);
-		const edits = Object.values(this.turnEdits[this.userTurns - 1] ?? {});
+		const bucket = this.turnEdits[this.userTurns - 1] ?? {};
+		const edits = Object.values(bucket);
 		const turn: TurnStats = {
 			elapsed,
 			...(this.#firstOutput !== null ? { ttft: this.#firstOutput - this.#turnStart } : {}),
@@ -1323,6 +1310,7 @@ export class ChatState {
 			files: edits.length,
 			added: edits.reduce((n, e) => n + e.added, 0),
 			removed: edits.reduce((n, e) => n + e.removed, 0),
+			...(edits.length ? { changes: Object.entries(bucket).map(([path, e]) => ({ path, added: e.added, removed: e.removed })) } : {}),
 			tools: this.#turnTools,
 			cost: this.cost - this.#turnCostStart,
 			billingTurns: [...this.#turnBillingIds],
@@ -1512,52 +1500,6 @@ export class ChatState {
 		return this.messages.filter((m) => m.kind === 'user').length;
 	}
 
-	/** Aggregate turn-timing stats (from assistant `elapsed` stamps) for the
-	 *  diagnostics panel: completed turns, total and mean wall-clock. */
-	get turnTiming(): { turns: number; totalMs: number; meanMs: number } {
-		let turns = 0;
-		let totalMs = 0;
-		for (const m of this.messages) {
-			if (m.kind === 'assistant' && typeof m.elapsed === 'number') {
-				turns++;
-				totalMs += m.elapsed;
-			}
-		}
-		return { turns, totalMs, meanMs: turns ? Math.round(totalMs / turns) : 0 };
-	}
-
-	/** Message-kind histogram for the diagnostics panel. */
-	get messageStats(): Record<string, number> {
-		const out: Record<string, number> = {};
-		for (const m of this.messages) out[m.kind] = (out[m.kind] ?? 0) + 1;
-		return out;
-	}
-
-	/** Per-turn file-change timeline: one entry per user turn that edited files,
-	 *  newest first, with the turn's prompt and its files' ±line counts. A
-	 *  turn a subagent's result or another conversation's message started is
-	 *  named by its line, not its mark. */
-	get turnTimeline(): TurnDiff[] {
-		const userTexts: string[] = [];
-		for (const m of this.messages)
-			if (m.kind === 'user')
-				userTexts.push(parseSubagentResult(m.text) || parseSessionMessage(m.text) ? (parseDelivery(m.text)?.label ?? m.text) : sentLabel(m.text));
-		const out: TurnDiff[] = [];
-		for (const [key, bucket] of Object.entries(this.turnEdits)) {
-			const index = Number(key);
-			const files = Object.entries(bucket).map(([path, c]) => ({ path, added: c.added, removed: c.removed }));
-			if (!files.length) continue;
-			out.push({
-				index,
-				text: userTexts[index] ?? '',
-				files,
-				added: files.reduce((s, f) => s + f.added, 0),
-				removed: files.reduce((s, f) => s + f.removed, 0)
-			});
-		}
-		return out.sort((a, b) => b.index - a.index);
-	}
-
 	/** For a claude rewind to the `userIndex`-th user turn: the transcript uuid of
 	 *  the assistant message ending the previous turn — the `--resume-session-at`
 	 *  target. Null when rewinding to the first turn (restart fresh). */
@@ -1686,43 +1628,6 @@ export class ChatState {
 				m.cut = true;
 			}
 		}
-	}
-
-	/** Summarize a raw engine frame into one trace line and keep the last 200.
-	 *  Deliberately compact (type + the few fields that matter for tool tracking)
-	 *  so the diagnostics trace stays readable and cheap. `parsed`: the frame
-	 *  already parsed (a long transcript is not parsed twice). */
-	captureFrame(raw: string, parsed?: unknown) {
-		let summary: string;
-		try {
-			const o = (parsed ?? JSON.parse(raw)) as Record<string, unknown>;
-			const type = typeof o.type === 'string' ? o.type : '?';
-			if (type === 'stream_event') {
-				const ev = (o.event ?? {}) as Record<string, unknown>;
-				const et = str(ev.type);
-				const cb = (ev.content_block ?? {}) as Record<string, unknown>;
-				const d = (ev.delta ?? {}) as Record<string, unknown>;
-				const detail = cb.type ? `${str(cb.type)}${cb.name ? `:${str(cb.name)}` : ''}` : str(d.type);
-				summary = `stream_event/${et}${detail ? ` ${detail}` : ''}`;
-			} else if (type === 'user') {
-				const content = ((o.message as Record<string, unknown>)?.content ?? []) as unknown;
-				const tr = Array.isArray(content) ? content.find((b) => (b as Record<string, unknown>)?.type === 'tool_result') : null;
-				summary = tr ? `user/tool_result ${str((tr as Record<string, unknown>).tool_use_id)}` : 'user/message';
-			} else if (type === 'assistant') {
-				const content = ((o.message as Record<string, unknown>)?.content ?? []) as unknown[];
-				const kinds = Array.isArray(content) ? content.map((b) => str((b as Record<string, unknown>).type)).join(',') : '';
-				summary = `assistant [${kinds}]`;
-			} else if (type === 'system') {
-				summary = `system/${str(o.subtype)}`;
-			} else {
-				summary = `${type}${o.subtype ? `/${str(o.subtype)}` : ''}`;
-			}
-			if (o.parent_tool_use_id) summary += ' ⤷sub';
-		} catch {
-			summary = `⚠ unparseable (${raw.length}b): ${raw.slice(0, 60)}`;
-		}
-		this.frameTrace.push(summary);
-		if (this.frameTrace.length > 200) this.frameTrace.splice(0, this.frameTrace.length - 200);
 	}
 
 	#tool(callId: string): Extract<Msg, { kind: 'tool' }> | undefined {
@@ -2158,19 +2063,12 @@ export class ChatState {
 						/* non-JSON output */
 					}
 				}
-				// Record files touched by a successful edit tool for the Changes panel.
+				// Record the files a successful edit tool touched: the turn's list.
 				if (ev.is_error !== true && EDIT_TOOLS.includes(str(ev.name))) {
 					try {
 						const out = JSON.parse(str(ev.output)) as Record<string, unknown>;
 						const paths = [out.path, ...(Array.isArray(out.paths) ? out.paths : [])];
 						const edited: string[] = [];
-						// One file's edit: keep its diff (bounded) for an exact undo,
-						// by the project-relative name its diff header carries.
-						const label = /^\+\+\+ b\/(.+)$/m.exec(str(out.diff))?.[1];
-						if (label && typeof out.path === 'string' && !Array.isArray(out.paths)) {
-							const list = (this.agentDiffs[label] ??= []);
-							if (list.length < 200) list.push(str(out.diff));
-						}
 						for (const p of paths) {
 							if (typeof p === 'string' && p) {
 								edited.push(p);
