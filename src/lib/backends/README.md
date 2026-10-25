@@ -61,6 +61,19 @@ engine's (`read-only` ↔ `manual`, `full-auto` ↔ `full-access`).
 `router.ts` holds each session's adapter and its op queue while the engine
 is (re)starting; `dispatch(sessionId, op)` is how every UI call site sends.
 
+### Daemon features (`hello.features`)
+
+The daemon's hello names what it takes beyond its protocol version
+(`engine.features`, `engineHas` in `engineVersion.svelte.ts`). A daemon
+from before sends none, and the app keeps its old behaviour:
+
+| feature | with it | without it |
+|---------|---------|------------|
+| `queue` | the queue tray's rows (`composer/queue.ts`): `steer`, `interrupt`, `unqueue` (with `discard`) and `queue_move`, each with the row's `index` and `text`, on every engine (an ACP agent has no 插入: its rows stop the turn and send); ⌘↵ / ⌘⇧↵; Claude Code's `fixed` rows | the single 插入 (`steer`, first message) where `caps.steer`, and 撤回 where `caps.unqueue` on 0.4.27 or later |
+| `files` | `user_message.files` (attachments other than images; a video as a file), echoed as `files` on `user_message`, `unqueued`, `fill_input` and the transcript | the files listed after the text (`attachments.ts`), a video as keyframes |
+
+A `steer` takes the message in once a running tool ends; it never cuts the tool.
+
 ### Capability flags → UI surfaces
 
 `caps.ts` says which protocol features each backend's engine supports.
@@ -69,7 +82,8 @@ is (re)starting; `dispatch(sessionId, op)` is how every UI call site sends.
 |-----------------|------------------|
 | `approvalModes` | composer approval-mode picker |
 | `hunkApproval`  | per-hunk checkboxes on the approval card |
-| `steer`         | queued-messages “steer” button |
+| `steer`         | a daemon without the hello's `queue` feature: the queue tray's single 插入 for the first message |
+| `unqueue`       | a daemon without `queue` (0.4.27 or later): the tray's 撤回 |
 | `interrupt`     | stop button while busy |
 | `branchTree`    | /tree palette entry, branch picker |
 | `goals`         | right-dock Plan/Goal tabs |
@@ -94,7 +108,7 @@ never test `backendId` directly.
 ### Codex specifics
 
 - Mid-turn messages wait in the daemon (`pending_messages`, the composer's
-  queue strip); the strip's steer button joins them to the running turn.
+  queue tray); a row's 插入 joins it to the running turn.
 - Plan and auto modes, the agent trace (subagent threads), its own MCP
   servers (reconnect, sign in; no switch) and session switches (fast =
   service tier `priority`, thinking = reasoning summaries) as for Claude.
