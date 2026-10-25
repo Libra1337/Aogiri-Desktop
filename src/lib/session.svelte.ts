@@ -1081,8 +1081,10 @@ export class SessionStore {
 			return;
 		}
 		// A turn it was running is over: it is marked unfinished, and the user
-		// may continue it once the engine is back (ChatPane).
-		s.chat.cutShort();
+		// may continue it once the engine is back (ChatPane). A message held
+		// for the engine (sent while it restarted) starts its own turn once
+		// it is back: continuing would send it twice.
+		if (!peekHeldOps(id).some((op) => op.op === 'user_message')) s.chat.cutShort();
 		s.chat.engineState = 'exited';
 		// Until an engine is back (automatically, or by the restart button once
 		// the budget is spent), what the user sends waits for it.

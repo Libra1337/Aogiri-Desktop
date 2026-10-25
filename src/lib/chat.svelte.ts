@@ -2351,9 +2351,11 @@ export class ChatState {
 				// one stays marked after its replay, unless the replay has it
 				// finished (its stats recorded: the daemon kept it running while
 				// this chat could not see it, and it ended meanwhile).
+				// (The engine's own replay decides: the stats this chat stamped
+				// when it cut the turn are no finish.)
 				if (this.cutTurn) {
-					const from = this.messages.findLastIndex((m) => m.kind === 'user');
-					if (this.messages.slice(from + 1).some((m) => m.kind === 'assistant' && !!m.turn)) this.#uncut();
+					const from = replay.findLastIndex((m) => m.kind === 'user');
+					if (from >= 0 && replay.slice(from + 1).some((m) => m.kind === 'assistant' && !!m.turn)) this.#uncut();
 					else if (this.messages.at(-1)?.kind !== 'cut') this.messages.push({ kind: 'cut' });
 				}
 				this.#resetCurrent();

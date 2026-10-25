@@ -1819,6 +1819,24 @@ describe('a turn the engine left mid-way', () => {
 		expect(c.messages.some((m) => m.kind === 'cut')).toBe(true);
 	});
 
+	it('is not cut when the turn finished while the chat could not see it', () => {
+		const c = new ChatState();
+		c.handle({ type: 'user_message', content: 'build it' });
+		c.handle({ type: 'connecting' });
+		c.handle({ type: 'assistant_delta', delta: 'Building' });
+		c.cutShort();
+		c.handle({
+			type: 'transcript',
+			items: [
+				{ role: 'user', content: 'build it' },
+				{ role: 'assistant', content: 'Built.' },
+				{ role: 'turn_stats', model: 'gpt-5.5', elapsed_ms: 4000, input_tokens: 10, output_tokens: 5 }
+			]
+		});
+		expect(c.cutTurn).toBeNull();
+		expect(c.messages.some((m) => m.kind === 'cut')).toBe(false);
+	});
+
 	it('is not cut when the daemon kept the turn running', () => {
 		const c = new ChatState();
 		c.handle({ type: 'user_message', content: 'build it' });
