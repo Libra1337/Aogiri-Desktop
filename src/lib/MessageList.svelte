@@ -699,6 +699,43 @@
 		return { running, failed, latest };
 	}
 
+	// The text under the view stays still as rows window in or out above it
+	// and as their spacer takes their measured heights. The browser's scroll
+	// anchoring does this, but WebKit leaves it undone after a scroll the
+	// page made (the smooth mouse wheel's glide, a jump), and the view moved
+	// by the difference between the rows' estimates and their heights (up to
+	// 700 px a step). The first row in view is read before the window
+	// changes and put back where it was after, unless the anchoring already
+	// did it; at the end, the pane's following keeps the end in view.
+	let anchorRow: { el: Element; top: number } | null = null;
+	function readAnchor(): { el: Element; top: number } | null {
+		const el = scroller;
+		if (!el || !listEl || !virtual || atEnd) return null;
+		const viewTop = el.getBoundingClientRect().top;
+		for (const row of listEl.children) {
+			if (!row.classList.contains('mwrap')) continue;
+			const box = row.getBoundingClientRect();
+			if (box.bottom > viewTop) return { el: row, top: box.top };
+		}
+		return null;
+	}
+	$effect.pre(() => {
+		void padTop;
+		void range.first;
+		untrack(() => (anchorRow = readAnchor()));
+	});
+	$effect(() => {
+		void padTop;
+		void range.first;
+		untrack(() => {
+			const a = anchorRow;
+			anchorRow = null;
+			if (!a || !scroller || !a.el.isConnected) return;
+			const drift = a.el.getBoundingClientRect().top - a.top;
+			if (Math.abs(drift) >= 1) scroller.scrollTop += drift;
+		});
+	});
+
 	// The status line's "›": the running call's card, opened (its run of
 	// calls too) and brought into view.
 	let revealed = $state<{ call: Msg; n: number } | null>(null);
