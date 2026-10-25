@@ -77,6 +77,7 @@ export const ROWS: SearchRow[] = [
 	{ section: 'general', id: 'chat-width', titleKey: 'settings.behavior.chatWidth', descKey: 'settings.behavior.chatWidthHint' },
 	{ section: 'general', id: 'turn-stats', titleKey: 'settings.behavior.turnStats', descKey: 'settings.behavior.turnStatsHint' },
 	{ section: 'general', id: 'scroll-on-send', titleKey: 'settings.behavior.scrollOnSend', descKey: 'settings.behavior.scrollOnSendHint' },
+	{ section: 'general', id: 'fold-turns', titleKey: 'settings.behavior.foldTurns', descKey: 'settings.behavior.foldTurnsHint' },
 	{ section: 'general', id: 'foot-context', titleKey: 'settings.behavior.footContext', descKey: 'settings.behavior.footContextHint' },
 	{ section: 'general', id: 'foot-cost', titleKey: 'settings.behavior.footCost', descKey: 'settings.behavior.footCostHint' },
 	{ section: 'general', id: 'thinking-summaries', titleKey: 'settings.behavior.thinkingSummaries', descKey: 'settings.behavior.thinkingSummariesHint' },

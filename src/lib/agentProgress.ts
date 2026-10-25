@@ -536,3 +536,12 @@ export function waitingOn(task: BoardTask, tasks: BoardTask[]): { id: string; ti
 export function boardProgress(tasks: BoardTask[]): { done: number; total: number } {
 	return { done: tasks.filter((x) => x.status === 'completed').length, total: tasks.length };
 }
+
+/** Work the turn handed off is still going: a subagent running or queued,
+ *  or a background agent or Workflow. Its result comes back to the
+ *  conversation, which then goes on, so the turn is not over yet (its work
+ *  stays unfolded, turnFold.ts). Background commands (a dev server) do not
+ *  count. */
+export function handedOffWork(rows: Pick<AgentRow, 'state'>[], bgTasks: { kind: string }[]): boolean {
+	return rows.some((r) => r.state === 'running' || r.state === 'queued') || bgTasks.some((x) => /^local_(agent|workflow)/.test(x.kind));
+}

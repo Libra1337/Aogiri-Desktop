@@ -94,7 +94,7 @@
 	import { anyCard, cardsLayout, cardsShown } from '$lib/agents/progressCards';
 	import NewSessionPicker from '$lib/NewSessionPicker.svelte';
 	import { placeFor, subagentPages, type OpenHow } from '$lib/agents/subagentPages.svelte';
-	import { agentRows, isLive, numstatTotals, planSummary, porcelainFiles, type AgentRow } from '$lib/agentProgress';
+	import { agentRows, handedOffWork, isLive, numstatTotals, planSummary, porcelainFiles, type AgentRow } from '$lib/agentProgress';
 	import { agentChanges } from '$lib/agents/agentChanges.svelte';
 	import { confirmStop } from '$lib/agents/confirmStop';
 	import { parseToolOutput, toolTarget, toolVerb } from '$lib/toolSummary';
@@ -699,6 +699,8 @@
 	const allAgents = $derived(
 		agentRows({ runs: chat.agentRuns, subagents: chat.subagents, lastTool, team: chat.team, stopping: chat.stopRequested, failed: chat.failedAgents })
 	);
+	// The turn goes on while work it handed off runs (its work stays unfolded).
+	const turnOpen = $derived(chat.busy || handedOffWork(allAgents, chat.bgTasks));
 	const turnAgents = $derived(
 		agentRows({
 			runs: chat.agentRuns,
@@ -1862,7 +1864,7 @@
 	<main bind:this={scroller} onscroll={onScroll} onwheel={onWheel} onpointerdown={reader.down}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div bind:this={contentEl} oncontextmenu={onFileMenu}>
-			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} />
+			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} busy={turnOpen} foldTurns={prefs.foldTurns} />
 		</div>
 		{#if chat.booting && chat.engineState !== 'exited'}
 			<div class="welcome spawning">
