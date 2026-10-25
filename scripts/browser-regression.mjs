@@ -4227,7 +4227,8 @@ try {
     await expect(tray.locator('.qtitle')).toHaveText('排队中');
     await expect(tray.locator('.qcount')).toHaveText('3');
     await expect(tray.locator('.qmeta')).toHaveText('插入的消息在工具结束后插入，不会打断正在运行的工具');
-    // Inside the box, above the text.
+    // Inside the box, above the text (measured once its entrance has played).
+    await settle(page);
     const trayBox = await tray.boundingBox();
     const richBox = await page.locator('.composer .rich').boundingBox();
     assert.ok(trayBox.y + trayBox.height <= richBox.y + 1, 'tray above the text');
