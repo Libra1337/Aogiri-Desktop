@@ -132,6 +132,58 @@ describe('ChatState.handle', () => {
 			}
 		});
 
+		it('names the message the tray picked as the one on its way', () => {
+			const c = new ChatState();
+			c.handle({ type: 'status', message: 'streaming' });
+			c.handle({ type: 'pending_messages', messages: ['use staging', 'then deploy'] });
+			c.steerPick = 'then deploy';
+			c.handle({ type: 'status', message: 'steering' });
+			c.handle({ type: 'pending_messages', messages: ['use staging'] });
+			expect(c.steering).toBe('then deploy');
+			expect(c.steerPick).toBeNull();
+		});
+
+		it('keeps Claude Code\'s fixed messages first, and never more than wait', () => {
+			const c = new ChatState('claude');
+			c.handle({ type: 'pending_messages', messages: ['sent', 'held'], fixed: 1 });
+			expect(c.pendingFixed).toBe(1);
+			c.handle({ type: 'pending_messages', messages: ['held'], fixed: 3 });
+			expect(c.pendingFixed).toBe(1);
+			// Other engines send no `fixed`.
+			c.handle({ type: 'pending_messages', messages: ['a', 'b'] });
+			expect(c.pendingFixed).toBe(0);
+			// Steering skips the fixed ones when the tray picked none.
+			c.handle({ type: 'status', message: 'streaming' });
+			c.handle({ type: 'pending_messages', messages: ['sent', 'held'], fixed: 1 });
+			c.handle({ type: 'status', message: 'steering' });
+			expect(c.steering).toBe('held');
+		});
+
+		it('takes a queued message back with its images and files', () => {
+			const c = new ChatState();
+			c.handle({ type: 'unqueued', content: 'look at these', text: 'look at these', images: ['/u/a.png'], files: ['/d/report.pdf'] });
+			expect(c.unqueued).toEqual({ text: 'look at these', images: ['/u/a.png'], files: ['/d/report.pdf'], seq: 1 });
+			// An older engine sends `text` only.
+			c.handle({ type: 'unqueued', text: 'old' });
+			expect(c.unqueued).toEqual({ text: 'old', images: [], files: [], seq: 2 });
+		});
+
+		it('shows the files a message carried as attachments', () => {
+			const c = new ChatState();
+			c.handle({ type: 'user_message', content: 'compare them', files: ['/d/a.xlsx', '/d/b.pdf'] });
+			expect(c.messages.at(-1)).toEqual({ kind: 'user', text: 'compare them', files: ['/d/a.xlsx', '/d/b.pdf'] });
+			c.handle({ type: 'transcript', items: [{ role: 'user', content: 'again', files: ['/d/c.md'] }] });
+			expect(c.messages).toEqual([{ kind: 'user', text: 'again', files: ['/d/c.md'] }]);
+			c.handle({ type: 'fill_input', content: 'edit me', files: ['/d/c.md'] });
+			expect(c.pendingFill).toBe('edit me');
+			expect(c.pendingFillFiles).toEqual(['/d/c.md']);
+			// Sent here: its echo is the same message, not a second one.
+			c.optimisticUser('with a file', undefined, false, ['/d/x.txt']);
+			c.handle({ type: 'user_message', content: 'with a file', files: ['/d/x.txt'] });
+			expect(c.messages.filter((m) => m.kind === 'user' && m.text === 'with a file')).toHaveLength(1);
+			expect(c.lastUserTurn()).toMatchObject({ text: 'with a file', files: ['/d/x.txt'] });
+		});
+
 		it('shows the steered message as on its way until the engine reads it', () => {
 			const c = new ChatState();
 			c.handle({ type: 'status', message: 'streaming' });
@@ -1720,5 +1772,62 @@ describe('subagent ends', () => {
 		expect(c.agentRuns.workflows[0].agents[0].state).toBe('completed');
 		c.handle({ type: 'agent_runs', workflows: [{ id: 'w1', status: 'running', agents: [{ id: 'a1', state: 'progress' }] }], agents: [] } as never);
 		expect(c.agentRuns.workflows[0].agents[0].state).toBe('progress');
+	});
+});
+
+describe('a turn the engine left mid-way', () => {
+	it('ends there, unfinished, for the user to continue', () => {
+		const c = new ChatState();
+		c.handle({ type: 'user_message', content: 'build it' });
+		c.handle({ type: 'connecting' });
+		c.handle({ type: 'tool_start', call_id: 't1', name: 'bash', args: '{"command":"make"}' });
+		expect(c.busy).toBe(true);
+		expect(c.cutShort()).toBe(true);
+		expect(c.cutTurn).toEqual({ started: true });
+		expect(c.messages.some((m) => m.kind === 'tool' && m.running)).toBe(false);
+		expect(c.messages.at(-1)).toEqual({ kind: 'cut' });
+		// Once: a second exit adds no second mark.
+		c.cutShort();
+		expect(c.messages.filter((m) => m.kind === 'cut')).toHaveLength(1);
+	});
+
+	it('has nothing to continue when nothing was running', () => {
+		const idle = new ChatState();
+		expect(idle.cutShort()).toBe(false);
+		expect(idle.cutTurn).toBeNull();
+		expect(idle.messages).toEqual([]);
+	});
+
+	it('marks a message that never got there as not started', () => {
+		const c = new ChatState();
+		c.optimisticUser('hello');
+		expect(c.cutShort()).toBe(true);
+		expect(c.cutTurn).toEqual({ started: false });
+	});
+
+	it('keeps the mark after the replay, and the next message clears the offer', () => {
+		const c = new ChatState();
+		c.handle({ type: 'user_message', content: 'build it' });
+		c.handle({ type: 'connecting' });
+		c.cutShort();
+		c.engineState = 'exited';
+		c.handle({ type: 'transcript', items: [{ role: 'user', content: 'build it' }] });
+		expect(c.messages.at(-1)).toEqual({ kind: 'cut' });
+		expect(c.cutTurn).not.toBeNull();
+		c.optimisticUser('go on');
+		expect(c.cutTurn).toBeNull();
+		expect(c.messages.some((m) => m.kind === 'cut')).toBe(true);
+	});
+
+	it('is not cut when the daemon kept the turn running', () => {
+		const c = new ChatState();
+		c.handle({ type: 'user_message', content: 'build it' });
+		c.handle({ type: 'connecting' });
+		c.cutShort();
+		// Back on a new connection: the snapshot says the turn still runs.
+		c.handle({ type: 'transcript', items: [{ role: 'user', content: 'build it' }] });
+		c.handle({ type: 'status', message: 'streaming' });
+		expect(c.cutTurn).toBeNull();
+		expect(c.messages.some((m) => m.kind === 'cut')).toBe(false);
 	});
 });

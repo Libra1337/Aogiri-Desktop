@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { codeFileRef, fileHref, isAbsolutePath, joinPath, parseFileHref, pathExt, splitFileRefs, dirHints } from './fileRefs';
+import { codeFileRef, fileHref, isAbsolutePath, joinPath, parseFileHref, pathExt, splitFileRefs, dirHints, readHref } from './fileRefs';
 
 const refs = (text: string) => splitFileRefs(text).filter((p) => typeof p !== 'string');
 
@@ -80,5 +80,18 @@ describe('dirHints', () => {
 	});
 	it('has nothing to offer for a reply without folders', () => {
 		expect(dirHints('双击 index.html 即可。')).toEqual([]);
+	});
+});
+
+describe('readHref', () => {
+	it('opens a Read call\'s file where the reading started', () => {
+		expect(readHref({ path: '/a/b.rs', line: 120 })).toBe('/a/b.rs#L120');
+		// LynShen's read tool says `offset`.
+		expect(readHref({ path: '/a/b.rs', kind: 'text', offset: 40, content: '' })).toBe('/a/b.rs#L40');
+		expect(readHref({ path: '/a/b.rs', offset: 1 })).toBe('/a/b.rs');
+		expect(readHref({ path: '/a/b.rs' })).toBe('/a/b.rs');
+		expect(readHref({ path: '/a/b.rs', line: '7' })).toBe('/a/b.rs');
+		expect(readHref({ line: 3 })).toBe('');
+		expect(readHref(null)).toBe('');
 	});
 });

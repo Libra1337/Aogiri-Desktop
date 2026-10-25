@@ -94,7 +94,8 @@ describe('combo text', () => {
 
 	it('accept modifiers in any case and order, and reject anything else', () => {
 		expect(parseCombo('shift+mod+k')).toEqual({ key: 'k', mod: true, shift: true });
-		for (const bad of ['', 'Mod+', 'Mod+Enter', 'Mod+Space', 'Hyper+K', 'Mod+F13', 'Mod+KK', 42, null]) expect(parseCombo(bad)).toBeNull();
+		for (const bad of ['', 'Mod+', 'Mod+Space', 'Hyper+K', 'Mod+F13', 'Mod+KK', 42, null]) expect(parseCombo(bad)).toBeNull();
+		expect(parseCombo('Mod+Shift+Enter')).toEqual({ key: 'Enter', mod: true, shift: true });
 	});
 });
 
@@ -137,7 +138,22 @@ describe('rules', () => {
 		expect(comboProblem('sessionN', combo('Mod+J'), true)).toBe('digits');
 		expect(comboProblem('find', combo('Mod+1-9'), true)).toBe('key');
 		expect(recordCombo(key({ key: 'Meta', metaKey: true }), 'find', true)).toBeNull();
-		expect(comboProblem('find', recordCombo(key({ key: 'Enter', metaKey: true }), 'find', true) as Combo, true)).toBe('key');
+		expect(comboProblem('find', recordCombo(key({ key: 'Space', metaKey: true }), 'find', true) as Combo, true)).toBe('key');
+	});
+
+	it('send a typed message now with ⌘↵, or stop the turn and send with ⌘⇧↵', () => {
+		expect(matches(key({ key: 'Enter', metaKey: true }), 'sendNow', true)).toBe(true);
+		expect(matches(key({ key: 'Enter', metaKey: true }), 'interruptSend', true)).toBe(false);
+		expect(matches(key({ key: 'Enter', metaKey: true, shiftKey: true }), 'interruptSend', true)).toBe(true);
+		expect(matches(key({ key: 'Enter', ctrlKey: true }), 'sendNow', false)).toBe(true);
+		expect(matches(key({ key: 'Enter' }), 'sendNow', true)).toBe(false);
+		expect(shortcutLabel('sendNow', true)).toBe('⌘↵');
+		expect(shortcutLabel('interruptSend', true)).toBe('⇧⌘↵');
+		expect(shortcutLabel('sendNow', false)).toBe('Ctrl+Enter');
+		// Enter alone sends and ⇧Enter is a new line: neither can be a shortcut.
+		expect(comboProblem('find', combo('Enter'), true)).toBe('modifier');
+		expect(comboProblem('find', combo('Shift+Enter'), true)).toBe('modifier');
+		expect(comboProblem('find', combo('Mod+Enter'), true)).toBeNull();
 	});
 
 	it('find the action that already has a combo', () => {
