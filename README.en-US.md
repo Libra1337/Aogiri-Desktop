@@ -45,7 +45,7 @@ When signing in with a LynShen account, the app receives credentials for the cur
 - **Extend your setup:** Manage models, skills, MCP servers, voice input, and image-generation models in Settings, or import conversations and configuration from other coding tools.
 - **Keep tasks running:** Sessions run in a local background service. Closing the window or restarting the app does not stop an active task. Subagents and background commands still running after a turn ends are listed in the subagents card at the top right of the conversation, where you can read their output or stop them.
 - **See your subscription limits:** With a Claude Code or Codex subscription, a notice says which limit is near or reached, how much is used and when it resets, and can continue the turn once it resets.
-- **Your own colours:** In Settings → General → Colour scheme, pick a scheme (background, text, accent, links) for the light and the dark theme. A scheme without enough contrast is not applied. Schemes sync with your account.
+- **Your own colours:** In Settings → General, pick a colour scheme (background, text, accent, links) for the light theme and one for the dark theme. A scheme without enough contrast is not applied. Schemes sync with your account.
 
 ### Keyboard shortcuts
 
