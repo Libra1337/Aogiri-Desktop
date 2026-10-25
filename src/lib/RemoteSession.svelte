@@ -904,7 +904,7 @@
 				{streamingReasoning}
 				phase={chat.phase}
 				call={chat.call}
-				turnSince={chat.busy ? chat.turnStartedAt : 0}
+				turnSince={chat.turnRunningSince}
 				compactionTokens={chat.compactionTokens}
 				traceOf={bcaps.agentTrace ? traceOf : undefined}
 				agents={allAgents}

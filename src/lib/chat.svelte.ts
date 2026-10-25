@@ -1054,6 +1054,11 @@ export class ChatState {
 	agentRunsSeen = $state(false);
 	/** When the current (or last) turn started and ended, ms (0: not this run). */
 	turnStartedAt = $state(0);
+	/** When the running turn began; 0 between turns (the status line's turn
+	 *  clock). A field of its own, not derived from `busy` in the view: a
+	 *  derived of this long-lived state read only inside the status line
+	 *  kept a whole closed pane alive (desk-perf, 30 turns: 29k nodes). */
+	turnRunningSince = $state(0);
 	turnEndedAt = $state(0);
 	/** When the plan last changed, ms. */
 	planAt = $state(0);
@@ -1388,6 +1393,7 @@ export class ChatState {
 			compaction.error = t('chat.compaction.stopped');
 		}
 		if (this.#turnStart !== null) this.turnEndedAt = this.activeAt;
+		this.turnRunningSince = 0;
 		this.#collapseReasoning();
 		if (this.#sending?.state !== 'failed') this.#setSend(null);
 		this.call = null;
@@ -1510,6 +1516,7 @@ export class ChatState {
 		if (this.#turnStart !== null) return;
 		this.#turnStart = Date.now();
 		this.turnStartedAt = this.#turnStart;
+		this.turnRunningSince = this.#turnStart;
 		// The agents a finished turn ran leave with it (their team entries,
 		// and worktrees still to merge, stay). A background agent that ended
 		// between turns stays for this one: its result is what this turn
