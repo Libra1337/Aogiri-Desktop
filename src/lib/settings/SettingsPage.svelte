@@ -102,6 +102,7 @@
 	import Switch from '$lib/ui/Switch.svelte';
 	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
+	import SchemeSection from './SchemeSection.svelte';
 	import { shownBalanceText } from '$lib/money';
 	import AccountPage from './AccountPage.svelte';
 	import InviteSection from './InviteSection.svelte';
@@ -1014,6 +1015,7 @@
 								onChange={(v) => setTheme(v as ThemePref)}
 							/>
 						</SettingsRow>
+						<SchemeSection />
 						<SettingsRow id="background" title={t('settings.behavior.background')}>
 							{#if prefs.backgroundImage}
 								<span class="bg-thumb" style:background-image="url('{bgThumb}')" aria-hidden="true"></span>
