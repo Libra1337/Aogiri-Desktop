@@ -6,6 +6,8 @@
 	//   ?remoteHost              the list
 	//   &open=<session>          as when a notification about it was tapped
 	//   &features=queue,files    the computer's daemon has the queue and files ops
+	//   &deliver                 the session's last turn presented an image, a
+	//                           video and a page (fs_image answers them)
 	// window.__remoteOps: every op the page sent; __remoteSend(frame) sends
 	// one more frame from the computer.
 	import { onMount, type Component } from 'svelte';
@@ -20,6 +22,8 @@
 	import { openTarget } from '../../src/lib/remote/push';
 	import { setLocale } from '../../src/lib/i18n';
 	import type { SocketLike } from '../../src/lib/daemon';
+	import { VIDEO_SRC } from './media';
+	import { imageSrc } from './previewFiles';
 
 	const params = new URL(location.href).searchParams;
 	setLocale(params.get('lang') === 'en' ? 'en' : 'zh');
@@ -27,6 +31,7 @@
 	const ops: Frame[] = [];
 	let rules: Frame = { daily_budget: 20, quiet_start: '23:00', quiet_end: '08:00', turn_done: true, sent_today: 3 };
 	const SESSION = 's-cache';
+	const DIR = '/Users/me/code/lynshen-desktop/out';
 	const sessions = [
 		{ session: SESSION, running: true, cwd: '/Users/me/code/lynshen-desktop', title: '会话缓存分片', open: true, watchers: 0, updated_at: Date.now(), created_at: Date.now(), entries: 4, engine: 'lynshen', agent: null, archived: false, chat: false },
 		{ session: 's-docs', cwd: '/Users/me/code/lynshen-desktop', title: '翻译文档', open: false, watchers: 0, updated_at: Date.now() - 3_600_000, created_at: Date.now() - 3_600_000, entries: 9, engine: 'lynshen', agent: null, archived: false, chat: false }
@@ -95,11 +100,20 @@
 					setTimeout(() => {
 						this.emit({ type: 'startup', session: op.session, session_id: op.session, cwd: sessions[0].cwd, model: 'gpt-5.5', version: '0.7.5' });
 						this.emit({ type: 'approval_mode', session: op.session, mode: 'manual' });
+						// &deliver: the turn presented an image, a video and a page.
+						const presented = params.has('deliver')
+							? [
+									{ role: 'user', content: '做一份 Q3 月活的报告，配图和演示视频。' },
+									{ role: 'tool', name: 'present_files', call_id: 'p1', output: JSON.stringify({ files: [{ path: `${DIR}/q3-mau.png`, description: 'Q3 月活走势', size: 182_400, kind: 'image' }, { path: `${DIR}/demo.webm`, description: '演示录屏', size: 1_740, kind: 'video' }, { path: `${DIR}/q3.html`, description: 'Q3 月活报告', size: 20_480, kind: 'file' }] }) },
+									{ role: 'assistant', content: '报告、配图和录屏都在 out/ 下。' }
+								]
+							: [];
 						this.emit({
 							type: 'transcript', session: op.session,
 							items: [
 								{ role: 'user', content: '把会话缓存改成按会话分片，跑完单元测试再提交。' },
-								{ role: 'assistant', content: '改好了，单元测试全部通过。接下来推送分支。' }
+								{ role: 'assistant', content: '改好了，单元测试全部通过。接下来推送分支。' },
+								...presented
 							]
 						});
 						// The engine's commands, for the "/" list (ticket #46).
@@ -127,6 +141,13 @@
 					// The turn ends once the push ran (`?idleAfterApprove`).
 					if (params.has('idleAfterApprove')) setTimeout(() => this.emit({ type: 'status', session: SESSION, message: 'ready' }), 60);
 					return;
+				// The files a message sent or a turn presented, as data URLs.
+				case 'fs_image': {
+					const path = String(op.path);
+					if (/\.webm$/.test(path)) return answer({ type: 'fs_image', data: VIDEO_SRC });
+					if (/\.png$/.test(path)) return answer({ type: 'fs_image', data: imageSrc() });
+					return answer({ type: 'error', message: `not an image or a video: ${path}` });
+				}
 				case 'feedback_send':
 					// ?oldEngine: a daemon before feedback_send.
 					if (params.has('oldEngine')) return answer({ type: 'error', message: 'feedback_send requires session' });

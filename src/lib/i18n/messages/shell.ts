@@ -102,6 +102,12 @@ const shell = {
 			retry: '重试',
 			openDownload: '打开下载页'
 		},
+		devServer: {
+			started: '开发服务器已启动',
+			opened: '开发服务器已启动，已在内置浏览器打开',
+			open: '打开',
+			list: '本地服务'
+		},
 		daemonUpdate: {
 			idle: '后台服务会在没有任务运行时更新到 {version}',
 			idleRebuilt: '后台服务会在没有任务运行时换成新构建的 lynshen',
@@ -860,6 +866,7 @@ const shell = {
 			add: '添加定时任务',
 			empty: '还没有定时任务',
 			newTitle: '新建定时任务',
+			agent: '交给哪个 Agent',
 			editTitle: '编辑定时任务',
 			name: '名称',
 			namePlaceholder: '例如：每日巡检',
@@ -1258,6 +1265,12 @@ const shell = {
 			later: 'Later',
 			retry: 'Try again',
 			openDownload: 'Open download page'
+		},
+		devServer: {
+			started: 'A dev server started',
+			opened: 'A dev server started and opened in the built-in browser',
+			open: 'Open',
+			list: 'Local servers'
 		},
 		daemonUpdate: {
 			idle: 'The background service updates to {version} once no task is running',
@@ -2010,6 +2023,7 @@ const shell = {
 			add: 'Add scheduled task',
 			empty: 'No scheduled tasks yet',
 			newTitle: 'New scheduled task',
+			agent: 'Agent that runs it',
 			editTitle: 'Edit scheduled task',
 			name: 'Name',
 			namePlaceholder: 'e.g. Daily check',

@@ -175,6 +175,7 @@ const settings = {
 			agents: '编码智能体',
 			sandbox: '权限与沙箱',
 			team: '工作组',
+			apptools: '应用工具',
 			acp: '外部智能体（ACP）',
 			daemon: '远程访问',
 			chat: '聊天连接',
@@ -319,6 +320,16 @@ const settings = {
 			noRules: '没有命令规则',
 			windows: 'Windows 上命令不在隔离环境中运行：它们能改动你的账户能改动的任何文件。下面的设置决定什么时候问你，不能阻止命令；要限制命令，打开下面的「Windows 沙箱（预览）」。',
 			readFailed: '读取 config.json 失败：{msg}'
+		},
+		appTools: {
+			title: '智能体可用的应用工具',
+			hint: 'Aogiri 额外给每个智能体的工具：LynShen 和 Codex 作为内置工具使用，Claude Code 通过内置的 lynshen MCP 服务器使用，外部智能体（ACP）没有。改动对之后新开或重启的对话生效。',
+			presentFiles: '展示交付物',
+			presentFilesHint: '任务结束时，智能体把做好的文件（报告、图片、视频、网页）列成卡片，图片和视频直接显示，点开即可查看。',
+			proposeSchedule: '提议定时任务',
+			proposeScheduleHint: '智能体可以提议一个定时任务，你点「创建」后才会生效。',
+			oldDaemon: '后台服务版本较旧，只能设置对话之间的消息。更新 LynShen CLI 后可以开关交付物和定时任务提议。',
+			loadFailed: '读取失败：{msg}'
 		},
 		team: {
 			v2: '工作组 v2（Beta）',
@@ -1061,6 +1072,8 @@ const settings = {
 			htmlOpen: '对话中点击 HTML 链接时',
 			htmlOpenBrowser: '内置浏览器',
 			htmlOpenEditor: '编辑器',
+			devServerAutoOpen: '直接打开智能体启动的开发服务器',
+			devServerAutoOpenHint: '发现新的本地网页服务时，直接在内置浏览器里打开。关闭时只在右下角提示。',
 			vibrancy: '窗口磨砂',
 			background: '背景',
 			backgroundPick: '选择图片',
@@ -1520,6 +1533,7 @@ const settings = {
 			agents: 'Coding agents',
 			sandbox: 'Permissions & sandbox',
 			team: 'Agent team',
+			apptools: 'App tools',
 			acp: 'External agents (ACP)',
 			daemon: 'Remote access',
 			chat: 'Chat connectors',
@@ -1664,6 +1678,16 @@ const settings = {
 			noRules: 'No command rules',
 			windows: 'On Windows, commands do not run in isolation: they can change any file your account can. These settings decide when you are asked; they cannot stop a command. To restrict commands, turn on the Windows sandbox (preview) below.',
 			readFailed: 'Could not read config.json: {msg}'
+		},
+		appTools: {
+			title: 'Tools agents can use',
+			hint: 'Tools Aogiri gives every agent: LynShen and Codex use them as built-in tools, Claude Code through the built-in lynshen MCP server; external agents (ACP) get none. Changes apply to conversations started or restarted afterwards.',
+			presentFiles: 'Present deliverables',
+			presentFilesHint: 'At the end of a task the agent lists the files it made (reports, images, videos, web pages) as cards; images and videos show in the conversation.',
+			proposeSchedule: 'Propose scheduled tasks',
+			proposeScheduleHint: 'The agent can propose a scheduled task; it exists only once you click Create.',
+			oldDaemon: 'The background service is older: only messages between conversations can be set. Update LynShen CLI to switch deliverables and task proposals.',
+			loadFailed: 'Could not load: {msg}'
 		},
 		team: {
 			v2: 'Agent team v2 (Beta)',
@@ -2402,6 +2426,8 @@ const settings = {
 			htmlOpen: 'Clicking an HTML link in chat',
 			htmlOpenBrowser: 'Built-in browser',
 			htmlOpenEditor: 'Editor',
+			devServerAutoOpen: 'Open dev servers agents start',
+			devServerAutoOpenHint: 'When a new local web server comes up, open it in the built-in browser. When off, a notice in the corner offers it.',
 			vibrancy: 'Window frost',
 			background: 'Background',
 			backgroundPick: 'Choose image',

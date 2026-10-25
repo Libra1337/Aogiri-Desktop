@@ -54,7 +54,9 @@ const DAEMON_EVENTS = new Set([
 	'workspaces',
 	'dispatches',
 	'requirements',
-	'device_scopes_changed'
+	'device_scopes_changed',
+	// Web servers sessions started (LynShen CLI 0.7.9+, devServers.svelte.ts).
+	'dev_servers'
 ]);
 const CLOSE_TIMEOUT_MS = 10_000;
 

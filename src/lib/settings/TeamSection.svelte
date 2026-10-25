@@ -3,8 +3,7 @@
 	// whether the main agent starts subagents (`agents.fanout`), how many run
 	// at once and how deep, the token budget of a turn, how long unmerged
 	// worktrees stay, what happens when a subagent finishes — config.json
-	// `agents.*`, written ~500 ms after a change — whether conversations
-	// message each other (`sessions.messages`, written at once), the roles a
+	// `agents.*`, written ~500 ms after a change — the roles a
 	// subagent can take, read from the role files (built-in, the user's, the
 	// project's), and the team's shell hooks in ~/.lynshen/hooks.json
 	// (`task_completed`, `agent_idle`). With v2 off, its settings (what
@@ -23,18 +22,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Notice from '$lib/ui/Notice.svelte';
-	import {
-		FANOUTS,
-		SESSION_MESSAGE_MODES,
-		SESSION_MESSAGES_DEFAULT,
-		TEAM_DEFAULTS,
-		readSessionMessages,
-		readTeamConfig,
-		sessionsPatch,
-		teamPatch,
-		type Fanout,
-		type SessionMessagesMode
-	} from '$lib/agents/teamConfig';
+	import { FANOUTS, TEAM_DEFAULTS, readTeamConfig, teamPatch, type Fanout } from '$lib/agents/teamConfig';
 	import { listRoles, parseRole, type RoleInfo, type RoleSource } from '$lib/agents/roles';
 	import { listHooks, TEAM_HOOKS, validHookList, withHook, withoutHook, type TeamHook } from '$lib/agents/teamHooks';
 	import { teamSwitch } from '$lib/agents/teamSwitch.svelte';
@@ -67,26 +55,10 @@
 	let pending: typeof form | null = null;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
-	// ---------- messages between conversations ----------
-	let messages = $state<SessionMessagesMode>(SESSION_MESSAGES_DEFAULT);
-	const messageOpts = $derived(SESSION_MESSAGE_MODES.map((v) => ({ value: v, label: t(`settings.team.messagesOpt.${v}`) })));
-	/** Writes `sessions.messages` over a fresh read of config.json, so the
-	 *  other keys of `sessions` stay as they are there. */
-	async function setMessages(v: string) {
-		if (!loaded || !SESSION_MESSAGE_MODES.includes(v as SessionMessagesMode)) return;
-		try {
-			const cfg = ((await readConfig()) ?? {}) as Record<string, unknown>;
-			await writeConfig({ sessions: sessionsPatch(cfg.sessions, v as SessionMessagesMode) });
-		} catch (e) {
-			toast.error(t('settings.page.saveFailed', { msg: String(e) }));
-		}
-	}
-
 	onMount(async () => {
 		const cfg = ((await readConfig().catch(() => null)) ?? {}) as Record<string, unknown>;
 		agents = cfg.agents;
 		form = { ...readTeamConfig(cfg) };
-		messages = readSessionMessages(cfg);
 		written = JSON.stringify(teamPatch(agents, form));
 		loaded = true;
 		// config.json may have come after the launch (a first run).
@@ -219,9 +191,6 @@
 	</SettingsRow>
 	<SettingsRow id="team-fanout" title={t('settings.team.fanout')} description={t(`settings.team.fanoutHint.${form.fanout}`)}>
 		<Segmented bind:value={form.fanout} options={fanoutOpts} />
-	</SettingsRow>
-	<SettingsRow id="team-messages" title={t('settings.team.messages')} description={t(`settings.team.messagesHint.${messages}`)}>
-		<Segmented bind:value={messages} options={messageOpts} onChange={setMessages} />
 	</SettingsRow>
 </SettingsSection>
 

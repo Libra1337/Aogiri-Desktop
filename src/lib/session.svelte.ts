@@ -201,7 +201,7 @@ export class SessionStore {
 		// answered: Codex not installed, the engine's program not found, a
 		// bad config) shows as it is.
 		if (s && s.surface !== 'tui' && !(e instanceof DaemonError) && daemonUnreachable(e) && chat.daemonRetries < DAEMON_RETRY_DELAYS.length) {
-			if (chat.daemonRetries === 0) chat.messages.push({ kind: 'system', text: t('shell.daemonReconnecting') });
+			if (chat.daemonRetries === 0) chat.messages.push({ kind: 'system', text: t('shell.daemonReconnecting'), flow: { type: 'reconnect' } });
 			const delay = DAEMON_RETRY_DELAYS[chat.daemonRetries++]!;
 			setTimeout(() => {
 				const live = this.allSessions.find((x) => x.id === s.id);
@@ -1039,7 +1039,7 @@ export class SessionStore {
 			: reason
 				? t('shell.autoRestartingWhy', { reason })
 				: t('shell.autoRestarting');
-		if (spend) s.chat.messages.push({ kind: 'system', text });
+		if (spend) s.chat.messages.push({ kind: 'system', text, flow: { type: 'restart' } });
 		// The daemon reopens the session's conversation. A resume target the
 		// engine can't find ("No conversation found …") makes it exit at once,
 		// which would crash-loop re-resuming the same doomed id; when the engine
@@ -1145,7 +1145,7 @@ export class SessionStore {
 		}
 		s.chat.switching = true;
 		s.chat.engineState = 'connecting';
-		s.chat.messages.push({ kind: 'system', text: t('shell.switchingTo', { provider: provider.id, model }) });
+		s.chat.messages.push({ kind: 'system', text: t('shell.switchingTo', { provider: provider.id, model }), flow: { type: 'switch' } });
 		try {
 			await closeSession(id);
 			if (this.#gone(s)) return;
@@ -1185,7 +1185,8 @@ export class SessionStore {
 		s.chat.engineState = 'connecting';
 		s.chat.messages.push({
 			kind: 'system',
-			text: mode === 'lynshen' ? t('shell.toolSwitch.toLynShen') : t('shell.toolSwitch.toSystem')
+			text: mode === 'lynshen' ? t('shell.toolSwitch.toLynShen') : t('shell.toolSwitch.toSystem'),
+			flow: { type: 'switch' }
 		});
 		try {
 			await closeSession(id);
@@ -1277,13 +1278,13 @@ export class SessionStore {
 		// A message sent again goes with its files (an image message is not
 		// sent again: `plain`).
 		const send = (text: string, hidden: boolean, files?: string[]) => {
-			c.messages.push({ kind: 'system', text: note });
+			c.messages.push({ kind: 'system', text: note, flow: { type: 'retry' } });
 			if (hidden) c.autoContinue(text);
 			else c.optimisticUser(text, undefined, true, files);
 			dispatch(id, { op: 'user_message', content: text, ...(files?.length ? { files } : {}) });
 		};
 		if (s.backendId === 'lynshen') {
-			c.messages.push({ kind: 'system', text: note });
+			c.messages.push({ kind: 'system', text: note, flow: { type: 'retry' } });
 			dispatch(id, { op: 'continue' });
 			return;
 		}

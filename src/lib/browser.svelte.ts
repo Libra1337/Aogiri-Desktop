@@ -1,4 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
+import { t } from '$lib/i18n';
+import { prefs } from '$lib/prefs.svelte';
 
 /** A page element captured by the embedded browser's picker, attached to the
  *  next user message as textual context. */
@@ -29,23 +31,33 @@ class BrowserStore {
 	title = $state('');
 	loading = $state(false);
 	picking = $state(false);
+	/** Why the last navigation failed; cleared by the next one. */
+	error = $state('');
 	/** URL waiting for the panel placeholder to become visible/measurable. */
 	pendingUrl = $state<string | null>(null);
 	/** Bumped by open() so the page/dock can reveal the browser tab. */
 	openSignal = $state(0);
 	/** Native webviews always render above the DOM, so modals hide the browser
-	 *  by collapsing its bounds to zero while they're open. */
+	 *  by collapsing its bounds to zero while they're open… */
 	suspended = false;
+	#modal = false;
+	/** …and so does any floating layer (menu, popover, viewer, drop zone)
+	 *  over its area, while it is there (`overBrowser`). */
+	#covering = new Set<HTMLElement>();
+	/** Where the native webview sits (window points), null while hidden: DOM
+	 *  overlays (corner notices) keep clear of it. */
+	shown = $state<Rect | null>(null);
 	#lastRect: Rect | null = null;
 	#applied: Rect | null = null;
 
 	/** Open a URL: navigate the live webview, or remember it until the panel
 	 *  placeholder reports usable bounds. Always signals the UI to reveal the tab. */
 	open(url: string) {
+		this.error = '';
 		if (this.created) {
 			this.url = url;
 			this.loading = true;
-			invoke('browser_navigate', { url }).catch((e) => console.error('browser_navigate', e));
+			invoke('browser_navigate', { url }).catch((e) => this.#failed(url, e));
 		} else {
 			this.pendingUrl = url;
 		}
@@ -66,8 +78,9 @@ class BrowserStore {
 					this.url = url;
 					this.loading = true;
 					this.#applied = rect;
+					this.shown = rect;
 				} catch (e) {
-					console.error('browser_open', e);
+					this.#failed(url, e);
 				}
 			}
 			return;
@@ -75,14 +88,47 @@ class BrowserStore {
 		this.#apply(this.suspended ? { x: 0, y: 0, w: 0, h: 0 } : rect);
 	}
 
+	#failed(url: string, e: unknown) {
+		this.loading = false;
+		this.url = url;
+		this.error = String(e);
+	}
+
 	#apply(r: Rect) {
 		const a = this.#applied;
 		if (a && a.x === r.x && a.y === r.y && a.w === r.w && a.h === r.h) return;
 		this.#applied = r;
+		this.shown = r.w > 1 && r.h > 1 ? r : null;
 		invoke('browser_set_bounds', { x: r.x, y: r.y, width: r.w, height: r.h }).catch(() => {});
 	}
 
-	setSuspended(s: boolean) {
+	/** A modal is open (the page) or a floating layer covers the browser. */
+	setSuspended(modal: boolean) {
+		this.#modal = modal;
+		this.#resuspend();
+	}
+
+	/** A floating layer `el` was laid out at `rect` (CSS px; null: gone). */
+	cover(el: HTMLElement, rect: DOMRect | null) {
+		const r = this.#lastRect;
+		const z = prefs.zoom || 1;
+		// The webview's own place, in CSS px, against the layer's.
+		const over =
+			!!rect &&
+			!!r &&
+			rect.width > 0 &&
+			rect.height > 0 &&
+			rect.left < (r.x + r.w) / z &&
+			rect.right > r.x / z &&
+			rect.top < (r.y + r.h) / z &&
+			rect.bottom > r.y / z;
+		if (over) this.#covering.add(el);
+		else this.#covering.delete(el);
+		this.#resuspend();
+	}
+
+	#resuspend() {
+		const s = this.#modal || this.#covering.size > 0;
 		if (s === this.suspended) return;
 		this.suspended = s;
 		if (!this.created) return;
@@ -115,7 +161,9 @@ class BrowserStore {
 		this.picking = false;
 		this.created = false;
 		this.loading = false;
+		this.error = '';
 		this.#applied = null;
+		this.shown = null;
 		await invoke('browser_close').catch(() => {});
 	}
 
@@ -127,11 +175,19 @@ class BrowserStore {
 		switch (kind) {
 			case 'nav-start':
 				this.loading = true;
+				this.error = '';
 				if (url) this.url = url;
 				break;
 			case 'nav':
 				this.loading = false;
+				this.error = '';
 				if (url) this.url = url;
+				break;
+			// A load that failed before the page came (refused, DNS, TLS; the
+			// host watches for it on macOS, browser.rs).
+			case 'nav-error':
+				this.loading = false;
+				this.error = t('dock.browser.loadFailed', { url: url || this.url });
 				break;
 			case 'state':
 				if (url) this.url = url;
@@ -145,3 +201,21 @@ class BrowserStore {
 }
 
 export const browser = new BrowserStore();
+
+/** Marks a floating layer: while it overlaps the native browser (which
+ *  draws above every DOM element), the browser steps aside. */
+export function overBrowser(node: HTMLElement) {
+	const check = () => browser.cover(node, node.isConnected ? node.getBoundingClientRect() : null);
+	const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(check);
+	ro?.observe(node);
+	// Placed after mount (anchored popovers measure themselves first).
+	const raf = requestAnimationFrame(check);
+	check();
+	return {
+		destroy() {
+			cancelAnimationFrame(raf);
+			ro?.disconnect();
+			browser.cover(node, null);
+		}
+	};
+}

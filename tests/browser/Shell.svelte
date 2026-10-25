@@ -55,7 +55,9 @@
 	//   &work=<step>            a third turn at work, on one step: think, write,
 	//                           bash (lynshen: `started: <command>`), read or
 	//                           edit (a card naming the file, as claude's), mcp,
-	//                           a run of calls (group), compact
+	//                           a run of calls (group), compact, a run of edits
+	//                           with the last still streaming (edits;
+	//                           `window.__grow(n)` its line count)
 	//   &textOnly               the engine reports a model that takes no images
 	//                           and does not think (`window.__chat` attaches files)
 	//   &styles                 the engine reports the reply style: the "+"
@@ -77,6 +79,11 @@
 	//   &openfile               the app's editor beside the conversation (a Read
 	//                           row opens its file there); `window.__editor`
 	//   &drop=<n>               files dragged over the window (the drop layer)
+	//   &devserver              a dev server comes up: the corner notice
+	//   &deliver[=old]          a third turn that presented an image, a video and
+	//                           a page, proposed a scheduled task and started a
+	//                           conversation (=old: a daemon whose tasks carry no
+	//                           origin); `window.__ops` the daemon ops
 	// `window.__prefs` is the preferences store (the regressions change the
 	// conversation width through it); `window.__shellChat` the conversation's
 	// chat (to send it more events), `window.__shellStore` its sessions,
@@ -98,9 +105,13 @@
 	import ContextMenuHost from '../../src/lib/ui/ContextMenuHost.svelte';
 	import ConfirmHost from '../../src/lib/ui/ConfirmHost.svelte';
 	import Toaster from '../../src/lib/ui/Toaster.svelte';
+	import CornerNotices from '../../src/lib/ui/CornerNotices.svelte';
+	import { devServers } from '../../src/lib/devServers.svelte';
 	import TrialGrantCard from '../../src/lib/TrialGrantCard.svelte';
 	import { trial } from '../../src/lib/trial.svelte';
 	import { SessionStore } from '../../src/lib/session.svelte';
+	import { agentDirectory } from '../../src/lib/agents.svelte';
+	import { daemonState } from './fakeDaemon';
 	import { Requirements, provideRequirements } from '../../src/lib/requirements.svelte';
 	import { daemon, type Op } from '../../src/lib/protocol';
 	import { adapterFor, clearDraft } from '../../src/lib/backends/router';
@@ -401,6 +412,37 @@
 			feed({ type: 'prompt_suggestion', text: recapMode === 'long' ? '提交并推送，然后在 PR 描述里写清楚缓存键的新格式、旧缓存的迁移方式和回滚办法，再请两位同事评审' : '提交并推送' });
 	}
 
+	// ?shell&deliver: a third turn that ends with deliverables (an image, a
+	// video, a page), a proposed scheduled task and a conversation it started
+	// (answered meanwhile). &deliver=old: a daemon before the origin of a
+	// task (it never says the proposal was created).
+	const deliverMode = mode.get('deliver');
+	if (deliverMode !== null && !mode.has('empty')) {
+		const dir = '/Users/me/code/lynshen-desktop/out';
+		const call = (id: string, name: string, output: unknown, args?: unknown) => {
+			feed({ type: 'tool_start', call_id: id, name });
+			if (args) feed({ type: 'tool_update', call_id: id, name, output: JSON.stringify(args) });
+			feed({ type: 'tool_output', call_id: id, name, output: JSON.stringify(output) });
+		};
+		feed({ type: 'user_message', content: '做一份 Q3 月活的报告，配图和演示视频；以后每个工作日早上自动更新。翻译交给另一个对话。' });
+		feed({ type: 'status', message: 'streaming' });
+		call('d1', 'bash', { command: 'python3 report.py', exit_code: 0, stdout: 'wrote out/q3.html\nwrote out/q3-mau.png\nwrote out/demo.webm', stderr: '' });
+		call('d2', 'start_session', { id: 'm1', session: 's-translate', title: '把报告翻成英文', status: 'delivered' }, { message: '把 out/q3.html 翻成英文', engine: 'claude', title: '把报告翻成英文' });
+		call('d3', 'present_files', {
+			files: [
+				{ path: `${dir}/q3-mau.png`, description: 'Q3 月活走势', size: 182_400, kind: 'image' },
+				{ path: `${dir}/demo.webm`, description: '演示录屏', size: 1_740, kind: 'video' },
+				{ path: `${dir}/q3.html`, description: 'Q3 月活报告', size: 20_480, kind: 'file' }
+			]
+		});
+		call('d4', 'propose_schedule', { id: 'prop-q3', name: '更新月活报告', prompt: '重新跑 report.py，月活有明显变化就在报告开头写一句说明。', repeat: 'weekdays', time: '09:00', note: 'Shown to the user as a card; nothing is scheduled until they create it.' });
+		call('d5', 'wait_session', { id: 'm1', session: 's-translate', title: '把报告翻成英文', status: 'replied', reply: 'Done: out/q3.en.html' });
+		feed({ type: 'assistant_delta', delta: '报告和配图在 out/ 下；英文版由另一个对话做完了。每个工作日早上更新的定时任务需要你确认后才会创建。' });
+		feed({ type: 'status', message: 'ready' });
+		// One agent to run the task (a task belongs to an agent).
+		agentDirectory.handle({ type: 'agents', agents: [{ id: 'ops', name: '运维', cwd: '/Users/me/code/lynshen-desktop', enabled: true, approval_mode: 'auto', summary: '', sessions: 0, busy: false, sandbox: 'workspace-write', network: true, directories: [], command_rules: [] }] });
+	}
+
 	// ?shell&cards: a third turn at work. The plan is 3/7 with the fourth
 	// step running; four subagents of the agent team (roles, an attempt, one
 	// done, one queued), the team's tokens against its budget and its board.
@@ -448,6 +490,7 @@
 	const work = mode.get('work');
 	if (work && !mode.has('empty')) {
 		feed({ type: 'user_message', content: '把会话缓存改成按会话分片，跑完单元测试再提交。' });
+		feed({ type: 'connecting' });
 		feed({ type: 'status', message: 'streaming' });
 		const tool = (id: string, name: string, update?: string) => {
 			feed({ type: 'tool_start', call_id: id, name });
@@ -465,6 +508,20 @@
 			tool('w2', 'bash', 'started: pnpm vitest run src/lib/cache.test.ts');
 			feed({ type: 'tool_update', call_id: 'w2', name: 'bash', output: 'running 2.0s\nstdout:\n ✓ cache.test.ts (12 tests)' });
 		} else if (work === 'compact') session.chat.handle({ type: 'compaction_start' } as never);
+		else if (work === 'edits') {
+			// A run of edits: thinking, two edits done, a third still streaming
+			// its input (Claude Code's Write reports its counts as they grow).
+			const at = (p: string) => `/Users/me/code/lynshen-desktop/${p}`;
+			const diff = (p: string, add: number, del: number) => [`--- a/${p}`, `+++ b/${p}`, '@@ -1 +1 @@', ...Array.from({ length: del }, (_, i) => `-old ${i}`), ...Array.from({ length: add }, (_, i) => `+new ${i}`)].join('\n');
+			feed({ type: 'reasoning_delta', delta: '缓存键要带上会话 ID，先改 cache.ts，再改调用方。' });
+			tool('e1', 'str_replace');
+			feed({ type: 'tool_output', call_id: 'e1', name: 'str_replace', output: JSON.stringify({ path: at('src/lib/cache.ts'), diff: diff('src/lib/cache.ts', 30, 5) }) });
+			feed({ type: 'reasoning_delta', delta: '调用方只有 session.svelte.ts 一处。' });
+			tool('e2', 'str_replace');
+			feed({ type: 'tool_output', call_id: 'e2', name: 'str_replace', output: JSON.stringify({ path: at('src/lib/session.svelte.ts'), diff: diff('src/lib/session.svelte.ts', 10, 2) }) });
+			tool('e3', 'write', JSON.stringify({ path: at('src/lib/cache.test.ts'), paths: [at('src/lib/cache.test.ts')], add: 12, del: 0 }));
+			Object.assign(window, { __grow: (add: number) => feed({ type: 'tool_update', call_id: 'e3', name: 'write', output: JSON.stringify({ path: at('src/lib/cache.test.ts'), paths: [at('src/lib/cache.test.ts')], add, del: 0 }) }) });
+		}
 	}
 	const opened: string[] = [];
 	// What the conversation sends its engine: no engine runs here, so the
@@ -500,12 +557,23 @@
 		};
 		void daemon.connect();
 	}
-	if (mode.has('cards') || mode.has('styles') || mode.has('recap') || queueMode !== null || mode.has('openfile')) {
+	if (deliverMode === 'old') daemonState.old = true;
+	if (deliverMode !== null) void daemon.connect();
+	if (mode.has('cards') || mode.has('styles') || mode.has('recap') || queueMode !== null || mode.has('openfile') || deliverMode !== null) {
 		clearDraft(session.id);
 		const adapter = adapterFor(session.id);
 		if (adapter) adapter.encodeOp = (op: Op) => (sent.push(op), []);
 	}
 	Object.assign(window, { __shellChat: session.chat, __shellSession: session.id, __shellStore: store, __opened: opened, __sent: sent });
+	// ?shell&devserver: the daemon lists no server when the window connects,
+	// then one this conversation's command started (as +page.svelte wires it);
+	// `window.__devServers(frame)` sends another list.
+	if (mode.has('devserver')) {
+		devServers.titleOf = (sid) => (sid === 's-shell' ? session.chat.title : '');
+		devServers.handle({ type: 'dev_servers', servers: [] });
+		setTimeout(() => devServers.handle({ type: 'dev_servers', servers: [{ port: 5173, url: 'http://localhost:5173/', pid: 4242, name: 'node', session: 's-shell' }] }), 300);
+		Object.assign(window, { __devServers: (frame: Record<string, unknown>) => devServers.handle(frame) });
+	}
 	$effect(() => {
 		const request = subagentPages.request;
 		if (request) untrack(() => opened.push(`agent:${request.agentId}:${request.place}`));
@@ -566,6 +634,7 @@
 {#if mode.get('drop')}<DropLayer count={Number(mode.get('drop'))} />{/if}
 {#if mode.has('files') || mode.has('tabmenu')}<ContextMenuHost />{/if}
 <Toaster />
+<CornerNotices />
 <TrialGrantCard />
 <div class="app">
 	<TitleBar

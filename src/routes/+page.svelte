@@ -25,6 +25,7 @@
 	import TreeStructureIcon from 'phosphor-svelte/lib/TreeStructureIcon';
 	import UsersThreeIcon from 'phosphor-svelte/lib/UsersThreeIcon';
 	import Toaster from '$lib/ui/Toaster.svelte';
+	import CornerNotices from '$lib/ui/CornerNotices.svelte';
 	import ModelSetup from '$lib/ModelSetup.svelte';
 	import { modelSetup } from '$lib/modelSetupState.svelte';
 	import ConfirmHost from '$lib/ui/ConfirmHost.svelte';
@@ -63,6 +64,7 @@
 	import TrialGrantCard from '$lib/TrialGrantCard.svelte';
 	import { trial } from '$lib/trial.svelte';
 	import { browser, type WebRef } from '$lib/browser.svelte';
+	import { devServers } from '$lib/devServers.svelte';
 	import { prefs } from '$lib/prefs.svelte';
 	import { playChime, unlockChimes, type Chime } from '$lib/chime';
 	import { fmtTokens } from '$lib/usageStats';
@@ -1534,11 +1536,15 @@
 				agentDirectory.handle(frame);
 				sync.handle(frame);
 				requirements.handle(frame);
+				devServers.handle(frame);
 			};
 			daemon.onDisconnect = () => {
 				agentDirectory.disconnected();
 				sync.reset();
+				devServers.disconnected();
 			};
+			// A dev server's notice names the conversation that started it.
+			devServers.titleOf = (sid) => store.allSessions.find((s) => s.chat.sessionId === sid)?.chat.title ?? agentDirectory.sessions.find((s) => s.session === sid)?.title ?? '';
 			daemon.onHello = (version, features) => {
 				engine.version = version;
 				engine.features = features;
@@ -1697,6 +1703,7 @@
 {/snippet}
 
 <Toaster />
+<CornerNotices />
 <ConfirmHost />
 {#if dragFiles}<DropLayer count={dragFiles} />{/if}
 

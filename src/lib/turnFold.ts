@@ -47,16 +47,18 @@ export function turnFolds(messages: readonly Msg[], shows: (m: Msg) => boolean, 
 			if (ended < 0) return;
 			body = all.slice(0, ended + 1);
 		}
-		// Failed or stopped: left open.
-		if (wasStopped(key) || body.some((m) => m.kind === 'error' || m.kind === 'cut' || (m.kind === 'tool' && m.cut))) return;
+		// Failed or stopped (here, or where its divider says so): left open.
+		if (wasStopped(key) || body.some((m) => m.kind === 'error' || m.kind === 'cut' || (m.kind === 'tool' && m.cut) || (m.kind === 'system' && m.flow?.type === 'interrupted'))) return;
 		const stats = body.findLast((m) => m.kind === 'assistant' && !!m.turn);
 		const turn = stats?.kind === 'assistant' ? stats.turn : undefined;
 		if (stats?.kind === 'assistant' && stats.interrupted) return;
 		// The final reply: the text after the last other row (a reply split
 		// by nothing but rows that show nothing is one reply). Plans at the
 		// end stay out with it.
+		// Plans at the end stay out with the reply, and so do the steps of
+		// the conversation's course after it (background work done).
 		let end = body.length;
-		while (end > 0 && body[end - 1]!.kind === 'plan') end--;
+		while (end > 0 && (body[end - 1]!.kind === 'plan' || body[end - 1]!.kind === 'system')) end--;
 		let reply = end;
 		while (reply > 0 && body[reply - 1]!.kind === 'assistant') reply--;
 		const members = body.slice(0, reply).filter((m) => m.kind !== 'plan');

@@ -92,3 +92,12 @@ describe('schedule usage amounts', () => {
 		expect(usageCost({ ...usage, gateway_cost: null, estimated_cost_usd: null })).toBe('—');
 	});
 });
+
+describe('a task created from a proposal', () => {
+	it('sends the proposal as its origin, only when it is created', () => {
+		const made = { agent: 'ops', name: 'Tests', prompt: 'x', enabled: true, repeat: 'daily' as const, time: '09:00', new_session: true, days: [], date: '', origin: 'prop-1' };
+		expect(toWire(made).origin).toBe('prop-1');
+		expect(toWire({ ...made, id: 'sch-1' }).origin).toBeUndefined();
+		expect(toWire({ ...made, origin: undefined }).origin).toBeUndefined();
+	});
+});

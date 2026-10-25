@@ -16,9 +16,11 @@ const common = {
 		save: '保存',
 		delete: '删除',
 		close: '关闭',
+		notices: '通知',
 		retry: '重试',
 		loading: '加载中…',
 		error: '出错了',
+		video: { play: '播放视频' },
 		image: {
 			open: '查看大图',
 			viewer: '图片查看',
@@ -44,9 +46,11 @@ const common = {
 		save: 'Save',
 		delete: 'Delete',
 		close: 'Close',
+		notices: 'Notices',
 		retry: 'Retry',
 		loading: 'Loading…',
 		error: 'Error',
+		video: { play: 'Play video' },
 		image: {
 			open: 'View image',
 			viewer: 'Image viewer',

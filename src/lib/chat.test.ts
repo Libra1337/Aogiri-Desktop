@@ -476,6 +476,58 @@ describe('ChatState.handle', () => {
 		expect(c.modelCatalogEffort).toBe('high');
 	});
 
+	it('times each tool call, and keeps a replayed call\'s failure and id', () => {
+		const c = new ChatState();
+		c.handle({ type: 'user_message', content: 'go' });
+		c.handle({ type: 'status', message: 'streaming' });
+		c.handle({ type: 'tool_start', call_id: 'a', name: 'bash' });
+		const call = c.messages.find((m) => m.kind === 'tool')!;
+		expect(call.kind === 'tool' && call.startedAt).toBeGreaterThan(0);
+		expect(call.kind === 'tool' && call.endedAt).toBeUndefined();
+		c.handle({ type: 'tool_output', call_id: 'a', name: 'bash', output: '{}' });
+		expect(call.kind === 'tool' && call.endedAt).toBeGreaterThanOrEqual(call.kind === 'tool' ? call.startedAt! : 0);
+		// A call whose output never came ends with the turn.
+		c.handle({ type: 'tool_start', call_id: 'b', name: 'read' });
+		c.handle({ type: 'status', message: 'ready' });
+		const lost = c.messages.findLast((m) => m.kind === 'tool');
+		expect(lost?.kind === 'tool' && lost.endedAt).toBeGreaterThan(0);
+		const r = new ChatState();
+		r.handle({ type: 'transcript', items: [{ role: 'user', content: 'go' }, { role: 'tool', name: 'bash', output: '{}', is_error: true, call_id: 'x1' }] });
+		const replayed = r.messages.find((m) => m.kind === 'tool');
+		expect(replayed).toMatchObject({ isError: true, callId: 'x1', running: false });
+		expect(replayed?.kind === 'tool' && replayed.startedAt).toBeUndefined();
+	});
+
+	it('marks the steps of the conversation\'s course where they happen, out of the notices', () => {
+		const c = new ChatState();
+		c.handle({ type: 'model_status', model: 'gpt-5.5', state: 'idle' });
+		c.handle({ type: 'user_message', content: 'go' });
+		c.handle({ type: 'connecting' });
+		c.handle({ type: 'status', message: 'streaming' });
+		c.handle({ type: 'assistant_delta', delta: 'working on it' });
+		// The reader stops the turn: a divider where it ended, once.
+		c.stopAsked = true;
+		c.handle({ type: 'status', message: 'interrupted' });
+		c.handle({ type: 'status', message: 'ready' });
+		const flows = () => c.messages.flatMap((m) => (m.kind === 'system' && m.flow ? [m.flow.type] : []));
+		expect(flows()).toEqual(['interrupted']);
+		// Another model in the same engine; the first report made none.
+		c.handle({ type: 'model_status', model: 'claude-opus-5-5', model_label: 'Opus 5.5', state: 'idle' });
+		expect(c.messages.at(-1)).toMatchObject({ kind: 'system', text: 'Now on Opus 5.5', flow: { type: 'switch' } });
+		c.handle({ type: 'model_status', model: 'claude-opus-5-5', state: 'idle' });
+		c.handle({ type: 'task_done', kind: 'local_bash', status: 'completed', summary: 'npm run dev' });
+		c.handle({ type: 'info', message: 'nothing old enough to compact' });
+		expect(flows()).toEqual(['interrupted', 'switch', 'task']);
+		// The notices strip keeps the chatter only.
+		expect(c.statusLog).toEqual(['nothing old enough to compact']);
+		// A turn that ends by itself has no divider.
+		c.handle({ type: 'user_message', content: 'again' });
+		c.handle({ type: 'connecting' });
+		c.handle({ type: 'status', message: 'streaming' });
+		c.handle({ type: 'status', message: 'ready' });
+		expect(flows()).toEqual(['interrupted', 'switch', 'task']);
+	});
+
 	it('collects meta notices into statusLog, keeping them out of the bubble stream', () => {
 		const c = new ChatState();
 		c.handle({ type: 'user_message', content: 'hi' });
@@ -950,7 +1002,7 @@ describe('claude session extras', () => {
 		c.handle({ type: 'background_tasks', tasks: [] });
 		c.handle({ type: 'task_done', task_id: 'w1', kind: 'local_workflow', status: 'completed', summary: 'Review done' });
 		expect(c.bgTasks).toEqual([]);
-		expect(c.messages.at(-1)).toEqual({ kind: 'system', text: '多智能体编排已完成：Review done' });
+		expect(c.messages.at(-1)).toEqual({ kind: 'system', flow: { type: 'task' }, text: '多智能体编排已完成：Review done' });
 		c.handle({ type: 'task_output', task_id: 'b1', output: 'ok', truncated: true });
 		expect(c.taskOutputs.b1).toEqual({ output: 'ok', truncated: true, error: '' });
 	});
@@ -976,7 +1028,7 @@ describe('claude session extras', () => {
 		setLocale('zh');
 		const c = new ChatState();
 		c.handle({ type: 'model_fallback', from: 'Opus 5.5', to: 'Sonnet 5.5', reason: 'overloaded' });
-		expect(c.messages.at(-1)).toEqual({ kind: 'system', text: '模型已从 Opus 5.5 切换到 Sonnet 5.5（原模型过载）' });
+		expect(c.messages.at(-1)).toEqual({ kind: 'system', flow: { type: 'fallback' }, text: '模型已从 Opus 5.5 切换到 Sonnet 5.5（原模型过载）' });
 		c.handle({ type: 'subagent_lifecycle', path: 'a1', label: 'Scan auth', status: 'running', message: 'Reading' });
 		expect(c.subagents.a1).toMatchObject({ status: 'running', message: 'Reading', label: 'Scan auth' });
 		c.handle({ type: 'tool_start', call_id: 't2', name: 'read', subagent: 'Scan auth' });

@@ -334,6 +334,7 @@ const chat = {
 		toolRunning: 'running',
 		toolError: 'error',
 		toolGroup: '调用了 {n} 个工具',
+		editedFiles: '已编辑 {n} 个文件',
 		fold: { worked: '处理了 {t}', steps: '{n} 个步骤', files: '改了 {n} 个文件' },
 		imageToken: '图片 #{n}',
 		toolGroupFailed: '{n} 个失败',
@@ -366,10 +367,29 @@ const chat = {
 			showMessage: '展开消息',
 			sourceGone: '找不到这个对话，它可能已被删除。'
 		},
+		appTools: { present: '展示了交付物', propose: '提议了定时任务' },
+		flow: { interrupted: '你停止了这一轮', model: '已换成 {model}' },
+		turnClock: '本轮用时',
+		artifacts: { label: '交付物' },
+		proposal: {
+			title: '定时任务提议',
+			create: '创建',
+			created: '已创建',
+			decline: '不用了',
+			declined: '未采用',
+			noAgent: '定时任务由 Agent 执行。先在工作台新建一个 Agent，再回来创建。'
+		},
+		children: {
+			label: '启动的对话',
+			open: '打开这个对话',
+			status: { queued: '排队中', delivered: '已发送', replied: '已回复', waiting_approval: '等你批准', running: '进行中' }
+		},
 		sessionTools: {
 			list: '列出对话',
 			read: '读取对话',
 			send: '发给对话',
+			start: '新开对话',
+			wait: '等对话回复',
 			count: '{n} 个',
 			sendTo: '发给「{title}」',
 			sendToUnknown: '发给另一个对话',
@@ -958,6 +978,7 @@ const chat = {
 		toolRunning: 'running',
 		toolError: 'error',
 		toolGroup: 'Used {n} tools',
+		editedFiles: 'Edited {n} files',
 		fold: { worked: 'Worked for {t}', steps: '{n} steps', files: '{n} files changed' },
 		imageToken: 'Image #{n}',
 		toolGroupFailed: '{n} failed',
@@ -990,10 +1011,29 @@ const chat = {
 			showMessage: 'Show the message',
 			sourceGone: 'That conversation is gone. It may have been deleted.'
 		},
+		appTools: { present: 'Presented deliverables', propose: 'Proposed a scheduled task' },
+		flow: { interrupted: 'You stopped this turn', model: 'Now on {model}' },
+		turnClock: 'This turn so far',
+		artifacts: { label: 'Deliverables' },
+		proposal: {
+			title: 'Proposed scheduled task',
+			create: 'Create',
+			created: 'Created',
+			decline: 'Not now',
+			declined: 'Not created',
+			noAgent: 'An agent runs scheduled tasks. Create one on the desk first, then come back to create the task.'
+		},
+		children: {
+			label: 'Conversations started',
+			open: 'Open this conversation',
+			status: { queued: 'Queued', delivered: 'Sent', replied: 'Replied', waiting_approval: 'Waiting for your approval', running: 'Working' }
+		},
 		sessionTools: {
 			list: 'Listed conversations',
 			read: 'Read conversation',
 			send: 'Messaged conversation',
+			start: 'Started conversation',
+			wait: 'Waited for conversation',
 			count: '{n} found',
 			sendTo: 'To “{title}”',
 			sendToUnknown: 'To another conversation',

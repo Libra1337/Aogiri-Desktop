@@ -46,6 +46,9 @@ export interface Schedule {
 	new_session: boolean;
 	/** Proposed by the agent itself; off until the user turns it on. */
 	by_agent?: boolean;
+	/** The `propose_schedule` card it was created from (null: none; absent
+	 *  from a daemon before LynShen CLI 0.7.9). */
+	origin?: string | null;
 	/** Unix seconds. */
 	created_at: number;
 	last_run_at: number | null;
@@ -56,6 +59,8 @@ export interface Schedule {
 /** What `schedule_save` takes: no id creates one. */
 export type ScheduleDraft = Pick<Schedule, 'agent' | 'name' | 'prompt' | 'enabled' | 'repeat' | 'time' | 'new_session'> & {
 	id?: string;
+	/** Set once, when a task is created from an agent's proposal. */
+	origin?: string;
 	days: number[];
 	date: string;
 };
@@ -66,9 +71,10 @@ const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 /** The draft as `schedule_save` expects it: `days` and `date` only where
  *  they apply. */
 export function toWire(d: ScheduleDraft): Record<string, unknown> {
-	const { days, date, id, ...rest } = d;
+	const { days, date, id, origin, ...rest } = d;
 	return {
 		...(id ? { id } : {}),
+		...(origin && !id ? { origin } : {}),
 		...rest,
 		name: d.name.trim(),
 		prompt: d.prompt.trim(),

@@ -69,6 +69,9 @@ type PrefsShape = {
 	/** A finished turn folds its work (thinking, tool calls, the text
 	 *  between them) into one line: its time and the files it changed. */
 	foldTurns: boolean;
+	/** A dev server an agent starts opens in the built-in browser at once
+	 *  (else a corner notice offers it). Off by default. */
+	devServerAutoOpen: boolean;
 	/** Under the composer: the context in use (else only once it nears the limit) and the session's cost. */
 	footContext: boolean;
 	footCost: boolean;
@@ -110,6 +113,7 @@ const DEFAULTS: PrefsShape = {
 	openElsewhere: 'side',
 	scrollOnSend: true,
 	foldTurns: true,
+	devServerAutoOpen: false,
 	footContext: true,
 	footCost: true,
 	thinkingSummaries: true,
@@ -239,6 +243,7 @@ class PrefsStore {
 	openElsewhere = $state(DEFAULTS.openElsewhere);
 	scrollOnSend = $state(DEFAULTS.scrollOnSend);
 	foldTurns = $state(DEFAULTS.foldTurns);
+	devServerAutoOpen = $state(DEFAULTS.devServerAutoOpen);
 	footContext = $state(DEFAULTS.footContext);
 	footCost = $state(DEFAULTS.footCost);
 	thinkingSummaries = $state(DEFAULTS.thinkingSummaries);
@@ -278,6 +283,7 @@ class PrefsStore {
 		this.openElsewhere = p.openElsewhere === 'tab' ? 'tab' : 'side';
 		this.scrollOnSend = p.scrollOnSend !== false;
 		this.foldTurns = p.foldTurns !== false;
+		this.devServerAutoOpen = p.devServerAutoOpen === true;
 		this.footContext = p.footContext !== false;
 		this.footCost = p.footCost !== false;
 		this.thinkingSummaries = p.thinkingSummaries !== false;
@@ -337,6 +343,7 @@ class PrefsStore {
 					openElsewhere: this.openElsewhere,
 					scrollOnSend: this.scrollOnSend,
 					foldTurns: this.foldTurns,
+					devServerAutoOpen: this.devServerAutoOpen,
 					footContext: this.footContext,
 					footCost: this.footCost,
 					thinkingSummaries: this.thinkingSummaries,
@@ -508,7 +515,7 @@ class PrefsStore {
 	}
 
 	/** The switches without side effects of their own. */
-	setFlag(name: 'footContext' | 'footCost' | 'thinkingSummaries' | 'sounds' | 'foldTurns', v: boolean) {
+	setFlag(name: 'footContext' | 'footCost' | 'thinkingSummaries' | 'sounds' | 'foldTurns' | 'devServerAutoOpen', v: boolean) {
 		this[name] = v;
 		this.#save();
 	}

@@ -2311,25 +2311,35 @@ try {
   assert.deepEqual([await fill('body'), await fill('.sidebar'), await fill('.composer')], ['rgb(246, 245, 242)', 'rgb(240, 239, 235)', 'rgb(251, 250, 248)']);
   await light.close();
   // The work status line: one sign, the step in words (a verb and what it
-  // acts on), how long it has taken, and › to the running call. A command
-  // keeps its name after lynshen's updates replace "started: <command>"; a
-  // run of calls opens, and a card the reader folded opens again.
+  // acts on), how long it has taken, › to the running call, and the whole
+  // turn's time at its end (B07 D07). A command keeps its name after
+  // lynshen's updates replace "started: <command>"; a run of calls opens,
+  // and a card the reader folded opens again. A running call is folded,
+  // the running light over its words (D02).
   const work = await browser.newPage();
   work.on('pageerror', e => errors.push(e.message));
   const statusLine = () => work.evaluate(() => {
     const el = document.querySelector('.ind');
-    return el && {text: el.textContent.replace(/\s+/g, ' ').trim(), signs: el.querySelectorAll('.sign').length, spin: getComputedStyle(el.querySelector('.sign')).animationName, more: !!el.querySelector('.more')};
+    if (!el) return null;
+    const turn = el.querySelector('.turn');
+    const step = [...el.childNodes].filter((n) => n !== turn).map((n) => n.textContent).join(' ');
+    return {text: step.replace(/\s+/g, ' ').trim(), turn: turn?.textContent.trim() ?? null, signs: el.querySelectorAll('.sign').length, spin: getComputedStyle(el.querySelector('.sign')).animationName, more: !!el.querySelector('.more')};
   });
   await work.goto(base + '?shell&work=group');
   await expect(work.locator('.ind')).toBeVisible({timeout:30000});
   const workLine = await statusLine();
   assert.match(workLine.text, /^正在运行 pnpm vitest run src\/lib\/cache\.test\.ts · \d+s$/);
+  assert.match(workLine.turn, /^\d+s$/);
   assert.deepEqual([workLine.signs, workLine.spin, workLine.more], [1, 'spin', true]);
   await expect(work.locator('.tgroup.open')).toHaveCount(0);
+  // The run's line: its count, latest call, a light while a call runs.
+  await expect(work.locator('.tgroup .veil')).toHaveCount(1);
   await work.locator('.ind .more').click();
   await expect(work.locator('.tgroup.open')).toHaveCount(1);
   const runningCard = work.locator('.tool').last();
   await expect(runningCard.locator('.collapse.open')).toHaveCount(1);
+  await expect(runningCard.locator('.head .veil')).toHaveCount(1);
+  await expect(runningCard.locator('.head .took')).toHaveText(/^\d+\.\ds$/);
   await runningCard.locator('.head').click();
   await expect(runningCard.locator('.collapse')).toHaveCount(0);
   await work.locator('.ind .more').click();
@@ -4407,6 +4417,95 @@ try {
     await shot(page, 'desk-drop-anywhere');
     await page.close();
   }
+  // B07: a run of edits says what changed, its counts rolling while an edit
+  // streams; a finished turn ends with its deliverables (an image and a
+  // video shown), a proposed task (创建 → the task dialog filled in, saved
+  // with the proposal as its origin → 已创建; 不用了 on a daemon without
+  // origin) and the conversation it started; dividers where the reader
+  // stopped and the model changed; a dev server's corner notice and its
+  // 打开; Settings → 应用工具 on a new and an old daemon.
+  {
+    const SHOTS = process.env.B07_SHOTS;
+    const shot = async (p, name) => { if (SHOTS) await p.screenshot({path: `${SHOTS}/${name}.png`}); };
+    const page = await browser.newPage({viewport: {width: 1280, height: 860}});
+    page.setDefaultTimeout(30000);
+    page.on('pageerror', (e) => errors.push(e.message));
+
+    await page.goto(base + '?shell&work=edits');
+    const run = page.locator('.tgroup').last();
+    await expect(run).toBeVisible({timeout: 60000});
+    await expect(run.locator('.tg-count')).toHaveText('已编辑 3 个文件');
+    await expect(run.locator('.tg-names')).toHaveText('cache.ts, session.svelte.ts, cache.test.ts');
+    await expect(run.locator('.dstat')).toHaveText('+52−7');
+    await page.evaluate(() => window.__grow(48));
+    await expect(run.locator('.dstat')).toHaveText('+88−7');
+    await run.click();
+    // The thinking that led to each call, folded, in order.
+    await expect(page.locator('.tg-list > *')).toHaveCount(5);
+    await expect(page.locator('.tg-list .reason')).toHaveCount(2);
+    await shot(page, 'b07-edits-run');
+
+    await page.goto(base + '?shell&deliver');
+    await expect(page.locator('.deliver .card')).toHaveCount(3, {timeout: 60000});
+    await expect(page.locator('.deliver img')).toHaveCount(1);
+    await expect(page.locator('.deliver video')).toHaveCount(1);
+    // No tool rows for the app tools.
+    await expect(page.locator('.tool .verb', {hasText: '展示了交付物'})).toHaveCount(0);
+    await expect(page.locator('.children .row')).toContainText('把报告翻成英文');
+    await expect(page.locator('.children .state')).toHaveText('已回复');
+    await page.locator('.proposal').getByRole('button', {name: '创建'}).click();
+    await expect(page.getByRole('textbox', {name: '名称'})).toHaveValue('更新月活报告');
+    await page.getByRole('dialog').getByRole('button', {name: '保存'}).click();
+    await expect(page.locator('.proposal')).toContainText('已创建');
+    const saved = await page.evaluate(() => window.__ops.filter((o) => o.op === 'schedule_save').map((o) => o.schedule));
+    assert.deepEqual(saved.map((x) => [x.agent, x.origin, x.repeat, x.time]), [['ops', 'prop-q3', 'weekdays', '09:00']]);
+    await page.locator('.proposal').scrollIntoViewIfNeeded();
+    await shot(page, 'b07-turn-end');
+    // This device keeps the choice (a daemon whose tasks carry no origin).
+    await page.goto(base + '?shell&deliver=old');
+    await expect(page.locator('.proposal')).toContainText('已创建', {timeout: 60000});
+    await page.evaluate(() => localStorage.removeItem('lynshen-proposals'));
+    await page.goto(base + '?shell&deliver=old');
+    await expect(page.locator('.proposal')).toBeVisible({timeout: 60000});
+    await page.locator('.proposal').getByRole('button', {name: '不用了'}).click();
+    await expect(page.locator('.proposal')).toContainText('未采用');
+
+    await page.goto(base + '?shell&work=group');
+    await expect(page.locator('.ind .turn')).toBeVisible({timeout: 60000});
+    await page.evaluate(() => {
+      const c = window.__shellChat;
+      c.stopAsked = true;
+      c.handle({type: 'status', message: 'interrupted'});
+      c.handle({type: 'status', message: 'ready'});
+      c.handle({type: 'model_status', model: 'gpt-5.5', state: 'idle'});
+      c.handle({type: 'model_status', model: 'claude-opus-5-5', model_label: 'Opus 5.5', state: 'idle'});
+    });
+    await expect(page.locator('.flow')).toHaveText(['你停止了这一轮', '已换成 Opus 5.5']);
+    await expect(page.locator('.ind')).toHaveCount(0);
+    await shot(page, 'b07-dividers');
+
+    await page.goto(base + '?shell&devserver');
+    const notice = page.locator('.notices .notice');
+    await expect(notice).toContainText('开发服务器已启动', {timeout: 60000});
+    await expect(notice.locator('.detail')).toHaveText('localhost:5173 · 窗口磨砂默认关闭');
+    // It keeps clear of the composer.
+    const [nb, cb] = await Promise.all([notice.boundingBox(), page.locator('.chatpane .bottom').boundingBox()]);
+    assert.ok(nb.y + nb.height <= cb.y + 1, 'the notice sits above the composer');
+    await notice.getByRole('button', {name: '打开'}).click();
+    await expect(notice).toHaveCount(0);
+    await page.evaluate(() => window.__devServers({type: 'dev_servers', servers: []}));
+
+    for (const old of [false, true]) {
+      await page.goto(base + '?shell&settings=apptools' + (old ? '&oldEngine' : ''));
+      await expect(page.locator('#set-team-messages')).toBeVisible({timeout: 60000});
+      await expect(page.locator('#set-app-tools-present')).toHaveCount(old ? 0 : 1);
+      if (!old) {
+        await page.locator('#set-app-tools-schedule [role=switch]').click();
+        await expect.poll(() => page.evaluate(() => window.__ops.filter((o) => o.op === 'app_tools_set').map((o) => o.propose_schedule))).toEqual([false]);
+      }
+    }
+    await page.close();
+  }
   assert.deepEqual(errors, []);
-  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel, the queue tray (into the turn after the running tool, stop and send, take back with its file, delete, reorder by key and drag, ⌘↵ and ⌘⇧↵, Claude Code\'s fixed rows, an old daemon\'s single 插入), files and videos sent as attachments (and listed in the text for an old daemon), a Read row opening its file at its line, an unfinished turn and 继续, files dragged over the window.');
+  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel, the queue tray (into the turn after the running tool, stop and send, take back with its file, delete, reorder by key and drag, ⌘↵ and ⌘⇧↵, Claude Code\'s fixed rows, an old daemon\'s single 插入), files and videos sent as attachments (and listed in the text for an old daemon), a Read row opening its file at its line, an unfinished turn and 继续, files dragged over the window, a run of edits with rolling counts, a turn\'s deliverables, proposed task and started conversation, course dividers and the turn clock, a dev server\'s corner notice, Settings → 应用工具.');
 } finally { await browser.close(); await server.close(); }

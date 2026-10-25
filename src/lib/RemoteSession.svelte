@@ -485,7 +485,10 @@
 	/** A queued message's row, picked by its place and text in the queue as
 	 *  shown. Stopping the turn shows Stop at once, as the stop button does. */
 	function queueAction(action: QueueAction) {
-		if (action.kind === 'interrupt') stopping = true;
+		if (action.kind === 'interrupt') {
+			stopping = true;
+			if (chat.busy) chat.stopAsked = true;
+		}
 		if (action.kind === 'steer') chat.steerPick = chat.pendingMessages.at(action.index) ?? null;
 		send(queueOp(action, chat.pendingMessages));
 	}
@@ -620,6 +623,7 @@
 	}
 	function stop() {
 		stopping = true;
+		if (chat.busy) chat.stopAsked = true;
 		send({ op: 'interrupt' });
 	}
 
@@ -693,7 +697,9 @@
 		pendingTimer = setTimeout(() => (pendingModel = ''), 15_000);
 		send({ op: 'command', input: `/model ${model}` });
 	}
-	// Sent images live on the computer: read them there, once each.
+	// Sent images and presented ones live on the computer: read them there
+	// (`fs_image`), once each. A presented video is read each time it is
+	// played and not kept: it can be large (up to 16 MiB).
 	const imageData = new Map<string, Promise<string>>();
 	function loadImage(path: string): Promise<string> {
 		let got = imageData.get(path);
@@ -702,6 +708,7 @@
 				if (typeof r.data !== 'string') throw new Error(String(r.message ?? 'no image'));
 				return r.data;
 			});
+			if (/\.(mp4|m4v|webm|mov)$/i.test(path)) return got;
 			got.catch(() => imageData.delete(path));
 			imageData.set(path, got);
 		}
@@ -897,6 +904,7 @@
 				{streamingReasoning}
 				phase={chat.phase}
 				call={chat.call}
+				turnSince={chat.turnRunningSince}
 				compactionTokens={chat.compactionTokens}
 				traceOf={bcaps.agentTrace ? traceOf : undefined}
 				agents={allAgents}

@@ -1,6 +1,7 @@
 import { mount } from 'svelte';
 import '../../src/lib/app.css';
 import { imageSrc, previewFacts } from './previewFiles';
+import { VIDEO_SRC } from './media';
 import { SAMPLE_CATALOG, SAMPLE_PLAIN_IDS } from '../../src/lib/models/catalogSample';
 import { builtinProviderFixture } from './providerFixtures';
 
@@ -139,7 +140,8 @@ Object.assign(window, {
     transformCallback: () => 1,
     unregisterCallback: () => {},
     // The asset protocol: the stand-in screenshot for a sent PNG.
-    convertFileSrc: (path: string) => (path.endsWith('.png') ? imageSrc() : `asset://localhost/${encodeURIComponent(path)}`),
+    // A presented video: a short clip (media.ts).
+    convertFileSrc: (path: string) => (path.endsWith('.png') ? imageSrc() : /\.(webm|mp4|mov|m4v)$/.test(path) ? VIDEO_SRC : `asset://localhost/${encodeURIComponent(path)}`),
     invoke: async (command: string, args: any) => {
       calls.push({ command, args });
       // Provider fixtures (providerFixtures.ts): ?anthropic[=keyed], model lists.

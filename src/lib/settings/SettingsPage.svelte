@@ -31,6 +31,7 @@
 	import PuzzlePieceIcon from 'phosphor-svelte/lib/PuzzlePieceIcon';
 	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
 	import UsersThreeIcon from 'phosphor-svelte/lib/UsersThreeIcon';
+	import ToolboxIcon from 'phosphor-svelte/lib/ToolboxIcon';
 	import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheckIcon';
 	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnectedIcon';
 	import TrayArrowDownIcon from 'phosphor-svelte/lib/TrayArrowDownIcon';
@@ -126,6 +127,7 @@
 	import PluginsSection from './PluginsSection.svelte';
 	import ShortcutsSection from './ShortcutsSection.svelte';
 	import TeamSection from './TeamSection.svelte';
+	import AppToolsSection from './AppToolsSection.svelte';
 	import SandboxSection from './SandboxSection.svelte';
 	import PermissionRulesSection from './PermissionRulesSection.svelte';
 	import UpdateCard from './UpdateCard.svelte';
@@ -196,6 +198,7 @@
 		agents: RobotIcon,
 		sandbox: ShieldCheckIcon,
 		team: UsersThreeIcon,
+		apptools: ToolboxIcon,
 		acp: PlugsConnectedIcon,
 		import: TrayArrowDownIcon,
 		daemon: DeviceMobileIcon,
@@ -1155,6 +1158,9 @@
 								onChange={(v) => prefs.setHtmlOpenInBrowser(v === 'browser')}
 							/>
 						</SettingsRow>
+						<SettingsRow id="dev-server-open" title={t('settings.behavior.devServerAutoOpen')} description={t('settings.behavior.devServerAutoOpenHint')}>
+							<Switch checked={prefs.devServerAutoOpen} label={t('settings.behavior.devServerAutoOpen')} onChange={(on) => prefs.setFlag('devServerAutoOpen', on)} />
+						</SettingsRow>
 					</SettingsSection>
 					{#if inApp}
 						<SettingsSection title={t('settings.page.startup')}>
@@ -1524,6 +1530,8 @@
 					<SandboxSection {project} {sessions} />
 				{:else if current === 'team'}
 					<TeamSection project={chat && !chat.isChatMode ? chat.cwd : ''} />
+				{:else if current === 'apptools'}
+					<AppToolsSection />
 				{:else if current === 'acp'}
 					<AcpSection />
 				{:else if current === 'import'}

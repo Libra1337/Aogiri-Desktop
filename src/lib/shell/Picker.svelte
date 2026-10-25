@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { overBrowser } from '$lib/browser.svelte';
 	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon';
@@ -95,7 +96,7 @@
 
 {#if anchored}
 	<button class="pop-backdrop" aria-label={t('common.close')} onclick={onClose}></button>
-	<div class="modal anchored" role="dialog" aria-label={title}>
+	<div use:overBrowser class="modal anchored" role="dialog" aria-label={title}>
 		{@render body()}
 	</div>
 {:else}
