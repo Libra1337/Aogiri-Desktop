@@ -15,6 +15,7 @@ const keys = (items: ListItem<string>[]) => items.map((it) => (it.kind === 'head
 describe('stateGroup', () => {
 	it('puts waiting and failed together, then working, then the rest', () => {
 		expect([S.ask, S.failed, S.running, S.unread, S.idle].map(stateGroup)).toEqual(['waiting', 'waiting', 'working', 'done', 'done']);
+		expect(stateGroup({ kind: 'background', n: 2 })).toBe('working');
 	});
 });
 

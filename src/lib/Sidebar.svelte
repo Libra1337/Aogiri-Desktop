@@ -618,7 +618,7 @@
 			{:else}
 				<!-- The status dot sits before the title; every row keeps its slot,
 				     so the titles line up. -->
-				<span class="st">{#if status && status.kind !== 'running'}<SessionMark {status} />{/if}</span>
+				<span class="st">{#if status && status.kind !== 'running' && status.kind !== 'background'}<SessionMark {status} />{/if}</span>
 			{/if}
 			{#if s.icon}
 				<TabGlyph icon={s.icon} color={s.color} size={14} />
@@ -655,6 +655,8 @@
 			{#if s.backendId && s.backendId !== 'lynshen' && !s.draft}
 				<span class="backend-chip" title={BACKEND_LABELS[s.backendId]}><BackendIcon backend={s.backendId} size={12} /></span>
 			{/if}
+			<!-- Background tasks its turn left going: a still mark after the title, no sweep. -->
+			{#if status?.kind === 'background'}<span class="bg-mark"><SessionMark {status} compact /></span>{/if}
 			{#if s.pinned && !s.archived}<span class="pin-mark" title={t('shell.pin')}><PushPinIcon size={12} weight="fill" /></span>{/if}
 			<!-- Another conversation's message waits for this one to be free. -->
 			{#if waiting}<span class="queued-mark" title={waiting} aria-label={waiting}><EnvelopeSimpleIcon size={12} /></span>{/if}
@@ -1564,6 +1566,10 @@
 		padding-left: 34px;
 	}
 	/* The status slot: a 6px dot (SessionMark) or nothing. */
+	.bg-mark {
+		display: inline-flex;
+		flex-shrink: 0;
+	}
 	.st {
 		display: inline-flex;
 		align-items: center;

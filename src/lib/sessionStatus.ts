@@ -1,13 +1,17 @@
 // What a session wants the user to notice, most urgent first: it waits on
-// them, its last turn failed, it is working, or it replied while out of view.
-// No status means idle.
+// them, its last turn failed, it is working (a turn), background tasks its
+// turn left going run (subagents, Workflows, background commands: not the
+// session working), or it replied while out of view. No status means idle.
 import type { ChatState } from '$lib/chat.svelte';
+import { runningTasks } from '$lib/agentProgress';
 
 export type SessionStatus =
 	/** `what`: the request in one line (the command, the question), or ''. */
 	| { kind: 'input'; ask: 'approve' | 'answer'; what: string }
 	| { kind: 'failed'; message: string }
 	| { kind: 'running' }
+	/** `n`: the background tasks that run. */
+	| { kind: 'background'; n: number }
 	| { kind: 'unread' }
 	| null;
 
@@ -22,6 +26,8 @@ export function sessionStatus(chat: ChatState): SessionStatus {
 	if (chat.engineState === 'exited') return { kind: 'failed', message: chat.lastError ?? '' };
 	if (chat.lastError !== null) return { kind: 'failed', message: chat.lastError };
 	if (chat.busy) return { kind: 'running' };
+	const n = runningTasks(chat);
+	if (n > 0) return { kind: 'background', n };
 	if (chat.unseen) return { kind: 'unread' };
 	return null;
 }

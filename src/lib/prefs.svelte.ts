@@ -66,6 +66,9 @@ type PrefsShape = {
 	openElsewhere: 'side' | 'tab';
 	/** Sending a message scrolls the conversation to its end. */
 	scrollOnSend: boolean;
+	/** A finished turn folds its work (thinking, tool calls, the text
+	 *  between them) into one line: its time and the files it changed. */
+	foldTurns: boolean;
 	/** Under the composer: the context in use (else only once it nears the limit) and the session's cost. */
 	footContext: boolean;
 	footCost: boolean;
@@ -106,6 +109,7 @@ const DEFAULTS: PrefsShape = {
 	teamV2: true,
 	openElsewhere: 'side',
 	scrollOnSend: true,
+	foldTurns: true,
 	footContext: true,
 	footCost: true,
 	thinkingSummaries: true,
@@ -234,6 +238,7 @@ class PrefsStore {
 	teamV2 = $state(DEFAULTS.teamV2);
 	openElsewhere = $state(DEFAULTS.openElsewhere);
 	scrollOnSend = $state(DEFAULTS.scrollOnSend);
+	foldTurns = $state(DEFAULTS.foldTurns);
 	footContext = $state(DEFAULTS.footContext);
 	footCost = $state(DEFAULTS.footCost);
 	thinkingSummaries = $state(DEFAULTS.thinkingSummaries);
@@ -272,6 +277,7 @@ class PrefsStore {
 		this.teamV2 = p.teamV2 !== false;
 		this.openElsewhere = p.openElsewhere === 'tab' ? 'tab' : 'side';
 		this.scrollOnSend = p.scrollOnSend !== false;
+		this.foldTurns = p.foldTurns !== false;
 		this.footContext = p.footContext !== false;
 		this.footCost = p.footCost !== false;
 		this.thinkingSummaries = p.thinkingSummaries !== false;
@@ -330,6 +336,7 @@ class PrefsStore {
 					teamV2: this.teamV2,
 					openElsewhere: this.openElsewhere,
 					scrollOnSend: this.scrollOnSend,
+					foldTurns: this.foldTurns,
 					footContext: this.footContext,
 					footCost: this.footCost,
 					thinkingSummaries: this.thinkingSummaries,
@@ -501,7 +508,7 @@ class PrefsStore {
 	}
 
 	/** The switches without side effects of their own. */
-	setFlag(name: 'footContext' | 'footCost' | 'thinkingSummaries' | 'sounds', v: boolean) {
+	setFlag(name: 'footContext' | 'footCost' | 'thinkingSummaries' | 'sounds' | 'foldTurns', v: boolean) {
 		this[name] = v;
 		this.#save();
 	}

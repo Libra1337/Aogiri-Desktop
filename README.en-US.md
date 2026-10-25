@@ -40,10 +40,12 @@ When signing in with a LynShen account, the app receives credentials for the cur
 ## Everyday use
 
 - **Control permissions:** Press `Shift+Tab` to change approval mode. For an approval request, press `1` to allow once, `2` to always allow, or `3` or `Esc` to deny.
-- **Work with your project:** Use the file editor and Git diff, staging, commit, pull, and push tools. Install GitHub CLI to work with pull requests. Independent Git worktrees are available for parallel tasks.
+- **Work with your project:** When a turn ends, its work folds into one line with how long it took and which files it changed; open it to go through them. All changes in the working tree are in the Git panel, with diff, staging, commit, pull, and push. Install GitHub CLI to work with pull requests. Independent Git worktrees are available for parallel tasks.
 - **Stay in one window:** Open a terminal or the built-in browser and bring web elements into the conversation. You can also switch to the agent's own terminal interface.
 - **Extend your setup:** Manage models, skills, MCP servers, voice input, and image-generation models in Settings, or import conversations and configuration from other coding tools.
-- **Keep tasks running:** Sessions run in a local background service. Closing the window or restarting the app does not stop an active task.
+- **Keep tasks running:** Sessions run in a local background service. Closing the window or restarting the app does not stop an active task. Subagents and background commands still running after a turn ends are listed in the subagents card at the top right of the conversation, where you can read their output or stop them.
+- **See your subscription limits:** With a Claude Code or Codex subscription, a notice says which limit is near or reached, how much is used and when it resets, and can continue the turn once it resets.
+- **Your own colours:** In Settings → General, pick a colour scheme (background, text, accent, links) for the light theme and one for the dark theme. A scheme without enough contrast is not applied. Schemes sync with your account.
 
 ### Keyboard shortcuts
 

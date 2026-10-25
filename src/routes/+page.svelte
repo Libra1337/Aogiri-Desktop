@@ -12,19 +12,15 @@
 	import SessionMark from '$lib/SessionMark.svelte';
 	import { sessionStatus } from '$lib/sessionStatus';
 	import { showWaiting } from '$lib/shell/attention.svelte';
-	import { joinPath, parseFileHref, pathExt } from '$lib/fileRefs';
 	import { PROVIDER_CATALOG } from '$lib/providers/catalog';
 	import { applyOverride, readOverrides } from '$lib/providers/overrides';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecksIcon';
 	import TargetIcon from 'phosphor-svelte/lib/TargetIcon';
-	import GitDiffIcon from 'phosphor-svelte/lib/GitDiffIcon';
-	import ClockCounterClockwiseIcon from 'phosphor-svelte/lib/ClockCounterClockwiseIcon';
 	import FilesIcon from 'phosphor-svelte/lib/FilesIcon';
 	import GitBranchIcon from 'phosphor-svelte/lib/GitBranchIcon';
 	import FolderIcon from 'phosphor-svelte/lib/FolderIcon';
 	import GlobeIcon from 'phosphor-svelte/lib/GlobeIcon';
-	import PulseIcon from 'phosphor-svelte/lib/PulseIcon';
 	import TreeStructureIcon from 'phosphor-svelte/lib/TreeStructureIcon';
 	import UsersThreeIcon from 'phosphor-svelte/lib/UsersThreeIcon';
 	import Toaster from '$lib/ui/Toaster.svelte';
@@ -74,6 +70,7 @@
 	import { SessionStore, listedSessions } from '$lib/session.svelte';
 	import { workspaces } from '$lib/workbench/workspaceStore.svelte';
 	import { autoRetry } from '$lib/autoRetry.svelte';
+	import { limitResume } from '$lib/limitResume.svelte';
 	import { refreshLynShenModels } from '$lib/lynshenModels';
 	import {
 		activateTab,
@@ -148,14 +145,12 @@
 	import { agentOutcome, discardedRun, shortPath, type AgentRow } from '$lib/agentProgress';
 	import type { ApprovalMode } from '$lib/approval';
 	import GoalPanel from '$lib/GoalPanel.svelte';
-	import ChangesPanel from '$lib/ChangesPanel.svelte';
-	import TurnsPanel from '$lib/TurnsPanel.svelte';
 	import FilesPanel from '$lib/FilesPanel.svelte';
 	import GitPanel from '$lib/GitPanel.svelte';
 	import { terminalRequests } from '$lib/sandbox/terminal.svelte';
 	import BrowserPanel from '$lib/BrowserPanel.svelte';
-	import DiagnosticsPanel from '$lib/DiagnosticsPanel.svelte';
 	import AgentRunsPanel from '$lib/AgentRunsPanel.svelte';
+	import AgentChangesPane from '$lib/agents/AgentChangesPane.svelte';
 	import TeamPanel from '$lib/agents/TeamPanel.svelte';
 	import type TuiPanel from '$lib/TuiPanel.svelte';
 	import Lazy from '$lib/ui/Lazy.svelte';
@@ -576,7 +571,7 @@
 	let tilesReady = $state(false);
 	let focusedLeaf = $state<string | null>(null);
 
-	const ALL_PANELS = ['plan', 'goal', 'agents', 'team', 'changes', 'turns', 'files', 'git', 'term', 'browser', 'diag'] as const;
+	const ALL_PANELS = ['plan', 'goal', 'agents', 'team', 'files', 'git', 'term', 'browser'] as const;
 	// Plan/Goal are engine features. Goal stays gated by the backend cap; the plan
 	// tab also appears whenever there's an actual plan (e.g. claude's TodoWrite),
 	// even on backends that don't advertise goals.
@@ -594,14 +589,14 @@
 	// session (model popup), never at tab creation. Persisted `tui:*` tabs
 	// still render, but TUI tabs are no longer offered as new options.
 	const PANEL_ICONS: Record<(typeof ALL_PANELS)[number], typeof PlusIcon> = {
-		plan: ListChecksIcon, goal: TargetIcon, agents: TreeStructureIcon, team: UsersThreeIcon, changes: GitDiffIcon, turns: ClockCounterClockwiseIcon,
-		files: FilesIcon, git: GitBranchIcon, term: TerminalWindowIcon, browser: GlobeIcon, diag: PulseIcon
+		plan: ListChecksIcon, goal: TargetIcon, agents: TreeStructureIcon, team: UsersThreeIcon,
+		files: FilesIcon, git: GitBranchIcon, term: TerminalWindowIcon, browser: GlobeIcon
 	};
 	/** The + menu's sections: the conversation's own views, the code, then tools. */
 	const PANEL_GROUP: Record<(typeof ALL_PANELS)[number], 'session' | 'code' | 'tools'> = {
-		plan: 'session', goal: 'session', agents: 'session', team: 'session', turns: 'session',
-		changes: 'code', files: 'code', git: 'code',
-		term: 'tools', browser: 'tools', diag: 'tools'
+		plan: 'session', goal: 'session', agents: 'session', team: 'session',
+		files: 'code', git: 'code',
+		term: 'tools', browser: 'tools'
 	};
 	const GROUP_ORDER = ['session', 'code', 'tools'] as const;
 	const addOptions = $derived([
@@ -1364,29 +1359,6 @@
 		}
 	}
 
-	// Open a workspace file referenced by a tool panel (e.g. the turns list).
-	// HTML opens in the built-in browser (rendered) or the editor (source) per
-	// preference; everything else opens in the editor. Paths resolve relative
-	// to the active project root (chat links resolve inside their own pane).
-	function openActiveFile(href: string) {
-		const cwd = activeProject?.path;
-		if (!cwd) return;
-		const rel = parseFileHref(href).path;
-		if (!rel) return;
-		const abs = joinPath(cwd, rel);
-		const ext = pathExt(abs);
-		if ((ext === 'html' || ext === 'htm') && prefs.htmlOpenInBrowser) {
-			// The embedded browser loads http(s) only (a file:// URL was refused
-			// and left it on its empty page): serve the file from the loopback
-			// preview server, as chat links do, so its relative assets load too.
-			invoke<string>('preview_url', { path: abs })
-				.then((url) => browser.open(url))
-				.catch((e) => toast.error(t('chat.fileOpenFailed', { path: rel, error: String(e) })));
-		} else {
-			editorStore.open(abs, cwd).catch((e) => console.error('open file', e));
-		}
-	}
-
 	// A zoom step says the new size for a moment.
 	let zoomToast = 0;
 	function stepZoom(dir: 1 | -1 | 0) {
@@ -1481,9 +1453,6 @@
 				const planless = typeof type === 'string' && STREAM_FRAMES.has(type);
 				const hadPlan = planless ? undefined : s.chat.messages.findLast((m) => m.kind === 'plan' && m.status === 'pending');
 				const lastPlan = planless ? undefined : s.chat.messages.findLast((m) => m.kind === 'plan');
-				// Capture the raw frame for the diagnostics trace so a mis-parsed or
-				// dropped tool frame is inspectable after the fact.
-				s.chat.captureFrame(data, parsed);
 				// Route the frame through the session's adapter (the daemon already
 				// speaks the lynshen dialect for every engine); the client parsed it
 				// to route it, so a long transcript is not parsed again. Translate
@@ -1626,6 +1595,8 @@
 			cleanups.push(() => (ChatState.onFilesEdited = null));
 			// A turn that failed on the connection is picked back up (autoRetry.ts).
 			autoRetry.store = store;
+			// A turn a plan's usage limit stopped goes on at the reset, if asked (limitResume.ts).
+			limitResume.store = store;
 			ChatState.onTurnFailed = (c, message, started) => autoRetry.failed(c, message, started);
 			cleanups.push(() => (ChatState.onTurnFailed = null));
 			if (disposed) {
@@ -1918,7 +1889,7 @@
 													onOpenRequirement={openRequirements}
 													onOpenTrace={() => openPanelTile('agents')}
 													onOpenTeam={() => openPanelTile('team')}
-													onOpenChanges={() => openPanelTile('changes')}
+													onOpenChanges={() => openPanelTile('git')}
 													onOpenSession={openSessionById}
 												/>
 												{#snippet failed(error, reset)}
@@ -1953,7 +1924,7 @@
 									{@const c = agentChangesOf(tab.panel)!}
 									{@const member = sessionMap.get(c.sessionId)?.chat.team[c.agent]}
 									{#if member?.workdir && !member.merge?.ok}
-										<ChangesPanel cwd={member.workdir} files={member.files} readonly title={t('chat.team.changesTab', { name: shortPath(c.agent) })} />
+										<AgentChangesPane cwd={member.workdir} files={member.files} title={t('chat.team.changesTab', { name: shortPath(c.agent) })} />
 									{:else}
 										<p class="panel-gone">{t('chat.team.changesGone')}</p>
 									{/if}
@@ -1976,13 +1947,10 @@
 													}
 												: undefined}
 										/>{/key}{/if}
-								{:else if tab.panel === 'changes'}<ChangesPanel cwd={activeProject?.path ?? ''} files={chat?.changedFiles ?? []} agentDiffs={chat?.agentDiffs ?? {}} onRevert={(p) => chat && (chat.changedFiles = chat.changedFiles.filter((x) => x !== p))} />
-								{:else if tab.panel === 'turns'}<TurnsPanel turns={chat?.turnTimeline ?? []} onOpenFile={openActiveFile} />
 								{:else if tab.panel === 'files'}<FilesPanel rootDir={activeProject?.path ?? ''} />
 								{:else if tab.panel === 'git'}<GitPanel cwd={activeProject?.path ?? ''} worktree={activeProject?.worktree ?? null} llm={llmTarget} onOpenTask={(path, meta) => openTaskProject(path, meta)} onTaskRemoved={closeTaskProject} />
 								{:else if tab.panel === 'term'}<Lazy load={TerminalPanel} cwd={terminalRequests.cwdOf(tab.id) ?? activeProject?.path ?? ''} tabId={tab.id} />
 								{:else if tab.panel === 'browser'}<BrowserPanel />
-								{:else if tab.panel === 'diag'}<DiagnosticsPanel chat={chat ?? null} />
 								{:else if tab.panel === 'audit'}<Lazy load={EditorPane} onAiSend={sendAiEdit} />
 								{:else if tui}<Lazy load={TuiPanelCode} backend={tui} cwd={activeProject?.path ?? ''} onOpenSettings={() => openSettings('agents')} />
 								{/if}

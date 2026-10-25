@@ -35,6 +35,7 @@
 	import type { CallTiming, Msg, RetryState } from '$lib/chat.svelte';
 	import { prefs } from '$lib/prefs.svelte';
 	import { fmtDur, turnParts } from '$lib/turnStats';
+	import { turnFolds, type TurnFold } from '$lib/turnFold';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { onDestroy, tick, untrack } from 'svelte';
 	import UserImage from '$lib/UserImage.svelte';
@@ -90,6 +91,9 @@
 		loadImage,
 		sendOf,
 		onOpenSession,
+		busy = false,
+		foldTurns = false,
+		root = '',
 		mark = $bindable(-1)
 	}: {
 		messages: Msg[];
@@ -169,9 +173,16 @@
 		onOpenSession?: (session: string) => void;
 		/** Ordinal of the user message in view: at or above the upper third. */
 		mark?: number;
-		/** Opens the Changes panel: a turn's change pill (absent: the files
-		 *  it changed show as text). */
+		/** Shows the project's changes in the Git panel: the end of a turn's
+		 *  list of changed files. */
 		onChanges?: () => void;
+		/** The session's folder: a changed file shows relative to it. */
+		root?: string;
+		/** The last turn still runs, or waits on work it handed off: it does
+		 *  not fold yet. */
+		busy?: boolean;
+		/** A finished turn folds its work into one line (turnFold.ts). */
+		foldTurns?: boolean;
 	} = $props();
 
 	// ── Virtual list (dynamic-height windowing) ─────────────────────────────
@@ -179,7 +190,7 @@
 	// streaming/auto-scroll path is completely untouched. Heights are measured per
 	// message (cached by object identity) with an estimate for not-yet-seen rows.
 	const VIRTUAL_MIN = 40; // messages before windowing engages
-	const EST_ROW = 120; // px estimate for an unmeasured row
+	const EST_ROW = 120; // px estimate for an unmeasured row of no known kind
 	const GAP = 16; // px, matches .list gap
 	const OVERSCAN = 800; // px rendered beyond the viewport on each side
 
@@ -237,12 +248,34 @@
 		for (let i = 0; i < messages.length; i++) {
 			const m = messages[i];
 			// Unshown placeholders occupy no row (and no gap).
-			const h = shown(m) ? (heights.get(m) ?? EST_ROW) + GAP : 0;
+			const h = shown(m) ? (heights.get(m) ?? estimate(m)) + GAP : 0;
 			offs[i + 1] = offs[i] + h;
 		}
 		return offs;
 	});
 	const totalH = $derived(offsets[messages.length] ?? 0);
+
+	/** An unmeasured row's height by its kind and length, so the window a
+	 *  conversation opens with holds about a view of it: a folded turn or a
+	 *  run of tool calls is one line, a reply as tall as its text. (One
+	 *  guess for every row made the window hold twice the replies once
+	 *  turns folded.) */
+	function estimate(m: Msg): number {
+		if (folds.head.has(m) && folded(m)) return 24;
+		switch (m.kind) {
+			case 'tool':
+			case 'reasoning':
+			case 'agent_message':
+			case 'escalation':
+				return 28;
+			case 'user':
+				return 48 + 24 * Math.floor(m.text.length / 60);
+			case 'assistant':
+				return Math.min(2400, 40 + Math.round(m.text.length * 0.45));
+			default:
+				return EST_ROW;
+		}
+	}
 
 	// [first, last] inclusive window of rows to render.
 	const range = $derived.by(() => {
@@ -319,6 +352,9 @@
 	// so scroll the viewport to the row's computed offset (which brings it into range).
 	$effect(() => {
 		if (findActive == null) return;
+		// A hit inside a folded turn opens it.
+		const fold = folds.of.get(messages[findActive]!);
+		if (fold) untrack(() => openFolds.add(fold.key));
 		if (virtual && scroller) {
 			scroller.scrollTo({ top: Math.max(0, offsets[findActive] - viewH / 2), behavior: 'smooth' });
 		} else {
@@ -592,6 +628,14 @@
 		return { members, headOf };
 	});
 	const openGroups = new SvelteSet<Msg>();
+	// The replies whose list of changed files is open (the change pill).
+	const openChanges = new SvelteSet<Msg>();
+	/** A changed file as the list names it: inside the session's folder,
+	 *  relative to it. */
+	function shownPath(path: string): string {
+		const base = root.replace(/[\\/]+$/, '');
+		return base && path.startsWith(base + '/') ? path.slice(base.length + 1) : path;
+	}
 	// The last message with something to show (a plan's actions show there only).
 	const lastShown = $derived(messages.findLast((m) => hasContent(m)));
 	const lastError = $derived(messages.findLast((m) => m.kind === 'error'));
@@ -600,7 +644,45 @@
 		return !!agents && m.kind === 'tool' && (SPAWN_TOOLS.has(m.name) || WAIT_TOOLS.has(m.name));
 	}
 	function shown(m: Msg): boolean {
-		return contentful(m) && (!toolGroups.headOf.has(m) || toolGroups.members.has(m)) && !attempts.hidden.has(m);
+		return contentful(m) && (!toolGroups.headOf.has(m) || toolGroups.members.has(m)) && !attempts.hidden.has(m) && (!folded(m) || folds.head.has(m));
+	}
+	// A finished turn's work folded into one line on its first row (the
+	// thinking, tool calls and text before the final reply); a turn's open
+	// state is kept by its user message.
+	const folds = $derived.by(() => {
+		const head = new Map<Msg, TurnFold>();
+		const of = new Map<Msg, TurnFold>();
+		if (foldTurns)
+			for (const f of turnFolds(messages, contentful, busy)) {
+				head.set(f.members[0]!, f);
+				for (const m of f.members) of.set(m, f);
+			}
+		return { head, of };
+	});
+	const openFolds = new SvelteSet<Msg>();
+	function folded(m: Msg): boolean {
+		const f = folds.of.get(m);
+		return !!f && !openFolds.has(f.key);
+	}
+	// A turn that ends while the reader reads further up stays open: its
+	// work does not vanish from under them. The folds there when the list
+	// first shows are folded.
+	let foldsSeen: WeakSet<Msg> | null = null;
+	$effect.pre(() => {
+		const keys = [...folds.head.values()].map((f) => f.key);
+		untrack(() => {
+			const first = !foldsSeen;
+			foldsSeen ??= new WeakSet();
+			for (const k of keys) {
+				if (foldsSeen.has(k)) continue;
+				foldsSeen.add(k);
+				if (!first && !atEnd) openFolds.add(k);
+			}
+		});
+	});
+	/** The fold line's first words: how long the turn took, else its steps. */
+	function foldWords(f: TurnFold): string {
+		return f.elapsed !== null ? t('chat.fold.worked', { t: fmtDur(f.elapsed) }) : t('chat.fold.steps', { n: f.calls });
 	}
 	// Best-of-N: the spawns of one attempt group render as one card, on the
 	// group's first spawn; the others render nothing.
@@ -639,6 +721,43 @@
 		return { running, failed, latest };
 	}
 
+	// The text under the view stays still as rows window in or out above it
+	// and as their spacer takes their measured heights. The browser's scroll
+	// anchoring does this, but WebKit leaves it undone after a scroll the
+	// page made (the smooth mouse wheel's glide, a jump), and the view moved
+	// by the difference between the rows' estimates and their heights (up to
+	// 700 px a step). The first row in view is read before the window
+	// changes and put back where it was after, unless the anchoring already
+	// did it; at the end, the pane's following keeps the end in view.
+	let anchorRow: { el: Element; top: number } | null = null;
+	function readAnchor(): { el: Element; top: number } | null {
+		const el = scroller;
+		if (!el || !listEl || !virtual || atEnd) return null;
+		const viewTop = el.getBoundingClientRect().top;
+		for (const row of listEl.children) {
+			if (!row.classList.contains('mwrap')) continue;
+			const box = row.getBoundingClientRect();
+			if (box.bottom > viewTop) return { el: row, top: box.top };
+		}
+		return null;
+	}
+	$effect.pre(() => {
+		void padTop;
+		void range.first;
+		untrack(() => (anchorRow = readAnchor()));
+	});
+	$effect(() => {
+		void padTop;
+		void range.first;
+		untrack(() => {
+			const a = anchorRow;
+			anchorRow = null;
+			if (!a || !scroller || !a.el.isConnected) return;
+			const drift = a.el.getBoundingClientRect().top - a.top;
+			if (Math.abs(drift) >= 1) scroller.scrollTop += drift;
+		});
+	});
+
 	// The status line's "›": the running call's card, opened (its run of
 	// calls too) and brought into view.
 	let revealed = $state<{ call: Msg; n: number } | null>(null);
@@ -659,8 +778,20 @@
 	{#each windowRows as m, k (m)}
 		{@const i = range.first + k}
 		{#if shown(m)}
+			{@const fold = folds.head.get(m)}
 			<div class="mwrap" class:animate={!virtual} class:turn={m.kind === 'user' && i > 0} class:hit={i === findActive} bind:this={rowEls[i]} use:measure={m}>
-				{#if m.kind === 'user'}
+				{#if fold}
+					{@const open = openFolds.has(fold.key)}
+					<!-- A finished turn's work in one line: its time and the files it changed. -->
+					<button class="fold" class:open onclick={() => (open ? openFolds.delete(fold.key) : openFolds.add(fold.key))} aria-expanded={open}>
+						<span>{foldWords(fold)}</span>
+						{#if fold.files}<span class="fold-files">{t('chat.fold.files', { n: fold.files })}<span class="mono add">+{fold.added}</span><span class="mono del">−{fold.removed}</span></span>{/if}
+						<span class="rchev"><CaretRightIcon size={13} /></span>
+					</button>
+				{/if}
+				{#if fold && !openFolds.has(fold.key)}
+					<!-- Folded: the line is the whole row. -->
+				{:else if m.kind === 'user'}
 			{@const delivery = parseDelivery(m.text)}
 			{@const drop = userOrdinal.size - (userOrdinal.get(m) ?? 0)}
 			{#if delivery}
@@ -717,9 +848,10 @@
 							{#if m.turn}
 								{#each turnParts(m.turn, prefs.turnStats) as part, j (j)}
 									{#if part.change}
-										<!-- The files the turn changed: a change pill that opens the Changes panel. -->
-										<svelte:element this={onChanges ? 'button' : 'span'} class="change" class:open={!!onChanges} title={onChanges ? t('chat.stat.openChanges') : part.title} onclick={onChanges} role={onChanges ? undefined : 'note'}
-											><FileTextIcon size={14} /><span>{t('chat.stat.filesCount', { n: part.change.files })}</span><span class="add">+{part.change.added}</span><span class="del">−{part.change.removed}</span></svelte:element
+										<!-- The files the turn changed: a change pill that lists them under the reply. -->
+										{@const listed = !!m.turn.changes?.length}
+										<svelte:element this={listed ? 'button' : 'span'} class="change" class:open={listed} class:shown={openChanges.has(m)} title={listed ? t('chat.stat.listChanges') : part.title} aria-expanded={listed ? openChanges.has(m) : undefined} onclick={listed ? () => (openChanges.has(m) ? openChanges.delete(m) : openChanges.add(m)) : undefined} role={listed ? undefined : 'note'}
+											><FileTextIcon size={14} /><span>{t('chat.stat.filesCount', { n: part.change.files })}</span><span class="add">+{part.change.added}</span><span class="del">−{part.change.removed}</span>{#if listed}<span class="rchev"><CaretRightIcon size={12} /></span>{/if}</svelte:element
 										>
 									{:else}
 										<span class="stat" class:mono={part.mono} title={part.title}>{part.text}</span>
@@ -735,6 +867,20 @@
 								</button>
 							{/if}
 						</div>
+					{/if}
+					{#if m.turn?.changes?.length}
+						<Collapse open={openChanges.has(m)}>
+							<!-- The turn's changed files: a click opens one; the last row shows the project's changes in Git. -->
+							<div class="changed" aria-label={t('chat.stat.files')}>
+								{#each m.turn.changes as f (f.path)}
+									<button class="cfile" title={f.path} onclick={() => onFile?.(f.path, m.text)}>
+										<span class="cpath">{shownPath(f.path)}</span>
+										<span class="mono add">+{f.added}</span><span class="mono del">−{f.removed}</span>
+									</button>
+								{/each}
+								{#if onChanges}<button class="cfile cgit" onclick={onChanges}>{t('chat.stat.openGit')}</button>{/if}
+							</div>
+						</Collapse>
 					{/if}
 					{#if m.recap && m.recap.choice !== 'closed'}<RecapReceipt outcome={m.recap} />{/if}
 				{/if}
@@ -1253,6 +1399,58 @@
 	button.change:hover {
 		background: var(--surface2);
 	}
+	.change .rchev {
+		margin-left: -2px;
+	}
+	.change.shown .rchev {
+		transform: rotate(90deg);
+	}
+	/* The turn's changed files under its reply: one 24px row each, the
+	   path in mono (relative to the session's folder), its line counts. */
+	.changed {
+		display: flex;
+		flex-direction: column;
+		margin-top: 6px;
+		padding-bottom: 2px;
+	}
+	.cfile {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 24px;
+		padding: 2px 8px;
+		border: none;
+		border-radius: var(--r-sm);
+		background: none;
+		color: var(--dim);
+		font: inherit;
+		font-size: var(--fs-xs);
+		line-height: 16px;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			background var(--t-fast) var(--ease-out),
+			color var(--t-fast) var(--ease-out);
+	}
+	.cfile:hover {
+		background: var(--surface2);
+		color: var(--text);
+	}
+	.cpath {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
+	}
+	.cfile .add {
+		color: var(--ok);
+	}
+	.cfile .del {
+		color: var(--err);
+	}
+
 	.reason-row {
 		display: flex;
 		align-items: center;
@@ -1290,8 +1488,50 @@
 		transition: transform var(--t-base) var(--ease-base);
 	}
 	.reason.open .rchev,
-	.tgroup.open .rchev {
+	.tgroup.open .rchev,
+	.fold.open .rchev {
 		transform: rotate(90deg);
+	}
+	/* A finished turn's work folded into one line (turnFold.ts): --fs-xs
+	   --dim like a tool call, no card; its figures in mono. Opened, it heads
+	   the work it folds. */
+	.fold {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		max-width: 100%;
+		padding: 2px 0;
+		border: none;
+		background: none;
+		color: var(--dim);
+		font: inherit;
+		font-size: var(--fs-xs);
+		line-height: 16px;
+		text-align: left;
+		cursor: pointer;
+		transition: color var(--t-fast) var(--ease-out);
+	}
+	.fold:hover {
+		color: var(--text);
+	}
+	.fold.open {
+		margin-bottom: 12px;
+	}
+	.fold-files {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 6px;
+	}
+	.fold-files::before {
+		content: '·';
+		margin-right: 2px;
+		opacity: 0.6;
+	}
+	.fold .add {
+		color: var(--ok);
+	}
+	.fold .del {
+		color: var(--err);
 	}
 	/* A run of tool calls: one summary line (--fs-xs --dim, no card). */
 	.tgroup {

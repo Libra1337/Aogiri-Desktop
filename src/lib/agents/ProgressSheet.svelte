@@ -10,7 +10,7 @@
 	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import { tick } from 'svelte';
 	import { t } from '$lib/i18n';
-	import { planSummary, type AgentRow } from '$lib/agentProgress';
+	import { backgroundCommands, planSummary, type AgentRow } from '$lib/agentProgress';
 	import type { ChatState } from '$lib/chat.svelte';
 	import { agentsTitle, cardsShown, planCard, planTitle, type ReaderWait } from './progressCards';
 	import CardTitle from './CardTitle.svelte';
@@ -26,10 +26,13 @@
 		rows,
 		onOpen,
 		onStop,
+		onOutput,
 		sheetHeight = $bindable(0)
 	}: {
 		chat: ChatState;
 		rows: AgentRow[];
+		/** Reads a background command's output (task_output). */
+		onOutput?: (id: string) => void;
 		/** Shows a subagent's conversation (the sheet closes first). */
 		onOpen?: (row: AgentRow) => void;
 		/** Stops a subagent the engine runs as a background task (its id). */
@@ -41,14 +44,15 @@
 
 	const plan = $derived(planSummary(chat.plan, chat.team));
 	const planFresh = $derived(chat.turnStartedAt > 0 && chat.planAt >= chat.turnStartedAt);
-	const shown = $derived(cardsShown(plan, rows, chat.busy, planFresh));
+	const commands = $derived(backgroundCommands(chat.bgTasks, chat.subagents).length);
+	const shown = $derived(cardsShown(plan, rows, chat.busy, planFresh, commands));
 	const wait = $derived.by((): ReaderWait | null => {
 		const a = chat.pendingApproval;
 		return a && chat.busy ? { kind: a.questions?.length ? 'question' : 'approval', agent: a.subagentId ?? '' } : null;
 	});
 	const card = $derived(planCard({ plan, rows, busy: chat.busy, wait, error: chat.lastError ?? '' }));
 	const pTitle = $derived(planTitle(card));
-	const aTitle = $derived(agentsTitle(rows));
+	const aTitle = $derived(agentsTitle(rows, commands));
 
 	let sheet = $state<Kind | null>(null);
 	let closeBtn = $state<HTMLButtonElement | null>(null);
@@ -174,7 +178,7 @@
 			{#if sheet === 'plan'}
 				<PlanBody {card} {rows} onOpen={onOpen ? (row) => (hide(), onOpen(row)) : undefined} />
 			{:else}
-				<AgentsBody {chat} {rows} onOpen={onOpen ? (row) => (hide(), onOpen(row)) : undefined} {onStop} />
+				<AgentsBody {chat} {rows} onOpen={onOpen ? (row) => (hide(), onOpen(row)) : undefined} {onStop} {onOutput} />
 			{/if}
 		</div>
 	</div>

@@ -5,9 +5,13 @@
 	// for the reader, --err after a failure, --text for a reply not seen yet.
 	// A session at work shows the spinner, in --dim, on home rows and tabs;
 	// the navigator shows no mark for it and sweeps a light across the title
-	// instead (ui/shimmer.ts). The words go in the title (and, in the
-	// sidebar, on the line under the session's title).
+	// instead (ui/shimmer.ts). A session whose turn ended while background
+	// tasks it started still run (subagents, Workflows, commands) is not at
+	// work: it shows a still mark of three circles in --dim, everywhere. The words
+	// go in the title (and, in the sidebar, on the line under the session's
+	// title).
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotchIcon';
+	import CirclesThreeIcon from 'phosphor-svelte/lib/CirclesThreeIcon';
 	import { t } from '$lib/i18n';
 	import type { SessionStatus } from '$lib/sessionStatus';
 	import { describeError, stripEngineHint } from '$lib/errorInfo';
@@ -25,6 +29,11 @@
 {:else if status?.kind === 'running'}
 	<span class="mark running" title={t('shell.status.running')} aria-label={t('shell.status.running')}>
 		<CircleNotchIcon size={compact ? 12 : 14} class="spin" />
+	</span>
+{:else if status?.kind === 'background'}
+	{@const label = t('shell.status.background', { n: status.n })}
+	<span class="mark running" class:compact title={label} role="img" aria-label={label}>
+		<CirclesThreeIcon size={compact ? 12 : 14} />
 	</span>
 {:else if status?.kind === 'unread'}
 	<span class="dot unread" class:compact title={t('shell.unread')} role="img" aria-label={t('shell.unread')}></span>

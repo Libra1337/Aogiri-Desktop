@@ -1026,6 +1026,31 @@ const settings = {
 			notice: 'Aogiri 会发送匿名使用数据（功能使用次数和错误类型，不含任何内容），用于改进产品。可以在设置里关闭。',
 			noticeAction: '设置'
 		},
+		// Settings → 通用 → 配色 (SchemeSection.svelte, colorScheme.ts)
+		scheme: {
+			light: '浅色主题的配色',
+			dark: '深色主题的配色',
+			slotHint: '主题用哪套颜色。只列出同样深浅的配色。',
+			builtin: '默认',
+			add: '新建配色',
+			newName: '配色 {n}',
+			list: '我的配色',
+			kind: { light: '浅色', dark: '深色' },
+			name: '名称',
+			seed: { bg: '背景', text: '文字', accent: '强调', link: '链接' },
+			contrast: '对比度：',
+			figure: { text: '文字 {r}', dim: '次要文字 {r}', dim2: '提示 {r}', link: '链接 {r}' },
+			problem: {
+				text: '文字和背景的对比度要到 12:1。',
+				link: '链接和背景的对比度要到 4.5:1。',
+				accent: '强调色上的文字读不清，换一个更深或更浅的强调色。'
+			},
+			save: '保存',
+			cancel: '取消',
+			delete: '删除配色',
+			deleteTitle: '删除配色「{name}」？',
+			deleteMessage: '用它的主题会换回默认颜色。同一账号的其他电脑也会删掉它。'
+		},
 		behavior: {
 			defaultModel: '默认模型',
 			selectModel: '选择模型',
@@ -1051,7 +1076,7 @@ const settings = {
 			defaultSurface: '对话界面',
 			defaultSurfaceHint: '对话默认打开的界面',
 			openElsewhere: '其他窗口默认打开位置',
-			openElsewhereHint: '子智能体，以及从“+”菜单打开的智能体、改动、文件、终端等窗口，在对话右侧的分栏里打开（多个并列成标签），或在对话旁新开一个标签页。按住 ⌘/Ctrl 点击子智能体用另一种方式打开。',
+			openElsewhereHint: '子智能体，以及从“+”菜单打开的智能体、Git、文件、终端等窗口，在对话右侧的分栏里打开（多个并列成标签），或在对话旁新开一个标签页。按住 ⌘/Ctrl 点击子智能体用另一种方式打开。',
 			placeSide: '右侧分栏',
 			placeTab: '新标签页',
 			uiFont: '界面字体',
@@ -1071,6 +1096,8 @@ const settings = {
 			turnStats: '回复下方的统计',
 			turnStatsHint: '每轮对话结束后，在回复下方显示哪些数据。',
 			scrollOnSend: '发送后滚动到底部',
+			foldTurns: '折叠完成的回合',
+			foldTurnsHint: '一轮结束后，思考、工具调用和中间的文字收成一行，显示用时和改了几个文件，只留下问题和最后的回复。点这一行展开。',
 			scrollOnSendHint: '发送消息后自动滚动到对话末尾。回复填满一屏后画面保持不动，需要时点右下角按钮回到底部。',
 			footContext: '显示上下文占用',
 			footContextHint: '在输入框下方显示本会话已用的上下文。关闭后只在接近上限时显示。',
@@ -2342,6 +2369,30 @@ const settings = {
 			notice: 'Aogiri sends anonymous usage data (how often features are used and kinds of errors, no content) to improve the product. You can turn it off in Settings.',
 			noticeAction: 'Settings'
 		},
+		scheme: {
+			light: 'Light theme colours',
+			dark: 'Dark theme colours',
+			slotHint: 'The colours the theme uses. Only schemes of its lightness are listed.',
+			builtin: 'Default',
+			add: 'New scheme',
+			newName: 'Scheme {n}',
+			list: 'My colour schemes',
+			kind: { light: 'Light', dark: 'Dark' },
+			name: 'Name',
+			seed: { bg: 'Background', text: 'Text', accent: 'Accent', link: 'Links' },
+			contrast: 'Contrast:',
+			figure: { text: 'text {r}', dim: 'secondary {r}', dim2: 'hints {r}', link: 'links {r}' },
+			problem: {
+				text: 'Text needs 12:1 against the background.',
+				link: 'Links need 4.5:1 against the background.',
+				accent: 'Text on the accent does not read; pick a darker or lighter accent.'
+			},
+			save: 'Save',
+			cancel: 'Cancel',
+			delete: 'Delete scheme',
+			deleteTitle: 'Delete the scheme “{name}”?',
+			deleteMessage: 'A theme using it goes back to the default colours. Your other computers on this account lose it too.'
+		},
 		behavior: {
 			defaultModel: 'Default model',
 			selectModel: 'Select a model',
@@ -2366,7 +2417,7 @@ const settings = {
 			defaultSurface: 'Conversation view',
 			defaultSurfaceHint: 'The view conversations open in',
 			openElsewhere: 'Open other windows in',
-			openElsewhereHint: 'Subagents, and the windows the “+” menu opens (agents, changes, files, terminal…), open in a column to the right of the conversation (several become tabs there), or in a new tab next to it. ⌘/Ctrl-click a subagent to open it the other way.',
+			openElsewhereHint: 'Subagents, and the windows the “+” menu opens (agents, Git, files, terminal…), open in a column to the right of the conversation (several become tabs there), or in a new tab next to it. ⌘/Ctrl-click a subagent to open it the other way.',
 			placeSide: 'Side column',
 			placeTab: 'New tab',
 			uiFont: 'Interface font',
@@ -2386,6 +2437,8 @@ const settings = {
 			turnStats: 'Stats under replies',
 			turnStatsHint: 'What to show under the reply once a turn ends.',
 			scrollOnSend: 'Scroll to the end on send',
+			foldTurns: 'Fold finished turns',
+			foldTurnsHint: 'When a turn ends, its thinking, tool calls and the text between them fold into one line with its time and the files it changed, leaving the question and the final reply. Click the line to open it.',
 			scrollOnSendHint: 'Sending a message scrolls the conversation to its end. Once a reply fills the view it holds still; the button at the bottom right goes back to the end.',
 			footContext: 'Show context use',
 			footContextHint: 'Show the context this session uses under the composer. When off, it shows only near the limit.',

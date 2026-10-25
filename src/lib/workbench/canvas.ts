@@ -80,6 +80,10 @@ export function openChatTab(
 	return closeTab(openTab(layout, target.id, tab), shown.id);
 }
 
+/** Tool panels that no longer exist (the Changes, Turns and Diagnostics
+ *  panels): saved layouts may still hold their tabs. */
+const REMOVED_PANELS = new Set(['changes', 'turns', 'diag']);
+
 /**
  * Build the canvas from a persisted layout blob when a workspace loads:
  * - chat tiles whose session is not live are dropped — desktop session ids
@@ -90,7 +94,8 @@ export function openChatTab(
  *   an old dock-only layout keeps its panel arrangement and gains a chat leaf
  *   on the left (the pre-canvas shape, chat | panels);
  * - garbage / absent input falls back to a single chat leaf (or an empty
- *   canvas when there is no session to seed).
+ *   canvas when there is no session to seed);
+ * - tabs of removed tool panels are dropped.
  */
 export function reconcileLayout(
 	raw: unknown,
@@ -102,7 +107,7 @@ export function reconcileLayout(
 	for (const leaf of leavesOf(layout.root)) {
 		for (const tab of leaf.tabs) {
 			const sid = chatSessionOf(tab.panel);
-			if (sid && !live.has(sid)) layout = closeTab(layout, tab.id);
+			if ((sid && !live.has(sid)) || REMOVED_PANELS.has(tab.panel)) layout = closeTab(layout, tab.id);
 		}
 	}
 	if (!seedSessionId || chatSessionsIn(layout).length) return layout;

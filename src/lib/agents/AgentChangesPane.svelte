@@ -1,46 +1,19 @@
 <script lang="ts">
+	// A worktree subagent's changes beside its session's chat (an
+	// `agentdiff:` tab, agentChanges.svelte.ts): the files changed in the
+	// agent's worktree with their line counts, read-only; a click shows the
+	// file's diff. Merging or dropping them is the agent's card's (merge_agent).
 	import GitDiffIcon from 'phosphor-svelte/lib/GitDiffIcon';
 	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwiseIcon';
-	import ArrowUUpLeftIcon from 'phosphor-svelte/lib/ArrowUUpLeftIcon';
-	import NotePencilIcon from 'phosphor-svelte/lib/NotePencilIcon';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
-	import Notice from '$lib/ui/Notice.svelte';
-	import { confirm } from '$lib/ui/confirm.svelte';
-	import { git, revertAgentEdits } from '$lib/protocol';
-	import { editorStore } from '$lib/editor/editorStore.svelte';
+	import { git } from '$lib/protocol';
 	import { t } from '$lib/i18n';
 
-	// `files` is the session-tracked set of agent-edited paths; onRevert removes one.
-	// `agentDiffs`: the agent's own edits per project-relative path, so a
-	// revert undoes only them and keeps the user's changes. `readonly` (a
-	// subagent's worktree, `title` naming it): the diffs only, no revert or edit.
-	let {
-		cwd = '',
-		files = [],
-		agentDiffs = {},
-		onRevert,
-		readonly = false,
-		title = ''
-	}: {
-		cwd?: string;
-		files?: string[];
-		agentDiffs?: Record<string, string[]>;
-		onRevert?: (p: string) => void;
-		readonly?: boolean;
-		title?: string;
-	} = $props();
-	/** The recorded diffs for a listed path (absolute or project-relative). */
-	function diffsOf(path: string): string[] {
-		const root = cwd.replace(/\/+$/, '');
-		const rel = root && path.startsWith(root + '/') ? path.slice(root.length + 1) : path;
-		return agentDiffs[rel] ?? [];
-	}
+	let { cwd = '', files = [], title = '' }: { cwd?: string; files?: string[]; title?: string } = $props();
 	const dir = () => cwd || undefined;
 
 	let stats = $state<Record<string, { add: number; del: number }>>({});
-	let busy = $state(false);
-	let error = $state('');
 	let diff = $state<{ path: string; lines: { line: string; cls: string }[] } | null>(null);
 
 	function classify(text: string) {
@@ -55,7 +28,7 @@
 	}
 	const baseName = (p: string) => p.split('/').pop() || p;
 
-	// Refresh +/- line stats for the tracked files (untracked new files show none).
+	// The +/- line counts of the files (untracked new files show none).
 	async function refresh() {
 		if (!files.length) {
 			stats = {};
@@ -70,12 +43,11 @@
 			}
 			stats = next;
 		} catch {
-			/* ignore — stats are best-effort */
+			/* best effort */
 		}
 	}
-	// Re-pull stats whenever the file set changes.
 	$effect(() => {
-		files;
+		void files;
 		refresh();
 	});
 
@@ -87,81 +59,16 @@
 			diff = { path, lines: classify(String(e)) };
 		}
 	}
-
-	// Open a changed file in the built-in editor (relative paths resolve
-	// against the project cwd inside the store).
-	async function openInEditor(path: string) {
-		try {
-			await editorStore.open(path, cwd || undefined);
-		} catch (e) {
-			error = String(e);
-		}
-	}
-
-	async function revert(path: string) {
-		const diffs = diffsOf(path);
-		// The agent's own edits are known: undo exactly them, keep the user's.
-		if (diffs.length && cwd) {
-			const ok = await confirm({
-				title: t('dock.changes.revertTitle'),
-				message: t('dock.changes.revertAgentConfirm', { path }),
-				confirmLabel: t('dock.changes.revert'),
-				danger: true
-			});
-			if (!ok) return;
-			busy = true;
-			error = '';
-			try {
-				const root = cwd.replace(/\/+$/, '');
-				const rel = path.startsWith(root + '/') ? path.slice(root.length + 1) : path;
-				await revertAgentEdits(cwd, rel, diffs);
-				onRevert?.(path);
-				return;
-			} catch (e) {
-				// The file changed too much since: fall through to the full revert.
-				error = t('dock.changes.revertAgentFailed', { error: String(e) });
-			} finally {
-				busy = false;
-			}
-		}
-		const ok = await confirm({
-			title: t('dock.changes.revertTitle'),
-			message: t('dock.changes.revertConfirm', { path }),
-			confirmLabel: t('dock.changes.revert'),
-			danger: true
-		});
-		if (!ok) return;
-		busy = true;
-		error = '';
-		try {
-			const st = await git(['status', '--porcelain=v1', '--', path], dir());
-			const untracked = st.trimStart().startsWith('??');
-			if (untracked) await git(['clean', '-fd', '--', path], dir());
-			else await git(['restore', '--worktree', '--', path], dir());
-			onRevert?.(path);
-		} catch (e) {
-			error = String(e);
-		} finally {
-			busy = false;
-		}
-	}
 </script>
 
 <div class="changes">
 	<div class="bar">
 		<GitDiffIcon size={14} class="ccol" />
-		<span class="title">{title || t('dock.changes.title')} <span class="count">{files.length}</span></span>
-		<IconButton size="sm" onclick={refresh} label="refresh"><ArrowsClockwiseIcon size={13} /></IconButton>
+		<span class="title">{title} <span class="count">{files.length}</span></span>
+		<IconButton size="sm" onclick={refresh} label={t('dock.files.refresh')} title={t('dock.files.refresh')}><ArrowsClockwiseIcon size={13} /></IconButton>
 	</div>
-	{#if error}
-		<div class="oerr"><Notice mono onDismiss={() => (error = '')}>{error}</Notice></div>
-	{/if}
 	{#if files.length === 0}
-		<div class="empty">
-			<GitDiffIcon size={26} />
-			<p>{t('dock.changes.empty')}</p>
-			<span>{t('dock.changes.emptyHint')}</span>
-		</div>
+		<p class="empty">{t('dock.changes.empty')}</p>
 	{:else}
 		<div class="list">
 			{#each files as f (f)}
@@ -172,10 +79,6 @@
 						<span class="rdir">{f}</span>
 					</button>
 					{#if s}<span class="stat"><span class="add">+{s.add}</span> <span class="del">−{s.del}</span></span>{/if}
-					{#if !readonly}
-						<IconButton size="sm" onclick={() => openInEditor(f)} label={t('editor.openInEditor')} title={t('editor.openInEditor')}><NotePencilIcon size={13} /></IconButton>
-						<IconButton size="sm" onclick={() => revert(f)} disabled={busy} label={t('dock.changes.revert')} title={t('dock.changes.revertFile')}><ArrowUUpLeftIcon size={13} /></IconButton>
-					{/if}
 				</div>
 			{/each}
 		</div>
@@ -274,27 +177,12 @@
 	.stat .del {
 		color: var(--err);
 	}
+	/* design.md "Controls and states": one line of --dim text. */
 	.empty {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		color: var(--dim2);
-		padding: 30px;
-		text-align: center;
-	}
-	.empty p {
-		margin: 4px 0 0;
-		font-size: var(--fs-md);
+		margin: 0;
+		padding: 14px;
+		font-size: var(--fs-sm);
 		color: var(--dim);
-	}
-	.empty span {
-		font-size: var(--fs-xs);
-	}
-	.oerr {
-		margin: 8px 12px 0;
 	}
 	.diff {
 		margin: 0;

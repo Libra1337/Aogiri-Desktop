@@ -11,6 +11,7 @@
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
 	import { t } from '$lib/i18n';
 	import AgentDetail from '$lib/agents/AgentDetail.svelte';
+	import BackgroundCommands from '$lib/agents/BackgroundCommands.svelte';
 	import { roleLabel } from '$lib/agents/teamText';
 	import type { AgentRun, ChatState, WorkflowRun } from '$lib/chat.svelte';
 	import type { Op } from '$lib/protocol';
@@ -26,13 +27,14 @@
 		timeline,
 		type RunState
 	} from '$lib/agentTrace';
-	import { agentOutcome, discardedRun, shortPath } from '$lib/agentProgress';
+	import { agentOutcome, backgroundCommands, discardedRun, shortPath } from '$lib/agentProgress';
 
-	// The agent trace of a Claude Code session: each Workflow as a timeline of
-	// its agents by phase (when each ran, for how long, at what cost), the
-	// session's Task subagents, and — picked from either — one subagent's own
-	// conversation, read-only. The desktop shows it as a workbench panel, the
-	// web page as a full-screen sheet.
+	// The agent trace of a session: each Workflow as a timeline of its agents
+	// by phase (when each ran, for how long, at what cost), the session's Task
+	// subagents, its background commands (with their output and a stop
+	// button), and — picked from a run — one subagent's own conversation,
+	// read-only. The desktop shows it as a workbench panel, the web page as a
+	// full-screen sheet.
 	let { chat, onOp }: { chat: ChatState; onOp: (op: Op) => void } = $props();
 
 	const units = $derived({ s: t('dock.agents.unit.s'), m: t('dock.agents.unit.m'), h: t('dock.agents.unit.h') });
@@ -61,6 +63,7 @@
 			effort: ''
 		}));
 	});
+	const commands = $derived(backgroundCommands(chat.bgTasks, chat.subagents).length);
 	let now = $state(Date.now());
 	const running = $derived(anyRunning(chat.agentRuns.workflows, agents));
 	$effect(() => {
@@ -131,7 +134,7 @@
 			</button>
 		</div>
 		<AgentDetail {chat} agentId={chat.agentFocus} {scroller} {onOp} />
-	{:else if chat.agentRuns.workflows.length || agents.length}
+	{:else if chat.agentRuns.workflows.length || agents.length || commands}
 		<div class="head">
 			<span class="title">{t('dock.agents.title')}</span>
 			<span class="sum">
@@ -185,6 +188,15 @@
 				{/if}
 			</section>
 		{/each}
+
+		{#if commands}
+			<section class="run">
+				<div class="run-head static">
+					<span class="rname"><span class="rtitle">{t('chat.task.commands')}</span></span>
+				</div>
+				<BackgroundCommands {chat} heading={false} onStop={(id) => onOp({ op: 'stop_task', task_id: id })} onOutput={(id) => onOp({ op: 'task_output', task_id: id })} />
+			</section>
+		{/if}
 
 		{#if agents.length}
 			{@const line = timeline(agents, now)}

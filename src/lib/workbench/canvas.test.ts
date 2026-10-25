@@ -143,6 +143,12 @@ describe('reconcileLayout', () => {
 		expect(panels).toEqual(['plan', 'git', 'term']);
 	});
 
+	it('drops the tabs of removed tool panels', () => {
+		const layout = singleLeafLayout([chatTab('s1'), panelTab('c', 'changes'), panelTab('t', 'turns'), panelTab('d', 'diag'), panelTab('g', 'git')]);
+		const next = reconcileLayout(serializeLayout(layout), ['s1'], 's1');
+		expect(leavesOf(next.root).flatMap((l) => l.tabs.map((t) => t.panel))).toEqual(['chat:s1', 'git']);
+	});
+
 	it('drops chat tiles for dead sessions and keeps live ones', () => {
 		const layout = openChatTab(openChatTab(dockOnlyLayout(), null, 'dead'), null, 'live');
 		const next = reconcileLayout(serializeLayout(layout), ['live'], 'live');

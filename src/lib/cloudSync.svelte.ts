@@ -1,5 +1,6 @@
 // Settings synced between the computers of a LynShen account
-// (GET/PUT /v1/oauth/settings). Only basic preferences: interface, default
+// (GET/PUT /v1/oauth/settings). Only basic preferences: interface (with the
+// colour schemes), default
 // backend, model defaults, network and voice settings. Keys, custom
 // providers, paths, window sizes, keyboard shortcuts, projects, MCP,
 // skills, agents and schedules stay on each computer.
@@ -11,7 +12,7 @@
 
 import { fetchAccountInfo, fetchCloudSettings, putCloudSettings, readConfig, writeConfig, type CloudSettings } from './protocol';
 import { getLocale, LOCALES, setLocale, type Locale } from './i18n/core.svelte';
-import { setTheme, themeState, type ThemePref } from './theme.svelte';
+import { schemeChoice, setSchemeChoice, setTheme, themeState, type ThemePref } from './theme.svelte';
 import { prefs, TURN_STAT_KEYS, type TurnStatKey } from './prefs.svelte';
 import { isChatWidthMode } from './chatWidth';
 import { loadBackendSettings, saveBackendSettings } from './backends/settings';
@@ -63,6 +64,14 @@ const SPECS: Spec[] = [
 		key: 'ui.theme',
 		read: () => themeState.pref,
 		apply: (v) => (['system', 'light', 'dark'].includes(v as string) ? (setTheme(v as ThemePref), true) : false)
+	},
+	{
+		// The custom colour schemes and the one used in each theme
+		// (colorScheme.ts): four colours each, at most 12. The background
+		// image stays on each computer (a file there).
+		key: 'ui.colorSchemes',
+		read: () => (themeState.schemes.length || themeState.dark || themeState.light ? schemeChoice() : undefined),
+		apply: (v) => (v && typeof v === 'object' ? (setSchemeChoice(v), true) : false)
 	},
 	{
 		// Not `ui.vibrancy`, the key of versions whose frost was on by default:

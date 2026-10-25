@@ -11,14 +11,15 @@ import { discardedRun, isLive, planShown, type AgentRow, type PlanSummary, type 
 export const CARD_LANE = 280;
 
 /** Which cards show: the plan while it is worth showing (planShown), the
- *  subagents while the turn has any. Both stay until the next turn. */
+ *  subagents while the turn has any or background commands run (they list
+ *  under the subagents). Both stay until the next turn. */
 export interface CardsShown {
 	plan: boolean;
 	agents: boolean;
 }
 
-export function cardsShown(plan: PlanSummary, rows: AgentRow[], busy: boolean, planFresh: boolean): CardsShown {
-	return { plan: planShown(plan, busy, planFresh), agents: rows.length > 0 };
+export function cardsShown(plan: PlanSummary, rows: AgentRow[], busy: boolean, planFresh: boolean, commands = 0): CardsShown {
+	return { plan: planShown(plan, busy, planFresh), agents: rows.length > 0 || commands > 0 };
 }
 
 export const anyCard = (shown: CardsShown) => shown.plan || shown.agents;
@@ -219,13 +220,22 @@ export function planTitle(card: PlanCard): PlanTitle {
 /** The subagents card's title line: how many, and how many still run (or
  *  failed, once none runs). */
 export interface AgentsTitle {
+	/** Subagents, else (none) the background commands. */
 	count: number;
+	/** The card lists background commands only: 后台任务 heads it. */
+	commandsOnly: boolean;
+	/** Subagents and background commands at work. */
 	running: number;
 	failed: number;
 }
 
-export function agentsTitle(rows: AgentRow[]): AgentsTitle {
-	return { count: rows.length, running: rows.filter(isLive).length, failed: rows.filter((r) => r.state === 'failed').length };
+export function agentsTitle(rows: AgentRow[], commands = 0): AgentsTitle {
+	return {
+		count: rows.length || commands,
+		commandsOnly: !rows.length && commands > 0,
+		running: rows.filter(isLive).length + commands,
+		failed: rows.filter((r) => r.state === 'failed').length
+	};
 }
 
 /** A subagent's 6px state dot: running pulses; a state the team words

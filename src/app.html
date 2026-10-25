@@ -24,6 +24,16 @@
           var pref = localStorage.getItem('lynshen-theme');
           var light = pref === 'light' || (pref !== 'dark' && matchMedia('(prefers-color-scheme: light)').matches);
           root.setAttribute('data-theme', light ? 'light' : 'dark');
+          // A colour scheme for this theme (Settings → 配色): its canvas from
+          // the first frame. theme.svelte.ts sets every token after, or takes
+          // this back when the scheme cannot be used.
+          var choice = JSON.parse(localStorage.getItem('lynshen-color-schemes') || '{}');
+          var id = choice[light ? 'light' : 'dark'];
+          var scheme = id && (choice.schemes || []).filter(function (s) { return s && s.id === id; })[0];
+          if (scheme && /^#[0-9a-f]{6}$/i.test(scheme.bg)) {
+            root.style.setProperty('--bg', scheme.bg);
+            root.setAttribute('data-scheme-bg', '');
+          }
         } catch (e) {}
         var ua = navigator.userAgent;
         root.setAttribute('data-os', /Macintosh|Mac OS X/.test(ua) ? 'macos' : /Windows/.test(ua) ? 'windows' : 'linux');
@@ -95,6 +105,11 @@
         --l-to: #b24e1a;
         --l-glow: rgba(217, 101, 47, 0.16);
         --l-glow2: rgba(217, 101, 47, 0.064);
+      }
+      /* A colour scheme's canvas (Settings → 配色), set by the script above. */
+      html[data-scheme-bg]:not([data-app][data-os='macos']),
+      [data-scheme-bg] #launch {
+        background: var(--bg);
       }
       [data-os='macos'] #launch {
         border-radius: 12px;

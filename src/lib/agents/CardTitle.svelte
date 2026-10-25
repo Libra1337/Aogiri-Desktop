@@ -18,7 +18,7 @@
 			<span class="what" class:err={plan.tone === 'failed'}>{plan.step || t('chat.progress.allDone')}</span>
 		{/if}
 	{:else if agents}
-		<span class="lbl">{t('chat.progress.agents')}</span>
+		<span class="lbl">{agents.commandsOnly ? t('chat.task.list') : t('chat.progress.agents')}</span>
 		<span class="num">{agents.count}</span>
 		<span class="sep" aria-hidden="true">·</span>
 		{#if agents.running}<span class="what">{t('chat.progress.runningN', { n: agents.running })}</span>

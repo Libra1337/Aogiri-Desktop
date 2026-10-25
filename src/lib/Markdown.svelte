@@ -33,7 +33,7 @@
 	// again when it does not parse. Drawn again when the theme changes.
 	$effect(() => {
 		void html;
-		void themeState.value;
+		void themeState.revision;
 		if (!root) return;
 		for (const code of root.querySelectorAll<HTMLElement>('.codeblock code.language-mermaid')) {
 			const block = code.closest<HTMLElement>('.codeblock')!;

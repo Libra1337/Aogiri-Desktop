@@ -64,6 +64,8 @@ export interface SearchRow {
 export const ROWS: SearchRow[] = [
 	{ section: 'general', id: 'language', titleKey: 'settings.language' },
 	{ section: 'general', id: 'theme', titleKey: 'settings.theme' },
+	{ section: 'general', id: 'scheme-light', titleKey: 'settings.scheme.light', descKey: 'settings.scheme.slotHint' },
+	{ section: 'general', id: 'scheme-dark', titleKey: 'settings.scheme.dark', descKey: 'settings.scheme.slotHint' },
 	{ section: 'general', id: 'background', titleKey: 'settings.behavior.background' },
 	{ section: 'general', id: 'vibrancy', titleKey: 'settings.behavior.vibrancy', descKey: 'settings.behavior.vibrancyHint' },
 	{ section: 'general', id: 'glass', titleKey: 'settings.behavior.glass', descKey: 'settings.behavior.glassHint' },
@@ -77,6 +79,7 @@ export const ROWS: SearchRow[] = [
 	{ section: 'general', id: 'chat-width', titleKey: 'settings.behavior.chatWidth', descKey: 'settings.behavior.chatWidthHint' },
 	{ section: 'general', id: 'turn-stats', titleKey: 'settings.behavior.turnStats', descKey: 'settings.behavior.turnStatsHint' },
 	{ section: 'general', id: 'scroll-on-send', titleKey: 'settings.behavior.scrollOnSend', descKey: 'settings.behavior.scrollOnSendHint' },
+	{ section: 'general', id: 'fold-turns', titleKey: 'settings.behavior.foldTurns', descKey: 'settings.behavior.foldTurnsHint' },
 	{ section: 'general', id: 'foot-context', titleKey: 'settings.behavior.footContext', descKey: 'settings.behavior.footContextHint' },
 	{ section: 'general', id: 'foot-cost', titleKey: 'settings.behavior.footCost', descKey: 'settings.behavior.footCostHint' },
 	{ section: 'general', id: 'thinking-summaries', titleKey: 'settings.behavior.thinkingSummaries', descKey: 'settings.behavior.thinkingSummariesHint' },

@@ -87,14 +87,15 @@
 	import RecapCard from '$lib/RecapCard.svelte';
 	import { markStopped, recapOf, type Recap } from '$lib/recap';
 	import { collapse } from '$lib/ui/motion';
-	import RateLimitBanner from '$lib/RateLimitBanner.svelte';
+	import UsageLimit from '$lib/UsageLimit.svelte';
+	import { limitResume } from '$lib/limitResume.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import TaskStrip from '$lib/TaskStrip.svelte';
+	import SideAnswers from '$lib/SideAnswers.svelte';
 	import ProgressCards from '$lib/agents/ProgressCards.svelte';
 	import { anyCard, cardsLayout, cardsShown } from '$lib/agents/progressCards';
 	import NewSessionPicker from '$lib/NewSessionPicker.svelte';
 	import { placeFor, subagentPages, type OpenHow } from '$lib/agents/subagentPages.svelte';
-	import { agentRows, isLive, numstatTotals, planSummary, porcelainFiles, type AgentRow } from '$lib/agentProgress';
+	import { agentRows, backgroundCommands, handedOffWork, isLive, numstatTotals, planSummary, porcelainFiles, type AgentRow } from '$lib/agentProgress';
 	import { agentChanges } from '$lib/agents/agentChanges.svelte';
 	import { confirmStop } from '$lib/agents/confirmStop';
 	import { parseToolOutput, toolTarget, toolVerb } from '$lib/toolSummary';
@@ -391,9 +392,14 @@
 		void chat.busy;
 		if (viaGateway) untrack(() => trial.funding === 'plan' && trial.refreshSoon());
 	});
-	// A new turn (sent, retried, from another device) ends the wait.
+	// A new turn (sent, retried, from another device) ends the waits: the
+	// plan's window and a usage limit's reset.
 	$effect(() => {
-		if (chat.busy) untrack(() => planWaits.cancel(session.id));
+		if (chat.busy)
+			untrack(() => {
+				planWaits.cancel(session.id);
+				if (chat.resumeAtReset) limitResume.cancel(chat);
+			});
 	});
 
 	// An error notice's fix button.
@@ -699,6 +705,8 @@
 	const allAgents = $derived(
 		agentRows({ runs: chat.agentRuns, subagents: chat.subagents, lastTool, team: chat.team, stopping: chat.stopRequested, failed: chat.failedAgents })
 	);
+	// The turn goes on while work it handed off runs (its work stays unfolded).
+	const turnOpen = $derived(chat.busy || handedOffWork(allAgents, chat.bgTasks));
 	const turnAgents = $derived(
 		agentRows({
 			runs: chat.agentRuns,
@@ -717,7 +725,7 @@
 	// the composer and the cards above it move with the column.
 	const turnPlan = $derived(planSummary(chat.plan, chat.team));
 	const planFresh = $derived(chat.turnStartedAt > 0 && chat.planAt >= chat.turnStartedAt);
-	const cards = $derived(cardsShown(turnPlan, turnAgents, chat.busy, planFresh));
+	const cards = $derived(cardsShown(turnPlan, turnAgents, chat.busy, planFresh, backgroundCommands(chat.bgTasks, chat.subagents).length));
 	const cardsAt = $derived(wrapW > 0 && anyCard(cards) ? cardsLayout(wrapW, columnW, chatPad) : null);
 	const beside = $derived(!!cardsAt?.beside);
 	const chatW = $derived(beside ? cardsAt!.width : columnW);
@@ -1180,6 +1188,7 @@
 	function stop() {
 		if (chat.busy) markStopped(chat.messages);
 		autoRetry.cancel(chat);
+		limitResume.cancel(chat);
 		planWaits.cancel(session.id);
 		send({ op: 'interrupt' });
 	}
@@ -1823,13 +1832,7 @@
 			<button class="owner-link" onclick={() => ((session.requirement = undefined), (session.requirementStart = undefined))}>{t('shell.requirement.unlink')}</button>
 		</div>
 	{/if}
-	<TaskStrip
-		{chat}
-		onStop={(id) => send({ op: 'stop_task', task_id: id })}
-		onOutput={(id) => send({ op: 'task_output', task_id: id })}
-		onTrace={traceable ? openTrace : undefined}
-		agents={false}
-	/>
+	<SideAnswers {chat} />
 
 	{#if showFind}
 		<FindBar
@@ -1856,13 +1859,14 @@
 		lane={cardsAt?.right ?? 0}
 		onOpen={traceable ? openAgent : undefined}
 		onStop={(id) => send({ op: 'stop_task', task_id: id })}
+		onOutput={(id) => send({ op: 'task_output', task_id: id })}
 		onStopAgent={teamOps ? stopAgent : undefined}
 		onOpenTeam={teamPanel ? openTeam : undefined}
 	/>
 	<main bind:this={scroller} onscroll={onScroll} onwheel={onWheel} onpointerdown={reader.down}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div bind:this={contentEl} oncontextmenu={onFileMenu}>
-			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} />
+			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} busy={turnOpen} foldTurns={prefs.foldTurns} root={project?.path || chat.cwd || ''} />
 		</div>
 		{#if chat.booting && chat.engineState !== 'exited'}
 			<div class="welcome spawning">
@@ -1916,7 +1920,17 @@
 			<p class="interm">{t('chat.inTerminal')}</p>
 		{/if}
 		{#if chat.rateLimit}
-			<RateLimitBanner rateLimit={chat.rateLimit} onDismiss={() => (chat.rateLimit = null)} />
+			<UsageLimit
+				limit={chat.rateLimit}
+				backend={chat.backendId}
+				resumeArmed={chat.resumeAtReset}
+				onResume={() => limitResume.arm(chat)}
+				onCancelResume={() => limitResume.cancel(chat)}
+				onDismiss={() => {
+					limitResume.cancel(chat);
+					chat.rateLimit = null;
+				}}
+			/>
 		{/if}
 
 		{#if chat.planRevising}

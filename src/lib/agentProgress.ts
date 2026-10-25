@@ -536,3 +536,26 @@ export function waitingOn(task: BoardTask, tasks: BoardTask[]): { id: string; ti
 export function boardProgress(tasks: BoardTask[]): { done: number; total: number } {
 	return { done: tasks.filter((x) => x.status === 'completed').length, total: tasks.length };
 }
+
+/** Work the turn handed off is still going: a subagent running or queued,
+ *  or a background agent or Workflow. Its result comes back to the
+ *  conversation, which then goes on, so the turn is not over yet (its work
+ *  stays unfolded, turnFold.ts). Background commands (a dev server) do not
+ *  count. */
+export function handedOffWork(rows: Pick<AgentRow, 'state'>[], bgTasks: { kind: string }[]): boolean {
+	return rows.some((r) => r.state === 'running' || r.state === 'queued') || bgTasks.some((x) => /^local_(agent|workflow)/.test(x.kind));
+}
+
+/** Background commands (shells, monitors): the engine's background tasks
+ *  that are not a subagent or a Workflow, which list as such. */
+export function backgroundCommands<T extends { id: string; kind: string }>(tasks: T[], subagents: Record<string, unknown>): T[] {
+	return tasks.filter((x) => !(x.id in subagents) && !x.kind.startsWith('local_agent') && !x.kind.startsWith('local_workflow'));
+}
+
+/** How many background tasks run: subagents and Workflows running or
+ *  queued, and background commands. Those still going after the turn ended
+ *  are the session's background state, not its work (sessionStatus). */
+export function runningTasks(c: { agentRuns: RowInput['runs']; subagents: RowInput['subagents']; bgTasks: { id: string; kind: string }[] }): number {
+	const rows = agentRows({ runs: c.agentRuns, subagents: c.subagents });
+	return rows.filter(isLive).length + backgroundCommands(c.bgTasks, c.subagents).length;
+}

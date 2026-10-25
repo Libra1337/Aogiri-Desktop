@@ -47,6 +47,9 @@ export function markStopped(messages: readonly Msg[]) {
 	if (user) stopped.add(user);
 }
 
+/** The reader stopped the turn this user message opened. */
+export const wasStopped = (user: Msg) => stopped.has(user);
+
 /** The card for the latest turn, or null: none while busy, after a failed
  *  or stopped turn, once the reader chose, or with nothing to offer (no
  *  suggestion, and no changes to review). */
