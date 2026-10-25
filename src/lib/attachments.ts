@@ -1,4 +1,6 @@
-// Files and videos sent with a message. The engine gets them as text after
+// Files and videos sent with a message. A daemon with the `files` feature
+// takes files as attachments (`user_message.files`, echoed back as `files`)
+// and videos as files; to one from before, the engine gets them as text after
 // what the user typed (it reads paths, not uploads):
 //
 //   <typed text>
@@ -118,10 +120,11 @@ export function folderOf(path: string): string {
 }
 
 /** The text to copy for a sent message: what was typed, then the attached
- *  paths one per line (no header: the reader sees what they are). */
-export function copyableText(message: string): string {
+ *  paths one per line (no header: the reader sees what they are). `sent`:
+ *  the files it carried as attachments (`files`), after any it listed. */
+export function copyableText(message: string, sent: readonly string[] = []): string {
 	const { text, files, videos } = splitAttachments(message);
-	const listed = [...files, ...videos.map((v) => v.name)];
+	const listed = [...files, ...sent, ...videos.map((v) => v.name)];
 	if (!listed.length) return message;
 	return [text, listed.join('\n')].filter(Boolean).join('\n\n');
 }

@@ -79,8 +79,10 @@ export class DaemonClient {
 	/** Daemon-wide frames: agents, sessions, deliveries, questions, pending
 	 *  actions and new reports. */
 	onEvent: (frame: Record<string, unknown>) => void = () => {};
-	/** Called with the daemon's version each time a connection opens. */
-	onHello: (version: string) => void = () => {};
+	/** Called with the daemon's version and features (its hello's
+	 *  `features`; empty from a daemon before them) each time a connection
+	 *  opens. */
+	onHello: (version: string, features: string[]) => void = () => {};
 	/** Called when an established connection is lost. */
 	onDisconnect: () => void = () => {};
 
@@ -260,7 +262,10 @@ export class DaemonClient {
 								if (frame.protocol === DAEMON_PROTOCOL) {
 									this.#socket = socket;
 									resolve();
-									this.onHello(String(frame.version ?? ''));
+									this.onHello(
+										String(frame.version ?? ''),
+										Array.isArray(frame.features) ? frame.features.filter((f): f is string => typeof f === 'string') : []
+									);
 								} else {
 									reject(
 										new Error(

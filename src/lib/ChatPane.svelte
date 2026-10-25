@@ -127,6 +127,8 @@
 	import { autoRetry } from '$lib/autoRetry.svelte';
 	import { parseDelivery } from '$lib/delivery';
 	import { sentLabel, splitAttachments, withFiles, withVideo } from '$lib/attachments';
+	import { engineHas } from '$lib/engineVersion.svelte';
+	import { queueOp, type QueueAction } from '$lib/composer/queue';
 	import { filePreviews } from '$lib/preview/store.svelte';
 	import { loadComposerText, saveComposerText } from '$lib/composerText';
 	import RequirementTag from '$lib/requirements/RequirementTag.svelte';
@@ -254,8 +256,9 @@
 	let input = $state(loadComposerText(session.id));
 	$effect(() => saveComposerText(session.id, input));
 	let attachments = $state<{ path: string; image: boolean }[]>([]);
-	// Videos attach as extracted keyframes (images) + a text description — the
-	// engine protocol only understands image paths.
+	// A daemon that takes files (`files`) gets a video as a file like any
+	// other; one from before gets extracted keyframes (images) and a text
+	// description, as it only understands image paths.
 	let videos = $state<{ path: string; frames: string[]; duration: number }[]>([]);
 	// Page elements picked in the embedded browser. Each pick inserts an inline
 	// token ([网页元素#N:…]) into the composer text at the cursor, so the user can
@@ -1006,7 +1009,10 @@
 	});
 	$effect(() => {
 		if (chat.pendingFill != null) {
-			input = chat.pendingFill;
+			const files = chat.pendingFillFiles;
+			chat.pendingFillFiles = [];
+			const fill = chat.pendingFill;
+			input = files.length ? untrack(() => takeBack(fill, files)) : fill;
 			chat.pendingFill = null;
 		}
 	});
@@ -1025,7 +1031,7 @@
 
 	function addAttachment(path: string) {
 		if (!path) return;
-		if (isVideo(path)) {
+		if (isVideo(path) && !engineHas('files')) {
 			attachVideo(path);
 			return;
 		}
@@ -1090,7 +1096,10 @@
 		insertRefToken(picked.id, picked.text || picked.tag || 'element');
 	}
 
-	function submit() {
+	/** `now`: sent while a turn runs, the message does not wait for the turn
+	 *  to end: it goes into it (`steer`, once a running tool ends) or stops
+	 *  it and goes (`interrupt`). */
+	function submit(now?: 'steer' | 'interrupt') {
 		const text = input.trim();
 		if (!text && attachments.length === 0 && videos.length === 0) return;
 		// A draft made for a requirement starts from it; the words go with it.
@@ -1142,21 +1151,27 @@
 				quotes = [];
 				return;
 			}
-			// The engine reads the files and videos from a list after the text;
-			// the conversation shows them as chips (attachments.ts).
-			content = withFiles(content, files);
+			// Files go with the message as attachments (`files`), each engine its
+			// own way, where the daemon takes them; a daemon from before reads
+			// them, and videos' keyframes, from a list after the text. Either
+			// way the conversation shows them as chips (attachments.ts).
+			const native = engineHas('files');
+			if (!native) content = withFiles(content, files);
 			for (const v of videos) {
 				imagePaths.push(...v.frames);
 				content = withVideo(content, base(v.path), v.duration, v.frames.length);
 			}
+			const attached = native ? files : [];
 			// Echo the message instantly when it starts a turn now (a busy session
-			// queues it instead, shown in the composer's queue strip).
+			// queues it instead, shown in the composer's queue tray).
 			// A restarting engine holds the message and starts the turn once up.
 			if (!chat.busy || chat.restarting) {
 				captureCheckpoint(); // snapshot files before this turn (for rewind)
-				chat.optimisticUser(content, sent);
+				chat.optimisticUser(content, sent, false, attached);
 			}
-			send({ op: 'user_message', content, images: imagePaths.length ? imagePaths : undefined });
+			send({ op: 'user_message', content, images: imagePaths.length ? imagePaths : undefined, ...(attached.length ? { files: attached } : {}) });
+			// ⌘↵ / ⌘⇧↵: the engine queues it last, and that one goes now.
+			if (now && chat.busy && !chat.restarting) queueAction({ kind: now === 'steer' ? 'steer' : 'interrupt', index: -1 }, [...chat.pendingMessages, content]);
 		}
 		input = '';
 		attachments = [];
@@ -1167,11 +1182,19 @@
 		imageSeq = 0;
 		if (prefs.scrollOnSend) jumpToBottom();
 	}
-	/** Takes a queued message back before it runs. Its text returns to the
-	 *  message box once the engine says it took it (`unqueued`): a message
-	 *  that started meanwhile, or an engine that cannot, changes nothing. */
-	function unqueue(index: number, text: string) {
-		send({ op: 'unqueue', index, text });
+	/** A queued message's row in the composer's tray (composer/queue.ts),
+	 *  picked by its place and text in `messages` (the queue as shown). A
+	 *  taken-back message returns to the message box once the engine says it
+	 *  took it (`unqueued`): one that started meanwhile changes nothing. */
+	function queueAction(action: QueueAction, messages: readonly string[] = chat.pendingMessages) {
+		if (action.kind === 'interrupt') {
+			if (chat.busy) markStopped(chat.messages);
+			autoRetry.cancel(chat);
+			limitResume.cancel(chat);
+			planWaits.cancel(session.id);
+		}
+		if (action.kind === 'steer') chat.steerPick = messages.at(action.index) ?? null;
+		send(queueOp(action, messages));
 	}
 	// Only takes from now on count (the chat may hold an older one).
 	let unqueuedSeen = untrack(() => chat.unqueued?.seq ?? 0);
@@ -1180,11 +1203,18 @@
 		if (!taken || taken.seq === unqueuedSeen) return;
 		unqueuedSeen = taken.seq;
 		untrack(() => {
-			const typed = takeBack(taken.text);
+			const typed = takeBack(taken.text, taken.files, taken.images);
 			input = input.trim() ? `${input.replace(/\s+$/, '')}\n${typed}` : typed;
 			composerEl?.focus();
 		});
 	});
+	/** Continues a turn the engine's exit cut short (ChatState.cutShort). */
+	function continueCut() {
+		const cut = chat.cutTurn;
+		chat.cutTurn = null;
+		autoRetry.cancel(chat);
+		if (cut) void store.retryTurn(session.id, t('chat.cut.note'), cut.started);
+	}
 	function stop() {
 		if (chat.busy) markStopped(chat.messages);
 		autoRetry.cancel(chat);
@@ -1493,16 +1523,36 @@
 		scrollToEnd(true);
 	}
 	/** A sent message back in the composer (quote, rewind, a queued one taken
-	 *  back): its files attach again and the typed text is returned for the
-	 *  box, without the list the engine reads (attachments.ts). A video comes
-	 *  back as its name only, which cannot attach it again. */
-	function takeBack(text: string): string {
+	 *  back): its files attach again, from its `files` or from the list the
+	 *  engine read after its text (attachments.ts), and the typed text is
+	 *  returned for the box. `sentImages`: a queued message's images, which
+	 *  get tokens of this box again. A video sent as keyframes comes back
+	 *  as its name only, which cannot attach it again. */
+	function takeBack(text: string, files: readonly string[] = [], sentImages: readonly string[] = []): string {
 		const sent = splitAttachments(text);
-		for (const path of sent.files) if (!attachments.some((a) => a.path === path)) attachments.push({ path, image: false });
-		return sent.text;
+		for (const path of [...sent.files, ...files]) if (!attachments.some((a) => a.path === path)) attachments.push({ path, image: false });
+		if (!sentImages.length) return sent.text;
+		// Its [图片 #N] tokens named its images in order: each gets a token of
+		// this box, and an image no token names goes after the text.
+		const seen = new Map<string, string>();
+		const token = (path: string) => {
+			const n = ++imageSeq;
+			images.push({ n, path });
+			return `[图片 #${n}]`;
+		};
+		let next = 0;
+		let typed = sent.text.replace(/\[图片 #(\d+)\]/g, (_, n: string) => {
+			if (!seen.has(n)) {
+				const path = sentImages[next++];
+				seen.set(n, path && imageAllowed(path) ? token(path) : '');
+			}
+			return seen.get(n)!;
+		});
+		for (const path of sentImages.slice(next)) if (imageAllowed(path)) typed = `${typed}${typed && !/\s$/.test(typed) ? ' ' : ''}${token(path)} `;
+		return typed;
 	}
-	function editMessage(text: string) {
-		input = takeBack(text);
+	function editMessage(text: string, files?: string[]) {
+		input = takeBack(text, files);
 		composerEl?.focus();
 	}
 	// A file a message sent: previewed in a tab beside the conversation
@@ -1734,14 +1784,14 @@
 			toast.error(t('chat.continueOnLynShenFailed', { error: e instanceof Error ? e.message : String(e) }));
 		}
 	}
-	function rewindToMessage(text: string, userIndex: number) {
+	function rewindToMessage(text: string, userIndex: number, files?: string[]) {
 		// codex (thread/rollback) and claude (resume-at-uuid respawn) rewind without
 		// the lynshen checkpoint_view round-trip — confirm directly from the index.
 		if (chat.backendId === 'codex' || chat.backendId === 'claude') {
-			chat.pendingRewind = { id: `${chat.backendId}:${userIndex}`, text };
+			chat.pendingRewind = { id: `${chat.backendId}:${userIndex}`, text, ...(files?.length ? { files } : {}) };
 			return;
 		}
-		chat.rewindIntent = { userIndex, text };
+		chat.rewindIntent = { userIndex, text, ...(files?.length ? { files } : {}) };
 		send({ op: 'command', input: '/rewind' });
 	}
 	function confirmRewind() {
@@ -1762,7 +1812,7 @@
 		} else {
 			send({ op: 'command', input: `/rewind ${pr.id}` });
 		}
-		input = takeBack(pr.text);
+		input = takeBack(pr.text, pr.files);
 		chat.pendingRewind = null;
 		composerEl?.focus();
 	}
@@ -1905,6 +1955,16 @@
 					<Button variant="primary" size="sm" onclick={() => store.restartSession(session.id, true)}>{t('shell.restartEngine')}</Button>
 				</div>
 			</div>
+		{:else if chat.cutTurn && !chat.busy && !chat.restarting && !chat.autoRetry}
+			<!-- The engine went away mid-turn and is back: pick the turn up, the
+			     way an automatic retry does (SessionStore.retryTurn). -->
+			<div class="approval-wrap">
+				<div class="enginedown cutturn" role="status">
+					<span class="ed-text">{t('chat.cut.notice')}</span>
+					<Button variant="ghost" size="sm" onclick={() => (chat.cutTurn = null)}>{t('chat.cut.dismiss')}</Button>
+					<Button variant="primary" size="sm" onclick={continueCut}>{t('chat.cut.continue')}</Button>
+				</div>
+			</div>
 		{/if}
 		<!-- Agent questions render in the composer tray; the card keeps plain
 		     tool approvals (commands, edits, plans). -->
@@ -1980,10 +2040,11 @@
 			onAttach={addAttachment}
 			bind:videos
 			bind:el={composerEl}
-			onSubmit={submit}
+			onSubmit={() => submit()}
 			onStop={stop}
-			onSteer={() => send({ op: 'steer' })}
-			onUnqueue={unqueue}
+			onQueue={(action) => queueAction(action)}
+			onSteerFirst={() => send({ op: 'steer' })}
+			onSendNow={(how) => submit(how)}
 			onPick={pickFiles}
 			onModel={openModelPicker}
 			onModelSelect={selectRow}
@@ -2258,6 +2319,22 @@
 		font-size: var(--fs-sm);
 		color: var(--err);
 		font-weight: 500;
+	}
+	/* A turn the engine left unfinished, back up: a waiting card, not an error. */
+	.enginedown.cutturn {
+		justify-content: flex-start;
+		gap: 8px;
+		padding: 8px 10px 8px 14px;
+		background: var(--panel);
+		border-color: var(--border);
+		border-radius: var(--r-lg);
+		box-shadow: var(--shadow-float);
+	}
+	.cutturn .ed-text {
+		flex: 1;
+		min-width: 0;
+		color: var(--dim);
+		font-weight: 400;
 	}
 
 	.revising {

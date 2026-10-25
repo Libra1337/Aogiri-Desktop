@@ -20,6 +20,8 @@ export type ShortcutId =
 	| 'audit'
 	| 'focusComposer'
 	| 'stop'
+	| 'sendNow'
+	| 'interruptSend'
 	| 'model'
 	| 'history'
 	| 'prevSession'
@@ -36,7 +38,7 @@ export type ShortcutId =
 /** A key and the modifiers held with it. */
 export interface Combo {
 	/** `KeyboardEvent.key` (lower case for letters), a punctuation key, `Tab`,
-	 *  `F1`–`F12`, or `1-9` for any digit from 1 to 9. */
+	 *  `Enter`, `F1`–`F12`, or `1-9` for any digit from 1 to 9. */
 	key: string;
 	/** ⌘ on macOS, Ctrl elsewhere. */
 	mod?: boolean;
@@ -78,7 +80,11 @@ export const SHORTCUTS: Record<ShortcutId, Shortcut> = {
 	focusComposer: { key: 'l', mod: true, group: 'composer' },
 	model: { key: 'm', mod: true, shift: true, group: 'composer' },
 	approvalMode: { key: 'Tab', shift: true, group: 'composer' },
-	stop: { key: '.', mod: true, group: 'composer' }
+	stop: { key: '.', mod: true, group: 'composer' },
+	// While a turn runs: a typed message goes into it (once a running tool
+	// ends), or stops it and goes now, instead of waiting in the queue.
+	sendNow: { key: 'Enter', mod: true, group: 'composer' },
+	interruptSend: { key: 'Enter', mod: true, shift: true, group: 'composer' }
 };
 
 export const SHORTCUT_IDS = Object.keys(SHORTCUTS) as ShortcutId[];
@@ -103,7 +109,7 @@ const CODE_KEYS: Record<string, string> = {
 };
 
 /** Keys a combo can end with. */
-const KEY_RE = /^(?:[a-z0-9]|[`\-=[\]\\;',./]|Tab|F(?:[1-9]|1[0-2])|1-9)$/;
+const KEY_RE = /^(?:[a-z0-9]|[`\-=[\]\\;',./]|Tab|Enter|F(?:[1-9]|1[0-2])|1-9)$/;
 /** Keys that type a character: they need ⌘ or ⌃ (Ctrl) to be a shortcut. */
 const PRINTABLE_RE = /^(?:[a-z0-9]|[`\-=[\]\\;',./]|1-9)$/;
 
@@ -182,7 +188,7 @@ export function parseCombo(text: unknown): Combo | null {
 
 // The zoom-in key reads as +, as other apps show it.
 const keyCap = (key: string, mac: boolean) =>
-	key === '1-9' ? '1…9' : key === 'Tab' && mac ? '⇥' : key === '=' ? '+' : key.length === 1 ? key.toUpperCase() : key;
+	key === '1-9' ? '1…9' : key === 'Tab' && mac ? '⇥' : key === 'Enter' && mac ? '↵' : key === '=' ? '+' : key.length === 1 ? key.toUpperCase() : key;
 
 /** The key caps of `c` in the order the system writes them: ⌃ ⌥ ⇧ ⌘ K on
  *  macOS, Ctrl Alt Shift K elsewhere. A combo without a key gives only its
@@ -229,7 +235,8 @@ export function comboProblem(id: ShortcutId, c: Combo, mac = isMac()): ComboProb
 	if (id === 'sessionN' && c.key !== '1-9') return 'digits';
 	if (id !== 'sessionN' && c.key === '1-9') return 'key';
 	if (sameCombo(c, SHORTCUTS[id], mac)) return null;
-	if (!c.mod && !c.ctrl && (PRINTABLE_RE.test(c.key) || c.key === 'Tab')) return 'modifier';
+	// Enter alone sends and ⇧Enter is a new line: Enter needs ⌘ or ⌃ too.
+	if (!c.mod && !c.ctrl && (PRINTABLE_RE.test(c.key) || c.key === 'Tab' || c.key === 'Enter')) return 'modifier';
 	// Ctrl+Alt is AltGr on Windows and Linux, which types characters.
 	if (!mac && c.alt && PRINTABLE_RE.test(c.key)) return 'reserved';
 	if ((mac ? RESERVED_MAC : RESERVED_OTHER).some((r) => sameCombo(r, c, mac))) return 'reserved';

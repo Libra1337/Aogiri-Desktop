@@ -6,6 +6,7 @@
 	import { t } from '$lib/i18n';
 	import Notice from '$lib/ui/Notice.svelte';
 	import { parseToolOutput, toolIcon, toolTarget, toolVerb, unwrapShell } from '$lib/toolSummary';
+	import { readHref } from '$lib/fileRefs';
 
 	let {
 		name,
@@ -17,7 +18,8 @@
 		heading,
 		badge,
 		sections,
-		reveal = 0
+		reveal = 0,
+		onFile
 	}: {
 		name: string;
 		output: string;
@@ -38,6 +40,9 @@
 		/** Counts the requests to show this call's details (the work status
 		 *  line's "›"): each new one opens the card. */
 		reveal?: number;
+		/** Opens a file in the app (a path, with `#L<line>`): a Read row opens
+		 *  the file it read, at the line the reading started. */
+		onFile?: (href: string) => void;
 	} = $props();
 
 	// Auto-expand while the tool runs, auto-collapse once it finishes; a
@@ -130,6 +135,13 @@
 	// Read cards stay a single line — the header names the file; the contents add
 	// noise. So does a card given nothing to show.
 	const isRead = $derived((name === 'read' || (!!sections && !sections.length && !isError)) && !errorText);
+	// A Read row opens the file it read, where the reading started (the
+	// engine's `line`, or LynShen's `offset`; the first line by default).
+	const openHref = $derived(name === 'read' && !errorText && onFile ? readHref(parsed) : '');
+	function onHead() {
+		if (openHref) onFile?.(openHref);
+		else if (!isRead) collapsed = !collapsed;
+	}
 
 	// Only render inline images for a whitelist of raster MIME types. SVG is
 	// deliberately excluded: it can embed <script> and run in a data: URL.
@@ -151,7 +163,7 @@
 </script>
 
 <div class="tool" class:err={isError || !!errorText}>
-	<button class="head" class:static={isRead} onclick={() => !isRead && (collapsed = !collapsed)}>
+	<button class="head" class:static={isRead && !openHref} class:opens={!!openHref} onclick={onHead} title={openHref ? t('chat.openReadFile') : undefined}>
 		<span class="ico"><Icon size={16} /></span>
 		{#if heading}
 			<span class="verb heading">{heading}</span>
@@ -254,6 +266,12 @@
 	}
 	.head.static {
 		cursor: default;
+	}
+	/* A Read row: what it read is a link to the file. */
+	.head.opens:hover .target,
+	.head.opens:focus-visible .target {
+		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
 	.chev {
 		display: inline-flex;

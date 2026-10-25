@@ -67,6 +67,16 @@ export function fileHref(ref: FileRef): string {
 	return `${ref.path}#L${ref.line}${ref.col ? `:${ref.col}` : ''}`;
 }
 
+/** Where a Read tool call's file opens: its path, at the line the reading
+ *  started (`line` from Claude Code, `offset` from LynShen; neither, or the
+ *  first line: the top). '' when the call names no path. */
+export function readHref(output: Record<string, unknown> | null | undefined): string {
+	const path = typeof output?.path === 'string' ? output.path : '';
+	if (!path) return '';
+	const at = [output?.line, output?.offset].find((v) => typeof v === 'number' && Number.isInteger(v) && v > 1) as number | undefined;
+	return fileHref({ path, ...(at ? { line: at } : {}) });
+}
+
 /** A link target back to its path and position (`file://` and `?query`
  *  dropped; `#L12`, `#L12:4` and `#L12C4` read). */
 export function parseFileHref(href: string): FileRef {

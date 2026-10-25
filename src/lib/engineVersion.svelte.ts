@@ -1,8 +1,9 @@
-// The running daemon's version, from its hello. Features a newer engine adds
-// show only once the daemon runs it: after an app update the daemon keeps the
-// previous engine until no session is running (daemonVersion.ts).
+// The running daemon's version and features, from its hello. Features a newer
+// engine adds show only once the daemon runs it: after an app update the
+// daemon keeps the previous engine until no session is running
+// (daemonVersion.ts).
 
-export const engine = $state({ version: '' });
+export const engine = $state({ version: '', features: [] as string[] });
 
 /** The daemon runs `min` or later; unknown (not yet greeted) counts as no. */
 export function engineAtLeast(min: string): boolean {
@@ -18,3 +19,15 @@ export function engineAtLeast(min: string): boolean {
 
 /** The first engine that takes a queued message back and says so. */
 export const UNQUEUE_SINCE = '0.4.27';
+
+/** What a daemon takes beyond its protocol version, by its hello's
+ *  `features`: `queue`, queued messages picked by place (steer, take back,
+ *  drop, move, interrupt and send, on every engine); `files`, a message's
+ *  attachments other than images as `files`. A daemon from before sends
+ *  none. */
+export type EngineFeature = 'queue' | 'files';
+
+/** The daemon this page talks to has `feature` (see `EngineFeature`). */
+export function engineHas(feature: EngineFeature): boolean {
+	return engine.features.includes(feature);
+}

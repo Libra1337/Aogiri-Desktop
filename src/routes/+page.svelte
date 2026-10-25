@@ -3,6 +3,7 @@
 	import { DaemonSync } from '$lib/daemonSync.svelte';
 	import { onMount, tick, untrack } from 'svelte';
 	import { crossfade } from '$lib/ui/viewTransition';
+	import DropLayer from '$lib/shell/DropLayer.svelte';
 	import { engine } from '$lib/engineVersion.svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
@@ -327,6 +328,8 @@
 	const pageProject = $derived(projectPageId ? store.userProjects.find((p) => p.id === projectPageId) : undefined);
 	// The home page covers the canvas when asked for, and when nothing is open.
 	const homeShown = $derived(showHome || (store.loaded && !store.active && !pageProject));
+	/** Files being dragged over the window, for the chat in front (0: none). */
+	let dragFiles = $state(0);
 	function openProjectPage(p: Project) {
 		showDesk = false;
 		showSettings = false;
@@ -1536,8 +1539,9 @@
 				agentDirectory.disconnected();
 				sync.reset();
 			};
-			daemon.onHello = (version) => {
+			daemon.onHello = (version, features) => {
 				engine.version = version;
+				engine.features = features;
 				// The terminal shell the settings name, ready for the first terminal.
 				void shells.load();
 				checkDaemonVersion(version).then((outcome) => {
@@ -1550,9 +1554,18 @@
 			// this page's tabs when the page goes (see detachAll).
 			cleanups.push(() => daemon.detachAll());
 			agentDirectory.start();
+			// Files dragged over the window: the whole window takes them (the
+			// drop layer), for the conversation in front. Settings, the desk, a
+			// project's page or the home page over it: none in front to take them.
 			const undrop = await getCurrentWebview().onDragDropEvent((e) => {
-				if (e.payload.type === 'drop')
-					for (const p of e.payload.paths) panes.get(store.activeId)?.addAttachment(p);
+				const p = e.payload;
+				const pane = showSettings || showDesk || showSetup || homeShown || pageProject ? undefined : panes.get(store.activeId);
+				if (p.type === 'enter') dragFiles = pane ? p.paths.length : 0;
+				else if (p.type === 'leave') dragFiles = 0;
+				else if (p.type === 'drop') {
+					dragFiles = 0;
+					for (const path of p.paths) pane?.addAttachment(path);
+				}
 			});
 			// Embedded-browser events: element picks become composer chips in the
 			// active chat pane; nav/state updates flow into the browser store.
@@ -1685,6 +1698,7 @@
 
 <Toaster />
 <ConfirmHost />
+{#if dragFiles}<DropLayer count={dragFiles} />{/if}
 
 <div class="app">
 	<!-- TOP: one title bar across the window (traffic lights, sidebar toggle,

@@ -41,14 +41,22 @@ export function hostSession(
 
 // Commands the GUI sends to a session's engine.
 export type Op =
-	| { op: 'user_message'; content: string; images?: string[] }
+	/** `files`: attachments other than images, each engine its own way (a
+	 *  daemon with the `files` feature; one from before ignores the field). */
+	| { op: 'user_message'; content: string; images?: string[]; files?: string[] }
 	| { op: 'command'; input: string }
-	| { op: 'steer' }
-	/** Takes the queued message at `index` (with this text) back before it runs. */
-	| { op: 'unqueue'; index: number; text: string }
+	// Queued messages by their place in `pending_messages` (`index`, negative
+	// from the last; with `text`, the one with that text if the queue moved
+	// on). A daemon before the `queue` feature takes `steer` without them.
+	/** Into the running turn: once a running tool ends, never cutting it. */
+	| { op: 'steer'; index?: number; text?: string }
+	/** Back before it runs (answered by `unqueued`), or dropped with `discard`. */
+	| { op: 'unqueue'; index: number; text?: string; discard?: boolean }
+	| { op: 'queue_move'; index: number; to: number; text?: string }
 	// LynShen: runs a failed turn again with no new message (SessionStore.retryTurn).
 	| { op: 'continue' }
-	| { op: 'interrupt' }
+	/** With `index`: stops the turn and that queued message starts the next. */
+	| { op: 'interrupt'; index?: number; text?: string }
 	| { op: 'shutdown' }
 	// Structured approval answer: `hunks` (edit tools, partial approval) is only
 	// valid with decision "allow"; `always` is whole-call only (never with hunks).

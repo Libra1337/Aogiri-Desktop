@@ -198,8 +198,9 @@ export class HostConnection {
 		};
 		// Notifications keep reaching this phone after the computer restarts
 		// or the browser renews its subscription.
-		this.daemon.onHello = (version) => {
+		this.daemon.onHello = (version, features) => {
 			engine.version = version;
+			engine.features = features;
 			this.checkCode = '';
 			this.everConnected = true;
 			loadScopes(this.daemon).then((scopes) => (this.scopes = scopes));

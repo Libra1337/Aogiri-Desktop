@@ -115,7 +115,8 @@
 		// are windowed out.
 		scroller?: HTMLElement | null;
 		/** Puts a sent message back in the composer; without it there is no pencil. */
-		onEdit?: (text: string) => void;
+		/** `files`: the message's attachments other than images. */
+		onEdit?: (text: string, files?: string[]) => void;
 		/** Quote text selected in a reply into the composer. */
 		onCite?: (text: string) => void;
 		/** Notes the selected passage as a requirement (offered beside quoting). */
@@ -123,7 +124,7 @@
 		/** Rewinds to a sent message and puts it back to rewrite; without it
 		 *  there is no rewind button (a read-only transcript, an engine that
 		 *  cannot rewind). */
-		onRewind?: (text: string, userIndex: number) => void;
+		onRewind?: (text: string, userIndex: number, files?: string[]) => void;
 		/** Open a workspace file referenced by a chat link (editor / browser). */
 		/** A file link in a message; `context` is that message's text. */
 		onFile?: (href: string, context?: string) => void;
@@ -587,7 +588,7 @@
 		if (m.kind === 'tool') return !!(m.name || m.output);
 		if (m.kind === 'plan') return !!(m.title || m.text);
 		if (m.kind === 'agent_message') return !!m.summary;
-		if (m.kind === 'compaction' || m.kind === 'escalation') return true;
+		if (m.kind === 'compaction' || m.kind === 'escalation' || m.kind === 'cut') return true;
 		return !!m.text && hasText(m, m.text);
 	}
 
@@ -797,19 +798,20 @@
 			{#if delivery}
 				<DeliveryNotice {delivery} {onOpenSession} />
 			{:else}
-			{@const sent = splitAttachments(m.text)}
+			{@const listed = splitAttachments(m.text)}
+			{@const sent = m.files?.length ? { ...listed, files: [...listed.files, ...m.files] } : listed}
 			{@const hasBubble = !!sent.text || !!m.images?.length}
 			<div class="row user" class:filed={hasBubble && (sent.files.length > 0 || sent.videos.length > 0)}>
-				<button class="uedit ucopy" class:done={copied === m} onclick={() => copy(copyableText(m.text), m)} aria-label={t(copied === m ? 'common.copied' : 'common.copy')} title={t(copied === m ? 'common.copied' : 'common.copy')}>
+				<button class="uedit ucopy" class:done={copied === m} onclick={() => copy(copyableText(m.text, m.files), m)} aria-label={t(copied === m ? 'common.copied' : 'common.copy')} title={t(copied === m ? 'common.copied' : 'common.copy')}>
 					{#if copied === m}<CheckIcon size={12} />{:else}<CopyIcon size={12} />{/if}
 				</button>
 				{#if onRewind}
-					<button class="uedit rewind" onclick={() => onRewind(m.text, userOrdinal.get(m) ?? 0)} aria-label={t('chat.rewindTitleN', { n: drop })} title={t('chat.rewindTitleN', { n: drop })}>
+					<button class="uedit rewind" onclick={() => onRewind(m.text, userOrdinal.get(m) ?? 0, m.files)} aria-label={t('chat.rewindTitleN', { n: drop })} title={t('chat.rewindTitleN', { n: drop })}>
 						<ArrowCounterClockwiseIcon size={12} />{#if drop > 1}<span class="rwn">{drop}</span>{/if}
 					</button>
 				{/if}
 				{#if onEdit}
-					<button class="uedit" onclick={() => onEdit(m.text)} aria-label={t('chat.quoteTitle')} title={t('chat.quoteTitle')}><PencilSimpleIcon size={12} /></button>
+					<button class="uedit" onclick={() => onEdit(m.text, m.files)} aria-label={t('chat.quoteTitle')} title={t('chat.quoteTitle')}><PencilSimpleIcon size={12} /></button>
 				{/if}
 				<div class="ucol">
 					<!-- Files and videos sent with it: chips above the bubble, which
@@ -939,7 +941,7 @@
 				{#if open}
 					<div class="tg-list">
 						{#each run as x (x)}
-							{#if x.kind === 'tool'}<ToolCard name={x.name} output={x.output} running={x.running} isError={x.isError} subagent={x.subagent} trace={traceOf?.(x) ?? undefined} reveal={reveal(x)} />{/if}
+							{#if x.kind === 'tool'}<ToolCard name={x.name} output={x.output} running={x.running} isError={x.isError} subagent={x.subagent} trace={traceOf?.(x) ?? undefined} reveal={reveal(x)} onFile={onFile ? (href) => onFile(href) : undefined} />{/if}
 						{/each}
 					</div>
 				{/if}
@@ -954,7 +956,7 @@
 				{@const card = sendCardProps(sendCardView(m, sendOf?.(m.callId)), m.isError)}
 				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} heading={card.heading} badge={card.badge} sections={card.sections} />
 			{:else}
-				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} trace={traceOf?.(m) ?? undefined} reveal={reveal(m)} />
+				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} trace={traceOf?.(m) ?? undefined} reveal={reveal(m)} onFile={onFile ? (href) => onFile(href) : undefined} />
 			{/if}
 		{:else if m.kind === 'compaction'}
 			<CompactionCard stage={m.state} before={m.before} after={m.after} written={m.written} since={m.since} summary={m.summary} error={m.error} live={m.live} />
@@ -964,6 +966,11 @@
 			<AgentMessageLine from={m.from} to={m.to} summary={m.summary} />
 		{:else if m.kind === 'escalation'}
 			<EscalationLine record={m.record} />
+		{:else if m.kind === 'cut'}
+			<!-- The engine went away during the turn: it ends here, unfinished. -->
+			<div class="cutmark" role="note" title={t('chat.cut.markerDetail')}>
+				<WarningCircleIcon size={13} /><span>{t('chat.cut.marker')}</span><span class="cut-why">{t('chat.cut.markerDetail')}</span>
+			</div>
 		{:else if m.kind === 'error'}
 			<ErrorNotice
 				text={m.text}
@@ -1154,6 +1161,24 @@
 	}
 	.bubble.pending {
 		opacity: 0.7;
+	}
+	/* A turn the engine left unfinished: one quiet line where it ended, with
+	   a hairline before it (the composer offers 继续). */
+	.cutmark {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 0 2px;
+		border-top: 1px solid var(--hairline);
+		color: var(--warn);
+		font-size: var(--fs-xs);
+	}
+	.cut-why {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--dim2);
 	}
 	.sendstate {
 		display: inline-flex;
