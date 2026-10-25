@@ -31,9 +31,9 @@ const SEE_THROUGH = ['data-vibrancy', 'data-canvas-bg'];
 const veils = new Set<() => void>();
 let watching: { observer: MutationObserver; motion: MediaQueryList; sync: () => void } | null = null;
 
-function shouldSweep(): boolean {
+function shouldSweep(seeThrough: readonly string[]): boolean {
 	const root = document.documentElement;
-	if (SEE_THROUGH.some((a) => root.hasAttribute(a))) return false;
+	if (seeThrough.some((a) => root.hasAttribute(a))) return false;
 	return !matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
@@ -56,10 +56,13 @@ function unwatch() {
 	watching = null;
 }
 
-export function shimmer(node: HTMLElement) {
+/** `where`: 'canvas' for a veil over the transcript, which only a
+ *  background image shows through (the window frost covers the navigator). */
+export function shimmer(node: HTMLElement, where: 'navigator' | 'canvas' = 'navigator') {
 	let sweep: Animation | null = null;
+	const seeThrough = where === 'canvas' ? ['data-canvas-bg'] : SEE_THROUGH;
 	const update = () => {
-		const want = shouldSweep();
+		const want = shouldSweep(seeThrough);
 		if (want && !sweep && typeof node.animate === 'function') {
 			sweep = node.animate(SHIMMER_FRAMES, { duration: SHIMMER_MS * timeScale(), iterations: Infinity, easing: 'linear' });
 			// The shared clock: every veil started at the timeline's origin.

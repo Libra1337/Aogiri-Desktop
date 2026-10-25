@@ -25,7 +25,10 @@
 	import { parseDelivery } from '$lib/delivery';
 	import { sendCardProps, sendCardView, type SessionMessageView } from '$lib/sessions/sessionMessage';
 	import { ReplyStream, finishedBlocks, type Block } from '$lib/streamBlocks';
-	import { parseToolOutput, toolIcon, toolTarget, toolVerb } from '$lib/toolSummary';
+	import { diffStat, editedPaths, isEdit, parseToolOutput, toolFailed, toolIcon, toolTarget, toolVerb } from '$lib/toolSummary';
+	import DiffStat from '$lib/DiffStat.svelte';
+	import ToolTime from '$lib/ToolTime.svelte';
+	import RunLight from '$lib/ui/RunLight.svelte';
 	import Indicator from '$lib/Indicator.svelte';
 	import CallTimer from '$lib/CallTimer.svelte';
 	import RetryNotice from '$lib/RetryNotice.svelte';
@@ -356,6 +359,8 @@
 		// A hit inside a folded turn opens it.
 		const fold = folds.of.get(messages[findActive]!);
 		if (fold) untrack(() => openFolds.add(fold.key));
+		const head = toolGroups.headOf.get(messages[findActive]!);
+		if (head) untrack(() => openGroups.add(head));
 		if (virtual && scroller) {
 			scroller.scrollTo({ top: Math.max(0, offsets[findActive] - viewH / 2), behavior: 'smooth' });
 		} else {
@@ -602,29 +607,41 @@
 		return untrack(() => hasContent(m)) || hasContent(m);
 	}
 
-	// A run of consecutive tool calls (rows that show nothing don't break it)
-	// renders as one row on its first call: a header naming the count and the
-	// latest call, then — expanded — the calls in a tight list. The other calls
-	// of the run render no row of their own.
+	// A run of consecutive tool calls (rows that show nothing don't break it),
+	// with the thinking that led to each call, renders as one row on its first
+	// member: one line naming what the run did, its line counts and its time,
+	// then — expanded — the thinking (each one folded line) and the calls in
+	// a tight list. The run's other members render no row of their own.
+	// Thinking that no call follows (yet) stays a block of its own, and a
+	// single call keeps its own row.
 	const GROUP_MIN = 2;
 	const toolGroups = $derived.by(() => {
-		const members = new Map<Msg, Msg[]>(); // first call → the run
+		const members = new Map<Msg, Msg[]>(); // first member → the run
 		const headOf = new Map<Msg, Msg>();
 		let run: Msg[] = [];
+		let calls = 0;
+		let thoughts: Msg[] = [];
 		const flush = () => {
-			if (run.length >= GROUP_MIN) {
+			if (calls >= GROUP_MIN) {
 				members.set(run[0]!, run);
 				for (const x of run) headOf.set(x, run[0]!);
 			}
 			run = [];
+			calls = 0;
+			thoughts = [];
 		};
 		for (const m of messages) {
 			if (!contentful(m)) continue;
 			// A message to another conversation keeps a row of its own: its
 			// state changes after the run.
-			if (m.kind === 'tool' && !isAgentCall(m) && m.name !== 'send_to_session') run.push(m);
+			if (m.kind === 'tool' && !isAgentCall(m) && m.name !== 'send_to_session') {
+				run.push(...thoughts, m);
+				thoughts = [];
+				calls++;
+			} else if (m.kind === 'reasoning') thoughts.push(m);
 			else flush();
 		}
+		// Thinking at the end leads to no call (yet): not in the run.
 		flush();
 		return { members, headOf };
 	});
@@ -706,20 +723,41 @@
 		}
 		return { lead, hidden };
 	});
+	type ToolMsg = Extract<Msg, { kind: 'tool' }>;
+	/** A run's line: its calls, whether one runs, how many failed, the
+	 *  latest call, and — for a run that only edits — the files it edited;
+	 *  the lines its edits added and removed. */
 	function groupInfo(run: Msg[]) {
+		const tools = run.filter((x): x is ToolMsg => x.kind === 'tool');
 		let running = false;
 		let failed = 0;
-		for (const x of run) {
-			if (x.kind !== 'tool') continue;
+		let onlyEdits = true;
+		let add = 0;
+		let del = 0;
+		let counted = false;
+		const files = new Set<string>();
+		for (const x of tools) {
+			const parsed = parseToolOutput(x.output);
+			const bad = toolFailed(x, parsed);
 			if (x.running) running = true;
-			if (x.isError) failed++;
+			if (bad) failed++;
+			if (!isEdit(x.name, parsed)) {
+				onlyEdits = false;
+				continue;
+			}
+			if (bad) continue;
+			for (const p of editedPaths(parsed)) files.add(p);
+			const stat = diffStat(parsed);
+			if (stat) {
+				counted = true;
+				add += stat.add;
+				del += stat.del;
+			}
 		}
-		const last = run[run.length - 1];
-		const latest =
-			last?.kind === 'tool'
-				? { Icon: toolIcon(last.name), verb: toolVerb(last.name), target: toolTarget(last.name, parseToolOutput(last.output)) }
-				: null;
-		return { running, failed, latest };
+		const last = tools[tools.length - 1];
+		const latest = last ? { Icon: toolIcon(last.name), verb: toolVerb(last.name), target: toolTarget(last.name, parseToolOutput(last.output)) } : null;
+		const edited = onlyEdits && files.size ? [...files].map((p) => p.split(/[\\/]/).pop() || p) : null;
+		return { tools, running, failed, latest, edited, stat: counted ? { add, del } : null };
 	}
 
 	// The text under the view stays still as rows window in or out above it
@@ -792,6 +830,8 @@
 				{/if}
 				{#if fold && !openFolds.has(fold.key)}
 					<!-- Folded: the line is the whole row. -->
+				{:else if toolGroups.members.has(m)}
+					{@render toolRun(m, toolGroups.members.get(m)!)}
 				{:else if m.kind === 'user'}
 			{@const delivery = parseDelivery(m.text)}
 			{@const drop = userOrdinal.size - (userOrdinal.get(m) ?? 0)}
@@ -888,64 +928,9 @@
 				{/if}
 			</div>
 		{:else if m.kind === 'reasoning'}
-			<div class="reason" class:open={!m.collapsed}>
-				<div class="reason-row">
-				<button class="reason-head" onclick={() => (m.collapsed = !m.collapsed)}>
-					<span>
-						{#if m.durationMs !== undefined}
-							{t('chat.reasoningFor', { t: fmtDur(Math.max(1000, m.durationMs)) })}
-						{:else if m === streamingReasoning && m.startedAt !== undefined}
-							{t('chat.reasoningNow')} <CallTimer since={m.startedAt} />
-						{:else}
-							{t('chat.reasoning')}
-						{/if}
-						{#if m.interrupted}<span class="cut" title={t('chat.interruptedTitle')}>{t('chat.interrupted')}</span>{/if}
-					</span>
-					<span class="rchev"><CaretRightIcon size={13} /></span>
-				</button>
-				{#if m.collapsed && m === streamingReasoning}
-					<!-- Folded while it streams: its latest words in one line,
-					     the earliest sliding out to the left. -->
-					<button class="reason-line" onclick={() => (m.collapsed = false)} aria-label={t('chat.reasoningExpand')}
-						><span>{reasoningTail(m)}</span></button
-					>
-				{/if}
-				</div>
-				<Collapse open={!m.collapsed}>
-					<div class="reason-body">
-						<!-- Plain text while it streams (no per-frame Markdown), in
-						     blocks written once; Markdown once finished, taking
-						     over from the plain text a few chunks each frame. -->
-						<ReasoningBody source={shownText(m)} text={m.text} live={m === streamingReasoning} onFile={(href) => onFile?.(href, m.text)} />
-					</div>
-				</Collapse>
-			</div>
+			{@render reasoningRow(m)}
 		{:else if m.kind === 'tool'}
-			{@const run = toolGroups.members.get(m)}
-			{#if run}
-				{@const g = groupInfo(run)}
-				{@const open = openGroups.has(m)}
-				<button class="tgroup" class:open onclick={() => (open ? openGroups.delete(m) : openGroups.add(m))}>
-					<span class="tg-count">{t('chat.toolGroup', { n: run.length })}</span>
-					{#if g.failed}<span class="tg-fail">{t('chat.toolGroupFailed', { n: g.failed })}</span>{/if}
-					{#if g.latest && !open}
-						<span class="tg-latest">
-							<g.latest.Icon size={13} />
-							<span class="tg-verb">{g.latest.verb}</span>
-							{#if g.latest.target}<span class="tg-target">{g.latest.target}</span>{/if}
-						</span>
-					{/if}
-					{#if g.running}<CircleNotchIcon size={12} class="spin" />{/if}
-					<span class="rchev"><CaretRightIcon size={13} /></span>
-				</button>
-				{#if open}
-					<div class="tg-list">
-						{#each run as x (x)}
-							{#if x.kind === 'tool'}<ToolCard name={x.name} output={x.output} running={x.running} isError={x.isError} subagent={x.subagent} trace={traceOf?.(x) ?? undefined} reveal={reveal(x)} onFile={onFile ? (href) => onFile(href) : undefined} />{/if}
-						{/each}
-					</div>
-				{/if}
-			{:else if agents && isAgentCall(m)}
+			{#if agents && isAgentCall(m)}
 				{@const attempt = attempts.lead.get(m)}
 				{#if attempt}
 					<AttemptGroupCard group={attempt.group} rows={attempt.rows} picked={attemptPicks[attempt.group] ?? ''} onOpen={onOpenAgent} onViewChanges={onAgentChanges} onPick={onPickAttempt} onStop={onStopAgent} />
@@ -954,9 +939,9 @@
 				{/if}
 			{:else if m.name === 'send_to_session'}
 				{@const card = sendCardProps(sendCardView(m, sendOf?.(m.callId)), m.isError)}
-				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} heading={card.heading} badge={card.badge} sections={card.sections} />
+				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} heading={card.heading} badge={card.badge} sections={card.sections} startedAt={m.startedAt} endedAt={m.endedAt} />
 			{:else}
-				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} trace={traceOf?.(m) ?? undefined} reveal={reveal(m)} onFile={onFile ? (href) => onFile(href) : undefined} />
+				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} trace={traceOf?.(m) ?? undefined} reveal={reveal(m)} startedAt={m.startedAt} endedAt={m.endedAt} onFile={onFile ? (href) => onFile(href) : undefined} />
 			{/if}
 		{:else if m.kind === 'compaction'}
 			<CompactionCard stage={m.state} before={m.before} after={m.after} written={m.written} since={m.since} summary={m.summary} error={m.error} live={m.live} />
@@ -1008,6 +993,82 @@
 		{/if}
 	</div>
 {/if}
+
+<!-- A thinking block: its head line (how long it thought), its latest words
+     while it streams, its text opened. -->
+{#snippet reasoningRow(m: Extract<Msg, { kind: 'reasoning' }>)}
+	<div class="reason" class:open={!m.collapsed}>
+		<div class="reason-row">
+		<button class="reason-head" onclick={() => (m.collapsed = !m.collapsed)}>
+			<span>
+				{#if m.durationMs !== undefined}
+					{t('chat.reasoningFor', { t: fmtDur(Math.max(1000, m.durationMs)) })}
+				{:else if m === streamingReasoning && m.startedAt !== undefined}
+					{t('chat.reasoningNow')} <CallTimer since={m.startedAt} />
+				{:else}
+					{t('chat.reasoning')}
+				{/if}
+				{#if m.interrupted}<span class="cut" title={t('chat.interruptedTitle')}>{t('chat.interrupted')}</span>{/if}
+			</span>
+			<span class="rchev"><CaretRightIcon size={13} /></span>
+		</button>
+		{#if m.collapsed && m === streamingReasoning}
+			<!-- Folded while it streams: its latest words in one line,
+			     the earliest sliding out to the left. -->
+			<button class="reason-line" onclick={() => (m.collapsed = false)} aria-label={t('chat.reasoningExpand')}
+				><span>{reasoningTail(m)}</span></button
+			>
+		{/if}
+		</div>
+		<Collapse open={!m.collapsed}>
+			<div class="reason-body">
+				<!-- Plain text while it streams (no per-frame Markdown), in
+				     blocks written once; Markdown once finished, taking
+				     over from the plain text a few chunks each frame. -->
+				<ReasoningBody source={shownText(m)} text={m.text} live={m === streamingReasoning} onFile={(href) => onFile?.(href, m.text)} />
+			</div>
+		</Collapse>
+	</div>
+{/snippet}
+
+<!-- A run of tool calls as one line (design.md, "Workbench canvas"): what it
+     did — "已编辑 2 个文件 · a.ts, b.ts" for edits only, else the count and
+     its latest call — its failures, its line counts (rolling while an edit
+     streams) and its time; opened, the thinking and the calls in order. -->
+{#snippet toolRun(m: Msg, run: Msg[])}
+	{@const g = groupInfo(run)}
+	{@const open = openGroups.has(m)}
+	<button class="tgroup" class:open onclick={() => (open ? openGroups.delete(m) : openGroups.add(m))} aria-expanded={open}>
+		<span class="tg-what">
+			{#if g.edited}
+				<span class="tg-count">{t('chat.editedFiles', { n: g.edited.length })}</span>
+				<span class="tg-latest tg-names">{g.edited.join(', ')}</span>
+			{:else}
+				<span class="tg-count">{t('chat.toolGroup', { n: g.tools.length })}</span>
+				{#if g.latest && !open}
+					<span class="tg-latest">
+						<g.latest.Icon size={13} />
+						<span class="tg-verb">{g.latest.verb}</span>
+						{#if g.latest.target}<span class="tg-target">{g.latest.target}</span>{/if}
+					</span>
+				{/if}
+			{/if}
+			{#if g.running}<RunLight />{/if}
+		</span>
+		{#if g.failed}<span class="tg-fail">{t('chat.toolGroupFailed', { n: g.failed })}</span>{/if}
+		{#if g.stat}<DiffStat add={g.stat.add} del={g.stat.del} live={g.running} />{/if}
+		<ToolTime spans={g.tools} />
+		<span class="rchev"><CaretRightIcon size={13} /></span>
+	</button>
+	{#if open}
+		<div class="tg-list">
+			{#each run as x (x)}
+				{#if x.kind === 'tool'}<ToolCard name={x.name} output={x.output} running={x.running} isError={x.isError} subagent={x.subagent} trace={traceOf?.(x) ?? undefined} reveal={reveal(x)} startedAt={x.startedAt} endedAt={x.endedAt} onFile={onFile ? (href) => onFile(href) : undefined} />
+				{:else if x.kind === 'reasoning'}{@render reasoningRow(x)}{/if}
+			{/each}
+		</div>
+	{/if}
+{/snippet}
 
 <style>
 	.cite {
@@ -1558,8 +1619,11 @@
 	.fold .del {
 		color: var(--err);
 	}
-	/* A run of tool calls: one summary line (--fs-xs --dim, no card). */
+	/* A run of tool calls: one summary line (--fs-xs --dim, no card): what
+	   it did (the running light over it while a call runs), failures, line
+	   counts, time. */
 	.tgroup {
+		--row-bg: var(--bg);
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
@@ -1580,8 +1644,23 @@
 			background var(--t-fast) var(--ease-base);
 	}
 	.tgroup:hover {
+		--row-bg: color-mix(in srgb, var(--text) 6%, var(--bg));
 		background: var(--surface2);
 		color: var(--text);
+	}
+	.tg-what {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		overflow: hidden;
+	}
+	.tg-names {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
 	}
 	.tg-count,
 	.tg-fail {

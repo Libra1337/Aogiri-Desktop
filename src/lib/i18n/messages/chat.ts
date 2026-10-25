@@ -334,6 +334,7 @@ const chat = {
 		toolRunning: 'running',
 		toolError: 'error',
 		toolGroup: '调用了 {n} 个工具',
+		editedFiles: '已编辑 {n} 个文件',
 		fold: { worked: '处理了 {t}', steps: '{n} 个步骤', files: '改了 {n} 个文件' },
 		imageToken: '图片 #{n}',
 		toolGroupFailed: '{n} 个失败',
@@ -366,10 +367,13 @@ const chat = {
 			showMessage: '展开消息',
 			sourceGone: '找不到这个对话，它可能已被删除。'
 		},
+		appTools: { present: '展示了交付物', propose: '提议了定时任务' },
 		sessionTools: {
 			list: '列出对话',
 			read: '读取对话',
 			send: '发给对话',
+			start: '新开对话',
+			wait: '等对话回复',
 			count: '{n} 个',
 			sendTo: '发给「{title}」',
 			sendToUnknown: '发给另一个对话',
@@ -958,6 +962,7 @@ const chat = {
 		toolRunning: 'running',
 		toolError: 'error',
 		toolGroup: 'Used {n} tools',
+		editedFiles: 'Edited {n} files',
 		fold: { worked: 'Worked for {t}', steps: '{n} steps', files: '{n} files changed' },
 		imageToken: 'Image #{n}',
 		toolGroupFailed: '{n} failed',
@@ -990,10 +995,13 @@ const chat = {
 			showMessage: 'Show the message',
 			sourceGone: 'That conversation is gone. It may have been deleted.'
 		},
+		appTools: { present: 'Presented deliverables', propose: 'Proposed a scheduled task' },
 		sessionTools: {
 			list: 'Listed conversations',
 			read: 'Read conversation',
 			send: 'Messaged conversation',
+			start: 'Started conversation',
+			wait: 'Waited for conversation',
 			count: '{n} found',
 			sendTo: 'To “{title}”',
 			sendToUnknown: 'To another conversation',

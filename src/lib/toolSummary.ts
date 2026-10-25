@@ -17,11 +17,15 @@ import WrenchIcon from 'phosphor-svelte/lib/WrenchIcon';
 import ImageIcon from 'phosphor-svelte/lib/ImageIcon';
 import ChatsIcon from 'phosphor-svelte/lib/ChatsIcon';
 import PaperPlaneTiltIcon from 'phosphor-svelte/lib/PaperPlaneTiltIcon';
+import ChatCircleDotsIcon from 'phosphor-svelte/lib/ChatCircleDotsIcon';
+import PackageIcon from 'phosphor-svelte/lib/PackageIcon';
+import CalendarPlusIcon from 'phosphor-svelte/lib/CalendarPlusIcon';
 import { t } from '$lib/i18n';
 
 const VERBS: Record<string, string> = {
 	read: 'Read',
 	write: 'Wrote',
+	edit: 'Edited',
 	str_replace: 'Edited',
 	hashline_edit: 'Edited',
 	apply_patch: 'Edited',
@@ -55,6 +59,7 @@ const ICONS: Record<string, typeof WrenchIcon> = {
 	write_stdin: TerminalWindowIcon,
 	read: FileTextIcon,
 	write: FilePlusIcon,
+	edit: PencilSimpleIcon,
 	str_replace: PencilSimpleIcon,
 	hashline_edit: PencilSimpleIcon,
 	apply_patch: PencilSimpleIcon,
@@ -76,7 +81,11 @@ const ICONS: Record<string, typeof WrenchIcon> = {
 	update_plan: ListChecksIcon,
 	list_sessions: ChatsIcon,
 	read_session: ChatsIcon,
-	send_to_session: PaperPlaneTiltIcon
+	send_to_session: PaperPlaneTiltIcon,
+	start_session: ChatCircleDotsIcon,
+	wait_session: ChatsIcon,
+	present_files: PackageIcon,
+	propose_schedule: CalendarPlusIcon
 };
 
 // The tools that reach other conversations say what they did in the
@@ -85,7 +94,11 @@ const ICONS: Record<string, typeof WrenchIcon> = {
 const LOCAL_VERBS: Record<string, string> = {
 	list_sessions: 'chat.sessionTools.list',
 	read_session: 'chat.sessionTools.read',
-	send_to_session: 'chat.sessionTools.send'
+	send_to_session: 'chat.sessionTools.send',
+	start_session: 'chat.sessionTools.start',
+	wait_session: 'chat.sessionTools.wait',
+	present_files: 'chat.appTools.present',
+	propose_schedule: 'chat.appTools.propose'
 };
 
 export const toolVerb = (name: string) => (LOCAL_VERBS[name] ? t(LOCAL_VERBS[name]) : (VERBS[name] ?? name));
@@ -124,6 +137,8 @@ export function toolTarget(name: string, parsed: Record<string, unknown> | null)
 	}
 	if (name === 'read_session' || name === 'send_to_session')
 		return str(parsed.to_title) || str(parsed.title) || str(parsed.session_title) || str(parsed.to) || str(parsed.session);
+	if (name === 'start_session') return str(parsed.title) || str(parsed.session);
+	if (name === 'wait_session') return str(parsed.title) || str(parsed.session);
 	if (name === 'list_sessions') {
 		const list = Array.isArray(parsed) ? parsed : parsed.sessions;
 		return Array.isArray(list) ? t('chat.sessionTools.count', { n: list.length }) : '';
@@ -132,4 +147,89 @@ export function toolTarget(name: string, parsed: Record<string, unknown> | null)
 	if (name === 'web_search') return str(parsed.query);
 	if (name === 'generate_image' && Array.isArray(parsed.paths)) return parsed.paths.map(String).join(', ');
 	return '';
+}
+
+/** What a call does, for a run's line (MessageList). */
+export type ToolKind = 'command' | 'edit' | 'read' | 'search' | 'web' | 'other';
+const KINDS: Record<string, ToolKind> = {
+	bash: 'command',
+	exec_command: 'command',
+	write: 'edit',
+	edit: 'edit',
+	str_replace: 'edit',
+	hashline_edit: 'edit',
+	apply_patch: 'edit',
+	read: 'read',
+	outline: 'read',
+	ls: 'search',
+	ripgrep: 'search',
+	web_search: 'web',
+	web_fetch: 'web'
+};
+// ACP agents name a call by its title ("Edit a.rs"); what it does is the
+// ACP kind the daemon puts in its card.
+const ACP_KINDS: Record<string, ToolKind> = {
+	execute: 'command',
+	edit: 'edit',
+	delete: 'edit',
+	move: 'edit',
+	read: 'read',
+	search: 'search',
+	fetch: 'web'
+};
+export function toolKind(name: string, parsed: Record<string, unknown> | null): ToolKind {
+	return KINDS[name] ?? ACP_KINDS[str(parsed?.kind)] ?? 'other';
+}
+
+/** A call that edits or writes files. */
+export const isEdit = (name: string, parsed: Record<string, unknown> | null) => toolKind(name, parsed) === 'edit';
+
+/** The files an edit call names (its `path`, then `paths`), once each. */
+export function editedPaths(parsed: Record<string, unknown> | null): string[] {
+	if (!parsed) return [];
+	const all = [parsed.path, ...(Array.isArray(parsed.paths) ? parsed.paths : [])].filter((p): p is string => typeof p === 'string' && !!p);
+	return [...new Set(all)];
+}
+
+/** Lines an edit added and removed: from its diff, or the counts an edit
+ *  still streaming reports (`add`, `del`: Claude Code's long Write as its
+ *  input arrives); null when it says neither. */
+export function diffStat(parsed: Record<string, unknown> | null): { add: number; del: number } | null {
+	const diff = str(parsed?.diff);
+	if (!diff) {
+		const add = parsed?.add;
+		const del = parsed?.del;
+		return typeof add === 'number' && typeof del === 'number' ? { add, del } : null;
+	}
+	let add = 0;
+	let del = 0;
+	for (const line of diff.split('\n')) {
+		if (line.startsWith('+') && !line.startsWith('+++')) add++;
+		else if (line.startsWith('-') && !line.startsWith('---')) del++;
+	}
+	return { add, del };
+}
+
+/** A call failed: the engine said so, or its output carries an error. */
+export const toolFailed = (m: { isError: boolean; output: string }, parsed = parseToolOutput(m.output)) => m.isError || typeof parsed?.error === 'string';
+
+/** The time a run of calls took: the union of their spans, so calls that
+ *  ran side by side count once and the thinking between them not at all.
+ *  Null when none of them was timed (a reloaded transcript). */
+export function runTime(spans: readonly { startedAt?: number; endedAt?: number; running: boolean }[], now: number): number | null {
+	const list = spans
+		.filter((x) => x.startedAt)
+		.map((x) => [x.startedAt!, x.endedAt ?? (x.running ? Math.max(now, x.startedAt!) : x.startedAt!)] as const)
+		.sort((a, b) => a[0] - b[0]);
+	if (!list.length) return null;
+	let total = 0;
+	let [from, to] = list[0]!;
+	for (const [a, b] of list.slice(1)) {
+		if (a > to) {
+			total += to - from;
+			from = a;
+		}
+		to = Math.max(to, b);
+	}
+	return total + to - from;
 }

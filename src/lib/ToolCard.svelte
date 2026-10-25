@@ -5,8 +5,11 @@
 	import Collapse from '$lib/ui/Collapse.svelte';
 	import { t } from '$lib/i18n';
 	import Notice from '$lib/ui/Notice.svelte';
-	import { parseToolOutput, toolIcon, toolTarget, toolVerb, unwrapShell } from '$lib/toolSummary';
+	import { diffStat, isEdit, parseToolOutput, toolIcon, toolTarget, toolVerb, unwrapShell } from '$lib/toolSummary';
 	import { readHref } from '$lib/fileRefs';
+	import RunLight from '$lib/ui/RunLight.svelte';
+	import DiffStat from '$lib/DiffStat.svelte';
+	import ToolTime from '$lib/ToolTime.svelte';
 
 	let {
 		name,
@@ -19,6 +22,8 @@
 		badge,
 		sections,
 		reveal = 0,
+		startedAt,
+		endedAt,
 		onFile
 	}: {
 		name: string;
@@ -40,22 +45,26 @@
 		/** Counts the requests to show this call's details (the work status
 		 *  line's "›"): each new one opens the card. */
 		reveal?: number;
+		/** When the call started and returned (live calls only): its row
+		 *  shows how long it ran. */
+		startedAt?: number;
+		endedAt?: number;
 		/** Opens a file in the app (a path, with `#L<line>`): a Read row opens
 		 *  the file it read, at the line the reading started. */
 		onFile?: (href: string) => void;
 	} = $props();
 
-	// Auto-expand while the tool runs, auto-collapse once it finishes; a
-	// failed call stays open (design.md, "Workbench canvas"). Starts in that
-	// state (a card remounting — windowed back in, its group reopened — must
-	// not flash open) and follows only flips of `running`, so a manual toggle
-	// on a finished card still sticks.
-	let collapsed = $state(untrack(() => !running && !isError));
+	// Folded while it runs (a light passes over its name instead), so the
+	// conversation does not grow and shrink with each call's output; a call
+	// that fails opens by itself (design.md, "Workbench canvas"). A card
+	// remounting (windowed back in, its run reopened) starts as it should
+	// be, and only the call's end changes it, so a reader's toggle sticks.
+	let collapsed = $state(untrack(() => !isError));
 	let wasRunning = untrack(() => running);
 	$effect(() => {
 		if (running === wasRunning) return;
 		wasRunning = running;
-		collapsed = !running && !untrack(() => isError);
+		if (!running && untrack(() => isError || typeof parseToolOutput(output)?.error === 'string')) collapsed = false;
 	});
 	$effect(() => {
 		if (reveal) collapsed = false;
@@ -69,6 +78,8 @@
 
 	const kind = $derived(s(parsed?.kind));
 	const errorText = $derived(s(parsed?.error));
+	// Lines an edit added and removed (rolling while its input streams).
+	const stat = $derived(isEdit(name, parsed) && !isError && !errorText ? diffStat(parsed) : null);
 	// Readable body for tools we don't render specially (Task, MCP tools, unknown):
 	// prefer a few common text fields, else a pretty-printed object.
 	const fallbackText = $derived.by(() => {
@@ -168,8 +179,10 @@
 		{#if heading}
 			<span class="verb heading">{heading}</span>
 		{:else}
-			<span class="verb">{verb}</span>
-			{#if target}<span class="target">{target}</span>{/if}
+			<!-- Running: a light passes over what it does (ui/shimmer.ts). -->
+			<span class="what"
+				><span class="verb">{verb}</span>{#if target}<span class="target">{target}</span>{/if}{#if running}<RunLight />{/if}</span
+			>
 		{/if}
 		{#if badge}<span class="badge" class:ok={badge.tone === 'ok'}>{badge.label}</span>{/if}
 		{#if subagent}<span class="by" title={t('chat.bySubagent', { name: subagent })}>{subagent}</span>{/if}
@@ -182,6 +195,8 @@
 		{#if isError || errorText}
 			<span class="fail">{t('chat.toolError')}</span>
 		{/if}
+		{#if stat}<DiffStat add={stat.add} del={stat.del} live={running} />{/if}
+		<ToolTime spans={[{ startedAt, endedAt, running }]} />
 		{#if running}
 			<CircleNotchIcon size={12} class="spin" />
 		{:else if !isRead}
@@ -296,6 +311,23 @@
 	}
 	.verb {
 		flex-shrink: 0;
+	}
+	/* The verb and target: one line that ellipsizes the target. */
+	.what {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		overflow: hidden;
+	}
+	/* A running call: the running light over its words (ui/RunLight.svelte),
+	   its veil following the row's hover fill. */
+	.head {
+		--row-bg: var(--bg);
+	}
+	.head:hover:not(.static) {
+		--row-bg: color-mix(in srgb, var(--text) 6%, var(--bg));
 	}
 	.target {
 		font-family: var(--font-mono);

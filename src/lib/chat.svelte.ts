@@ -174,8 +174,10 @@ export type Msg =
 			 *  same output fills it in again. */
 			released?: string;
 			/** When the call started here (live calls only): the work status
-			 *  line counts the step from it. */
+			 *  line counts the step from it, and its row shows how long it ran. */
 			startedAt?: number;
+			/** When its output came (or the turn ended without it). */
+			endedAt?: number;
 			/** What the call acts on, as the engine named it while it ran:
 			 *  lynshen's first update for a command, `started: <command>`,
 			 *  which its later updates (the output so far) replace. */
@@ -649,14 +651,16 @@ function replayMessage(it: Record<string, unknown>): Msg | null {
 		return { kind: 'user', text: str(it.content), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) };
 	}
 	if (role === 'assistant') return { kind: 'assistant', text: str(it.content) };
+	// A replayed call has no times; it failed when the replay says so
+	// (`is_error`), and it is linked to its other events by `call_id`.
 	if (role === 'tool')
 		return {
 			kind: 'tool',
-			callId: '',
+			callId: str(it.call_id),
 			name: str(it.name),
 			output: boundedOutput(str(it.output), str(it.name)),
 			running: false,
-			isError: false
+			isError: it.is_error === true
 		};
 	if (role === 'branch') return { kind: 'system', text: `branch: ${str(it.label)}` };
 	if (role === 'compaction') return { kind: 'compaction', state: 'done', before: 0, written: 0, since: 0, summary: str(it.summary) };
@@ -1698,6 +1702,7 @@ export class ChatState {
 			if (m.kind === 'tool' && m.running && !(m.subagent && this.#agentRunning(m.subagent))) {
 				m.running = false;
 				m.cut = true;
+				m.endedAt ??= Date.now();
 			}
 		}
 	}
@@ -1715,7 +1720,11 @@ export class ChatState {
 
 	/** A subagent ended: its calls still spinning are done too. */
 	#finishAgentTools(label: string) {
-		for (const m of this.messages) if (m.kind === 'tool' && m.running && m.subagent === label) m.running = false;
+		for (const m of this.messages)
+			if (m.kind === 'tool' && m.running && m.subagent === label) {
+				m.running = false;
+				m.endedAt ??= Date.now();
+			}
 	}
 
 	#tool(callId: string): Extract<Msg, { kind: 'tool' }> | undefined {
@@ -2122,7 +2131,7 @@ export class ChatState {
 				const t = this.#tool(str(ev.call_id));
 				if (t) {
 					t.output = boundedOutput(str(ev.output), t.name);
-					if (SUBAGENT_CALLS.has(t.name) || t.name === 'send_to_session') t.args = t.output;
+					if (SUBAGENT_CALLS.has(t.name) || t.name === 'send_to_session' || t.name === 'start_session') t.args = t.output;
 					const started = /^started: (.+)/.exec(t.output)?.[1]?.trim();
 					if (started && !t.target) t.target = started;
 				}
@@ -2141,6 +2150,7 @@ export class ChatState {
 					t.output = boundedOutput(str(ev.output), t.name);
 					t.running = false;
 					t.isError = ev.is_error === true;
+					t.endedAt = Date.now();
 					// Its output came after all: the engine kept it.
 					if (t.cut) delete t.cut;
 				}

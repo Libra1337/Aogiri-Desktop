@@ -476,6 +476,28 @@ describe('ChatState.handle', () => {
 		expect(c.modelCatalogEffort).toBe('high');
 	});
 
+	it('times each tool call, and keeps a replayed call\'s failure and id', () => {
+		const c = new ChatState();
+		c.handle({ type: 'user_message', content: 'go' });
+		c.handle({ type: 'status', message: 'streaming' });
+		c.handle({ type: 'tool_start', call_id: 'a', name: 'bash' });
+		const call = c.messages.find((m) => m.kind === 'tool')!;
+		expect(call.kind === 'tool' && call.startedAt).toBeGreaterThan(0);
+		expect(call.kind === 'tool' && call.endedAt).toBeUndefined();
+		c.handle({ type: 'tool_output', call_id: 'a', name: 'bash', output: '{}' });
+		expect(call.kind === 'tool' && call.endedAt).toBeGreaterThanOrEqual(call.kind === 'tool' ? call.startedAt! : 0);
+		// A call whose output never came ends with the turn.
+		c.handle({ type: 'tool_start', call_id: 'b', name: 'read' });
+		c.handle({ type: 'status', message: 'ready' });
+		const lost = c.messages.findLast((m) => m.kind === 'tool');
+		expect(lost?.kind === 'tool' && lost.endedAt).toBeGreaterThan(0);
+		const r = new ChatState();
+		r.handle({ type: 'transcript', items: [{ role: 'user', content: 'go' }, { role: 'tool', name: 'bash', output: '{}', is_error: true, call_id: 'x1' }] });
+		const replayed = r.messages.find((m) => m.kind === 'tool');
+		expect(replayed).toMatchObject({ isError: true, callId: 'x1', running: false });
+		expect(replayed?.kind === 'tool' && replayed.startedAt).toBeUndefined();
+	});
+
 	it('collects meta notices into statusLog, keeping them out of the bubble stream', () => {
 		const c = new ChatState();
 		c.handle({ type: 'user_message', content: 'hi' });

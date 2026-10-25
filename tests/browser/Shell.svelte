@@ -55,7 +55,9 @@
 	//   &work=<step>            a third turn at work, on one step: think, write,
 	//                           bash (lynshen: `started: <command>`), read or
 	//                           edit (a card naming the file, as claude's), mcp,
-	//                           a run of calls (group), compact
+	//                           a run of calls (group), compact, a run of edits
+	//                           with the last still streaming (edits;
+	//                           `window.__grow(n)` its line count)
 	//   &textOnly               the engine reports a model that takes no images
 	//                           and does not think (`window.__chat` attaches files)
 	//   &styles                 the engine reports the reply style: the "+"
@@ -465,6 +467,20 @@
 			tool('w2', 'bash', 'started: pnpm vitest run src/lib/cache.test.ts');
 			feed({ type: 'tool_update', call_id: 'w2', name: 'bash', output: 'running 2.0s\nstdout:\n ✓ cache.test.ts (12 tests)' });
 		} else if (work === 'compact') session.chat.handle({ type: 'compaction_start' } as never);
+		else if (work === 'edits') {
+			// A run of edits: thinking, two edits done, a third still streaming
+			// its input (Claude Code's Write reports its counts as they grow).
+			const at = (p: string) => `/Users/me/code/lynshen-desktop/${p}`;
+			const diff = (p: string, add: number, del: number) => [`--- a/${p}`, `+++ b/${p}`, '@@ -1 +1 @@', ...Array.from({ length: del }, (_, i) => `-old ${i}`), ...Array.from({ length: add }, (_, i) => `+new ${i}`)].join('\n');
+			feed({ type: 'reasoning_delta', delta: '缓存键要带上会话 ID，先改 cache.ts，再改调用方。' });
+			tool('e1', 'str_replace');
+			feed({ type: 'tool_output', call_id: 'e1', name: 'str_replace', output: JSON.stringify({ path: at('src/lib/cache.ts'), diff: diff('src/lib/cache.ts', 30, 5) }) });
+			feed({ type: 'reasoning_delta', delta: '调用方只有 session.svelte.ts 一处。' });
+			tool('e2', 'str_replace');
+			feed({ type: 'tool_output', call_id: 'e2', name: 'str_replace', output: JSON.stringify({ path: at('src/lib/session.svelte.ts'), diff: diff('src/lib/session.svelte.ts', 10, 2) }) });
+			tool('e3', 'write', JSON.stringify({ path: at('src/lib/cache.test.ts'), paths: [at('src/lib/cache.test.ts')], add: 12, del: 0 }));
+			Object.assign(window, { __grow: (add: number) => feed({ type: 'tool_update', call_id: 'e3', name: 'write', output: JSON.stringify({ path: at('src/lib/cache.test.ts'), paths: [at('src/lib/cache.test.ts')], add, del: 0 }) }) });
+		}
 	}
 	const opened: string[] = [];
 	// What the conversation sends its engine: no engine runs here, so the
