@@ -1623,11 +1623,29 @@ export class ChatState {
 	 *  engine kept no output for it. */
 	#finishStuckTools() {
 		for (const m of this.messages) {
-			if (m.kind === 'tool' && m.running) {
+			// A background subagent's calls go on after the turn: its own
+			// results, or its end, finish them.
+			if (m.kind === 'tool' && m.running && !(m.subagent && this.#agentRunning(m.subagent))) {
 				m.running = false;
 				m.cut = true;
 			}
 		}
+	}
+
+	/** Whether the subagent named `label` (its calls' `subagent`) still runs,
+	 *  by its lifecycle or the engine's run list. */
+	#agentRunning(label: string): boolean {
+		const live = (state: string) => ['running', 'queued'].includes(runState(state));
+		return (
+			Object.values(this.subagents).some((a) => a.label === label && !a.endedAt) ||
+			this.agentRuns.agents.some((a) => a.label === label && live(a.state)) ||
+			this.agentRuns.workflows.some((w) => w.agents.some((a) => a.label === label && live(a.state)))
+		);
+	}
+
+	/** A subagent ended: its calls still spinning are done too. */
+	#finishAgentTools(label: string) {
+		for (const m of this.messages) if (m.kind === 'tool' && m.running && m.subagent === label) m.running = false;
 	}
 
 	#tool(callId: string): Extract<Msg, { kind: 'tool' }> | undefined {
@@ -2421,6 +2439,11 @@ export class ChatState {
 				const status = str(ev.status) === 'message' ? (prev?.status ?? 'running') : str(ev.status);
 				const now = Date.now();
 				const ended = FINAL_AGENT.includes(status);
+				// The end of a subagent this conversation never saw start (one
+				// from before the engine process started), with nothing to say:
+				// no row. One with a label or a message (the agent team's failure)
+				// still shows.
+				if (ended && !prev && !str(ev.label) && !str(ev.message)) break;
 				this.subagents[path] = {
 					status,
 					message: str(ev.message) || (str(ev.status) === 'message' ? (prev?.message ?? '') : ''),
@@ -2434,6 +2457,8 @@ export class ChatState {
 				};
 				if (ended) delete this.stopRequested[path];
 				if (ended && !prev?.endedAt && this.#turnStart === null) this.#endedIdle.add(path);
+				const label = this.subagents[path]!.label;
+				if (ended && label) this.#finishAgentTools(label);
 				this.#noteTeam(path, ev);
 				this.#noteOutcome(path, status, str(ev.message));
 				break;

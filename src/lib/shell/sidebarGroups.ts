@@ -20,7 +20,8 @@ export type ListOrder = 'state' | 'time';
 
 export function stateGroup(status: SessionStatus): StateGroup {
 	if (status?.kind === 'input' || status?.kind === 'failed') return 'waiting';
-	if (status?.kind === 'running') return 'working';
+	// Background tasks still at work: 进行中 too, without the running sweep.
+	if (status?.kind === 'running' || status?.kind === 'background') return 'working';
 	return 'done';
 }
 

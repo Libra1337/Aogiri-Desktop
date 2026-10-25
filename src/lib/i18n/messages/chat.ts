@@ -149,7 +149,8 @@ const chat = {
 			truncated: '只显示最后 8 KB',
 			noOutput: '暂无输出',
 			refresh: '刷新',
-			list: '后台任务'
+			list: '后台任务',
+			commands: '后台命令'
 		},
 		btw: { label: '顺便问', dismiss: '关闭', pending: '回答中', empty: '没有回答' },
 		modelFallback: '模型已从 {from} 切换到 {to}（{reason}）',
@@ -754,7 +755,8 @@ const chat = {
 			truncated: 'Showing the last 8 KB',
 			noOutput: 'No output yet',
 			refresh: 'Refresh',
-			list: 'Background tasks'
+			list: 'Background tasks',
+			commands: 'Background commands'
 		},
 		btw: { label: 'By the way', dismiss: 'Dismiss', pending: 'Answering', empty: 'No answer' },
 		modelFallback: 'Switched from {from} to {to} ({reason})',

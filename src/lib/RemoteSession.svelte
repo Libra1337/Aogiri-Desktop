@@ -32,7 +32,7 @@
 	import { fileName, sentLabel, splitAttachments, withFiles } from '$lib/attachments';
 	import { loadSession, saveSession } from '$lib/remote/cache';
 	import ModelMenu from '$lib/remote/ModelMenu.svelte';
-	import TaskStrip from '$lib/TaskStrip.svelte';
+	import SideAnswers from '$lib/SideAnswers.svelte';
 	import { joinPath, parseFileHref } from '$lib/fileRefs';
 	import AgentRunsPanel from '$lib/AgentRunsPanel.svelte';
 	import TreeStructureIcon from 'phosphor-svelte/lib/TreeStructureIcon';
@@ -66,7 +66,8 @@
 	import StatusStrip from '$lib/composer/StatusStrip.svelte';
 	import ContextIndicator from '$lib/composer/ContextIndicator.svelte';
 	import { planQuota } from '$lib/composer/quota';
-	import { agentRows, handedOffWork, type AgentRow } from '$lib/agentProgress';
+	import { agentRows, handedOffWork, runningTasks, type AgentRow } from '$lib/agentProgress';
+	import StackSimpleIcon from 'phosphor-svelte/lib/StackSimpleIcon';
 	import { parseToolOutput, toolTarget, toolVerb } from '$lib/toolSummary';
 	import { costText } from '$lib/sessionCost';
 	import { prefs } from '$lib/prefs.svelte';
@@ -722,6 +723,8 @@
 	const allAgents = $derived(agentRows({ runs: chat.agentRuns, subagents: chat.subagents, lastTool, failed: chat.failedAgents }));
 	// The turn goes on while work it handed off runs (its work stays unfolded).
 	const turnOpen = $derived(chat.busy || handedOffWork(allAgents, chat.bgTasks));
+	// Background tasks its turn left going: the header's still mark.
+	const bgCount = $derived(chat.busy ? 0 : runningTasks(chat));
 	const turnAgents = $derived(
 		agentRows({ runs: chat.agentRuns, subagents: chat.subagents, lastTool, failed: chat.failedAgents, since: chat.turnStartedAt || Number.MAX_SAFE_INTEGER })
 	);
@@ -835,7 +838,7 @@
 			<span class="title">{title}</span>
 			{#if hostName}<span class="host"><DesktopIcon size={11} /><span>{hostName}</span></span>{/if}
 		</span>
-		{#if chat.busy}<span class="busy pulse"></span>{/if}
+		{#if chat.busy}<span class="busy pulse"></span>{:else if bgCount}<span class="bgwork" title={t('shell.status.background', { n: bgCount })} role="img" aria-label={t('shell.status.background', { n: bgCount })}><StackSimpleIcon size={14} /></span>{/if}
 		{#if bcaps.agentTrace && connected}<button class="back" onclick={() => openTrace(null)} aria-label={t('dock.agents.title')}><TreeStructureIcon size={18} /></button>{/if}
 		{#if onFiles}<button class="back" onclick={onFiles} aria-label={t('shell.remote.files')}><FilesIcon size={18} /></button>{/if}
 		{#if onChanges}<button class="back" onclick={onChanges} aria-label={t('shell.remote.changes')}><GitDiffIcon size={18} /></button>{/if}
@@ -847,16 +850,11 @@
 		rows={turnAgents}
 		onOpen={bcaps.agentTrace ? openAgent : undefined}
 		onStop={(id) => send({ op: 'stop_task', task_id: id })}
+		onOutput={(id) => send({ op: 'task_output', task_id: id })}
 		bind:sheetHeight
 	/>
 
-	<TaskStrip
-		{chat}
-		onStop={(id) => send({ op: 'stop_task', task_id: id })}
-		onOutput={(id) => send({ op: 'task_output', task_id: id })}
-		onTrace={bcaps.agentTrace ? openTrace : undefined}
-		agents={false}
-	/>
+	<SideAnswers {chat} />
 	{#if traceOpen}
 		<!-- The agent trace, full screen over the session. -->
 		<div class="trace-sheet" role="dialog" aria-label={t('dock.agents.title')}>
@@ -1247,6 +1245,12 @@
 		flex-shrink: 0;
 		border-radius: 50%;
 		background: var(--accent-bright);
+	}
+	/* Background tasks its turn left going: a still mark, not the busy dot. */
+	.bgwork {
+		display: inline-flex;
+		flex-shrink: 0;
+		color: var(--dim);
 	}
 	/* The conversation column, as on the desktop: centered, 880px at most. */
 	.scroll {

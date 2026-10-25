@@ -89,12 +89,12 @@
 	import { collapse } from '$lib/ui/motion';
 	import RateLimitBanner from '$lib/RateLimitBanner.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import TaskStrip from '$lib/TaskStrip.svelte';
+	import SideAnswers from '$lib/SideAnswers.svelte';
 	import ProgressCards from '$lib/agents/ProgressCards.svelte';
 	import { anyCard, cardsLayout, cardsShown } from '$lib/agents/progressCards';
 	import NewSessionPicker from '$lib/NewSessionPicker.svelte';
 	import { placeFor, subagentPages, type OpenHow } from '$lib/agents/subagentPages.svelte';
-	import { agentRows, handedOffWork, isLive, numstatTotals, planSummary, porcelainFiles, type AgentRow } from '$lib/agentProgress';
+	import { agentRows, backgroundCommands, handedOffWork, isLive, numstatTotals, planSummary, porcelainFiles, type AgentRow } from '$lib/agentProgress';
 	import { agentChanges } from '$lib/agents/agentChanges.svelte';
 	import { confirmStop } from '$lib/agents/confirmStop';
 	import { parseToolOutput, toolTarget, toolVerb } from '$lib/toolSummary';
@@ -719,7 +719,7 @@
 	// the composer and the cards above it move with the column.
 	const turnPlan = $derived(planSummary(chat.plan, chat.team));
 	const planFresh = $derived(chat.turnStartedAt > 0 && chat.planAt >= chat.turnStartedAt);
-	const cards = $derived(cardsShown(turnPlan, turnAgents, chat.busy, planFresh));
+	const cards = $derived(cardsShown(turnPlan, turnAgents, chat.busy, planFresh, backgroundCommands(chat.bgTasks, chat.subagents).length));
 	const cardsAt = $derived(wrapW > 0 && anyCard(cards) ? cardsLayout(wrapW, columnW, chatPad) : null);
 	const beside = $derived(!!cardsAt?.beside);
 	const chatW = $derived(beside ? cardsAt!.width : columnW);
@@ -1825,13 +1825,7 @@
 			<button class="owner-link" onclick={() => ((session.requirement = undefined), (session.requirementStart = undefined))}>{t('shell.requirement.unlink')}</button>
 		</div>
 	{/if}
-	<TaskStrip
-		{chat}
-		onStop={(id) => send({ op: 'stop_task', task_id: id })}
-		onOutput={(id) => send({ op: 'task_output', task_id: id })}
-		onTrace={traceable ? openTrace : undefined}
-		agents={false}
-	/>
+	<SideAnswers {chat} />
 
 	{#if showFind}
 		<FindBar
@@ -1858,6 +1852,7 @@
 		lane={cardsAt?.right ?? 0}
 		onOpen={traceable ? openAgent : undefined}
 		onStop={(id) => send({ op: 'stop_task', task_id: id })}
+		onOutput={(id) => send({ op: 'task_output', task_id: id })}
 		onStopAgent={teamOps ? stopAgent : undefined}
 		onOpenTeam={teamPanel ? openTeam : undefined}
 	/>

@@ -108,6 +108,8 @@ describe('which cards show', () => {
 		expect(cardsShown(plan, [], true, true)).toEqual({ plan: true, agents: false });
 		expect(cardsShown(empty, [row()], true, false)).toEqual({ plan: false, agents: true });
 		expect(anyCard(cardsShown(empty, [], true, false))).toBe(false);
+		// Background commands alone show the subagents card (they list in it).
+		expect(cardsShown(empty, [], false, false, 1)).toEqual({ plan: false, agents: true });
 	});
 
 	it('keeps them until the next turn, but not an old plan', () => {
@@ -313,7 +315,10 @@ describe('collapsing, per session', () => {
 describe('the subagents card', () => {
 	it('writes its title line: how many, how many run or failed', () => {
 		const rows = [row(), row({ id: 'b', state: 'queued' }), row({ id: 'c', state: 'failed' }), row({ id: 'd', state: 'done' })];
-		expect(agentsTitle(rows)).toEqual({ count: 4, running: 2, failed: 1 });
+		expect(agentsTitle(rows)).toEqual({ count: 4, commandsOnly: false, running: 2, failed: 1 });
+		// Background commands count as running, and head the card alone.
+		expect(agentsTitle(rows, 2)).toMatchObject({ count: 4, running: 4 });
+		expect(agentsTitle([], 2)).toEqual({ count: 2, commandsOnly: true, running: 2, failed: 0 });
 	});
 
 	it('gives each subagent one 6px dot tone', () => {

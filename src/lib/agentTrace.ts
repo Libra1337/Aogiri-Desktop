@@ -10,6 +10,8 @@ export type RunState = 'running' | 'done' | 'failed' | 'stopped' | 'queued';
 export function runState(state: string): RunState {
 	switch (state) {
 		case 'running':
+		// Claude Code's Workflow agents report `progress` while they run.
+		case 'progress':
 		case 'start':
 		case 'started':
 		case 'async_launched':

@@ -26,7 +26,7 @@
 	import { t } from '$lib/i18n';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { keepWheel } from '$lib/ui/keepWheel';
-	import type { AgentRow, PlanSummary } from '$lib/agentProgress';
+	import { backgroundCommands, type AgentRow, type PlanSummary } from '$lib/agentProgress';
 	import type { ChatState } from '$lib/chat.svelte';
 	import type { OpenHow } from './subagentPages.svelte';
 	import { agentsTitle, attentionKey, loadCards, opensItself, planCard, planTitle, saveCards, type CardsShown, type ReaderWait } from './progressCards';
@@ -47,9 +47,12 @@
 		onOpen,
 		onStop,
 		onStopAgent,
-		onOpenTeam
+		onOpenTeam,
+		onOutput
 	}: {
 		chat: ChatState;
+		/** Reads a background command's output (task_output). */
+		onOutput?: (id: string) => void;
 		/** Keys what the reader chose (collapsed cards). */
 		sessionId: string;
 		plan: PlanSummary;
@@ -93,7 +96,7 @@
 	});
 	const card = $derived(planCard({ plan, rows, busy: chat.busy, wait, error: chat.lastError ?? '' }));
 	const pTitle = $derived(planTitle(card));
-	const aTitle = $derived(agentsTitle(rows));
+	const aTitle = $derived(agentsTitle(rows, backgroundCommands(chat.bgTasks, chat.subagents).length));
 
 	// A step newly failing or waiting for the reader opens the plan card:
 	// expanded beside the column, its popover in a narrow leaf. Keyed by the
@@ -170,7 +173,7 @@
 	{#if kind === 'plan'}
 		<PlanBody {card} {rows} {onOpen} />
 	{:else}
-		<AgentsBody {chat} {rows} {onOpen} {onStop} {onStopAgent} onOpenTeam={beside ? undefined : onOpenTeam} />
+		<AgentsBody {chat} {rows} {onOpen} {onStop} {onStopAgent} {onOutput} onOpenTeam={beside ? undefined : onOpenTeam} />
 	{/if}
 {/snippet}
 

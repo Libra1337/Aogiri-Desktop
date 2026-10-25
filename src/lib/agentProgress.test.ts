@@ -3,6 +3,9 @@ import {
 	agentOfCall,
 	agentOutcome,
 	agentRows,
+	backgroundCommands,
+	handedOffWork,
+	runningTasks,
 	compactTokens,
 	mergeView,
 	porcelainFiles,
@@ -312,5 +315,27 @@ describe('agent team', () => {
 		});
 		expect(rows[0]).toMatchObject({ state: 'done', status: 'budget_exhausted', role: 'reviewer' });
 		expect(rows[0]!.team?.files).toEqual(['a.ts', 'b.ts']);
+	});
+});
+
+describe('background work', () => {
+	const runs = (agents: { id: string; state: string }[] = []) => ({ workflows: [] as WorkflowRun[], agents: agents.map((a) => run({ ...a, label: a.id, startedAt: 1 })) });
+	it('lists the background commands apart from subagents and Workflows', () => {
+		const tasks = [
+			{ id: 'b1', kind: 'local_bash' },
+			{ id: 'a1', kind: 'local_agent' },
+			{ id: 'w1', kind: 'local_workflow' },
+			{ id: 's1', kind: 'other' }
+		];
+		expect(backgroundCommands(tasks, { s1: {} }).map((x) => x.id)).toEqual(['b1']);
+	});
+	it('counts the subagents running or queued and the background commands', () => {
+		const c = { agentRuns: runs([{ id: 'x', state: 'running' }, { id: 'y', state: 'completed' }, { id: 'z', state: 'progress' }]), subagents: {}, bgTasks: [{ id: 'b1', kind: 'local_bash' }] };
+		expect(runningTasks(c)).toBe(3);
+	});
+	it('holds the turn open for handed-off agents, not for background commands', () => {
+		expect(handedOffWork([], [{ kind: 'local_bash' }])).toBe(false);
+		expect(handedOffWork([], [{ kind: 'local_agent' }])).toBe(true);
+		expect(handedOffWork([{ state: 'queued' }], [])).toBe(true);
 	});
 });

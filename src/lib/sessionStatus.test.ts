@@ -25,6 +25,24 @@ describe('sessionStatus', () => {
 		expect(sessionStatus(c)).toEqual({ kind: 'input', ask: 'approve', what: '/w/app' });
 	});
 
+	it('shows background work a turn left going as its own state, not as running', () => {
+		const c = new ChatState();
+		c.engineState = 'ready';
+		c.handle({ type: 'background_tasks', tasks: [{ id: 'b1', kind: 'local_bash', description: 'pnpm dev' }] });
+		expect(sessionStatus(c)).toEqual({ kind: 'background', n: 1 });
+		c.handle({ type: 'subagent_lifecycle', path: 't1', label: 'Scan auth', status: 'running' });
+		expect(sessionStatus(c)).toEqual({ kind: 'background', n: 2 });
+		// A turn at work wins; waiting on the reader wins over both.
+		c.engineState = 'streaming';
+		expect(sessionStatus(c)?.kind).toBe('running');
+		c.engineState = 'ready';
+		c.unseen = true;
+		expect(sessionStatus(c)?.kind).toBe('background');
+		c.handle({ type: 'background_tasks', tasks: [] });
+		c.handle({ type: 'subagent_lifecycle', path: 't1', status: 'completed' });
+		expect(sessionStatus(c)?.kind).toBe('unread');
+	});
+
 	it('clears a failure when the next turn starts', () => {
 		const c = new ChatState();
 		c.engineState = 'ready';

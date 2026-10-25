@@ -22,6 +22,7 @@
 	import { dotTone } from './progressCards';
 	import Elapsed from './Elapsed.svelte';
 	import StopAgent from './StopAgent.svelte';
+	import BackgroundCommands from './BackgroundCommands.svelte';
 
 	let {
 		chat,
@@ -29,10 +30,13 @@
 		onOpen,
 		onStop,
 		onStopAgent,
-		onOpenTeam
+		onOpenTeam,
+		onOutput
 	}: {
 		chat: ChatState;
 		rows: AgentRow[];
+		/** Reads a background command's output (task_output). */
+		onOutput?: (id: string) => void;
 		/** Shows a subagent's conversation. Absent: rows are not links. */
 		onOpen?: (row: AgentRow, how: OpenHow) => void;
 		/** Stops a subagent the engine runs as a background task (its id). */
@@ -149,6 +153,8 @@
 		</li>
 	{/each}
 </ul>
+<!-- Background commands the turns left going (a dev server, a watcher): under the subagents. -->
+<BackgroundCommands {chat} {onStop} {onOutput} heading={rows.length > 0} />
 
 <style>
 	.meta {
