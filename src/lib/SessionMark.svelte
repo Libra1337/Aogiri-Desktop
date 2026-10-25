@@ -7,11 +7,11 @@
 	// the navigator shows no mark for it and sweeps a light across the title
 	// instead (ui/shimmer.ts). A session whose turn ended while background
 	// tasks it started still run (subagents, Workflows, commands) is not at
-	// work: it shows a still stack of layers in --dim, everywhere. The words
+	// work: it shows a still mark of three circles in --dim, everywhere. The words
 	// go in the title (and, in the sidebar, on the line under the session's
 	// title).
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotchIcon';
-	import StackSimpleIcon from 'phosphor-svelte/lib/StackSimpleIcon';
+	import CirclesThreeIcon from 'phosphor-svelte/lib/CirclesThreeIcon';
 	import { t } from '$lib/i18n';
 	import type { SessionStatus } from '$lib/sessionStatus';
 	import { describeError, stripEngineHint } from '$lib/errorInfo';
@@ -33,7 +33,7 @@
 {:else if status?.kind === 'background'}
 	{@const label = t('shell.status.background', { n: status.n })}
 	<span class="mark running" class:compact title={label} role="img" aria-label={label}>
-		<StackSimpleIcon size={compact ? 12 : 14} />
+		<CirclesThreeIcon size={compact ? 12 : 14} />
 	</span>
 {:else if status?.kind === 'unread'}
 	<span class="dot unread" class:compact title={t('shell.unread')} role="img" aria-label={t('shell.unread')}></span>

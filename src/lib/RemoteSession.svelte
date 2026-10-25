@@ -68,7 +68,7 @@
 	import ContextIndicator from '$lib/composer/ContextIndicator.svelte';
 	import { planQuota } from '$lib/composer/quota';
 	import { agentRows, handedOffWork, runningTasks, type AgentRow } from '$lib/agentProgress';
-	import StackSimpleIcon from 'phosphor-svelte/lib/StackSimpleIcon';
+	import CirclesThreeIcon from 'phosphor-svelte/lib/CirclesThreeIcon';
 	import { parseToolOutput, toolTarget, toolVerb } from '$lib/toolSummary';
 	import { costText } from '$lib/sessionCost';
 	import { prefs } from '$lib/prefs.svelte';
@@ -839,7 +839,7 @@
 			<span class="title">{title}</span>
 			{#if hostName}<span class="host"><DesktopIcon size={11} /><span>{hostName}</span></span>{/if}
 		</span>
-		{#if chat.busy}<span class="busy pulse"></span>{:else if bgCount}<span class="bgwork" title={t('shell.status.background', { n: bgCount })} role="img" aria-label={t('shell.status.background', { n: bgCount })}><StackSimpleIcon size={14} /></span>{/if}
+		{#if chat.busy}<span class="busy pulse"></span>{:else if bgCount}<span class="bgwork" title={t('shell.status.background', { n: bgCount })} role="img" aria-label={t('shell.status.background', { n: bgCount })}><CirclesThreeIcon size={14} /></span>{/if}
 		{#if bcaps.agentTrace && connected}<button class="back" onclick={() => openTrace(null)} aria-label={t('dock.agents.title')}><TreeStructureIcon size={18} /></button>{/if}
 		{#if onFiles}<button class="back" onclick={onFiles} aria-label={t('shell.remote.files')}><FilesIcon size={18} /></button>{/if}
 		{#if onChanges}<button class="back" onclick={onChanges} aria-label={t('shell.remote.changes')}><GitDiffIcon size={18} /></button>{/if}
