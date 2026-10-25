@@ -2392,7 +2392,7 @@ try {
   await expect(boxFiles).toHaveCount(0);
   // Queued, it shows what was typed; taken back, its file comes back too.
   await page.evaluate((text) => window.__paneChat().handle({ type: 'pending_messages', messages: [text] }), sentText);
-  await expect(page.locator('.composer-wrap .qchip .qtext')).toHaveText('帮我看看谁发的消息更多');
+  await expect(page.locator('.composer .qtray .qtext')).toHaveText('帮我看看谁发的消息更多');
   await page.evaluate((text) => { const c = window.__paneChat(); c.handle({ type: 'pending_messages', messages: [] }); c.handle({ type: 'unqueued', text }); }, sentText);
   await expect(typedBox).toHaveText('帮我看看谁发的消息更多');
   await expect(boxFiles).toHaveText(['私聊_墨竹.jsonl']);
@@ -4196,6 +4196,216 @@ try {
     const panels = /const ALL_PANELS = \[([^\]]*)\]/.exec(page)?.[1] ?? '';
     for (const gone of ["'changes'", "'turns'", "'diag'"]) assert.ok(!panels.includes(gone), `${gone} in ALL_PANELS`);
   }
+
+  // B05 (upstream port): the composer's queue tray on a daemon that says
+  // \`queue\` in its hello (?features=queue,files): a row goes into the turn
+  // (after the running tool), stops it and goes, comes back with its file, is
+  // deleted or moved (↑ and a drag); the steered one waits for the tool;
+  // ⌘↵ / ⌘⇧↵; Claude Code's fixed row only shows. On an old daemon (no
+  // \`features\`): the single 插入 and no row actions, files listed in the
+  // text. With \`files\`: files and a video go as \`files\`, chips on the
+  // message, kept when quoted. A Read row opens its file at its line. A turn
+  // the engine left: 未完成 and 继续. Files dragged over the window.
+  {
+    const SHOTS = process.env.B05_SHOTS;
+        const shot = async (p, name, loc) => { if (SHOTS) await (loc ?? p).screenshot({path: `${SHOTS}/${name}.png`}); };
+    const settle = (p) => p.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => {}))));
+    const page = await browser.newPage({viewport: {width: 1280, height: 860}});
+        page.setDefaultTimeout(30000);
+    page.on('pageerror', (e) => errors.push(e.message));
+    const mod = await page.evaluate(() => /Macintosh|Mac OS X/.test(navigator.userAgent) ? 'Meta' : 'Control');
+    const sent = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__sent)));
+    const clearSent = () => page.evaluate(() => (window.__sent.length = 0));
+    const Q = ['顺便把 README 里的缓存一节也改了', '测试过了再提交，别推送', '提交信息用中文'];
+
+    // A daemon with the queue ops: one row each, every action.
+    await page.goto(base + '?shell&queue&features=queue,files');
+    const tray = page.locator('.composer .qtray');
+    await expect(tray).toBeVisible({timeout: 60000});
+    const rows = tray.locator('.qrow[data-qrow]');
+    await expect(rows.locator('.qtext')).toHaveText(Q);
+    await expect(tray.locator('.qtitle')).toHaveText('排队中');
+    await expect(tray.locator('.qcount')).toHaveText('3');
+    await expect(tray.locator('.qmeta')).toHaveText('插入的消息在工具结束后插入，不会打断正在运行的工具');
+    // Inside the box, above the text.
+    const trayBox = await tray.boundingBox();
+    const richBox = await page.locator('.composer .rich').boundingBox();
+    assert.ok(trayBox.y + trayBox.height <= richBox.y + 1, 'tray above the text');
+    await rows.nth(1).hover();
+    await expect(rows.nth(1).getByRole('button', {name: '插入'})).toBeVisible();
+    assert.match(await rows.nth(1).getByRole('button', {name: '插入'}).getAttribute('title'), /工具结束后插入，不会打断它/);
+    await settle(page);
+    await shot(page, 'desk-queue-tray', page.locator('.bottom'));
+    await rows.nth(1).getByRole('button', {name: '插入'}).click();
+    await rows.nth(2).hover();
+    await rows.nth(2).getByRole('button', {name: '中断并发送'}).click();
+    await rows.nth(0).hover();
+    await rows.nth(0).getByRole('button', {name: '撤回'}).click();
+    await rows.nth(2).hover();
+    await rows.nth(2).getByRole('button', {name: '删除这条'}).click();
+    assert.deepEqual(await sent(), [
+      {op: 'steer', index: 1, text: Q[1]},
+      {op: 'interrupt', index: 2, text: Q[2]},
+      {op: 'unqueue', index: 0, text: Q[0]},
+      {op: 'unqueue', index: 2, text: Q[2], discard: true}
+    ]);
+    // Reorder: ↑ on a focused handle, and a drag by the handle.
+    await clearSent();
+    await rows.nth(2).locator('.grip').focus();
+    await page.keyboard.press('ArrowUp');
+    const g0 = await rows.nth(0).locator('.grip').boundingBox();
+    const r2 = await rows.nth(2).boundingBox();
+    await page.mouse.move(g0.x + g0.width / 2, g0.y + g0.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 6; i++) await page.mouse.move(g0.x + g0.width / 2, g0.y + (r2.y + r2.height - g0.y) * i / 6 + 4);
+    await page.mouse.up();
+    assert.deepEqual(await sent(), [{op: 'queue_move', index: 2, text: Q[2], to: 1}, {op: 'queue_move', index: 0, text: Q[0], to: 2}]);
+    // The steered one waits for the running tool, first in the tray.
+    await page.evaluate((q) => { const c = window.__chat; c.steerPick = q[1]; c.handle({type: 'status', message: 'steering'}); c.handle({type: 'pending_messages', messages: [q[0], q[2]]}); }, Q);
+    await expect(tray.locator('.qrow').first().locator('.qstate.steering')).toHaveText('工具结束后插入');
+    await expect(tray.locator('.qrow').first().locator('.qtext')).toHaveText(Q[1]);
+    await settle(page);
+    await shot(page, 'desk-queue-steering', page.locator('.bottom'));
+    // Taken back: the text and its file come back to the box.
+    await page.evaluate((q) => { const c = window.__chat; c.handle({type: 'pending_messages', messages: [q[2]]}); c.handle({type: 'unqueued', content: q[0], text: q[0], images: [], files: ['/Users/me/code/lynshen-desktop/README.md']}); }, Q);
+    await expect(page.locator('.composer .rich')).toHaveText(Q[0]);
+    await expect(page.locator('.composer-wrap .chip-name')).toHaveText(['README.md']);
+    await page.locator('.composer-wrap .chip').getByRole('button', {name: 'remove'}).click();
+    // ⌘↵ sends a typed message into the turn, ⌘⇧↵ stops it and sends; Enter queues.
+    await clearSent();
+    const box = page.locator('.composer .rich');
+    await box.fill('');
+    await box.click();
+    await page.keyboard.press(`${mod}+A`);
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type('先别跑集成测试');
+    await page.keyboard.press(`${mod}+Enter`);
+    await page.keyboard.type('停一下，先回答我');
+    await page.keyboard.press(`${mod}+Shift+Enter`);
+    await page.keyboard.type('最后再说');
+    await page.keyboard.press('Enter');
+    assert.deepEqual((await sent()).map((o) => o.op === 'user_message' ? {op: o.op, content: o.content} : o), [
+      {op: 'user_message', content: '先别跑集成测试'}, {op: 'steer', index: -1, text: '先别跑集成测试'},
+      {op: 'user_message', content: '停一下，先回答我'}, {op: 'interrupt', index: -1, text: '停一下，先回答我'},
+      {op: 'user_message', content: '最后再说'}
+    ]);
+
+    // Claude Code: the first one is with the CLI already; it only shows.
+    await page.goto(base + '?shell&queue=claude&features=queue,files');
+    await expect(rows).toHaveCount(3, {timeout: 60000});
+    await expect(rows.nth(0).locator('.qstate')).toHaveText('即将发送');
+    await expect(rows.nth(0).locator('button')).toHaveCount(0);
+    await expect(rows.nth(0).locator('.grip.off')).toHaveCount(1);
+    await rows.nth(1).locator('.grip').focus();
+    await page.keyboard.press('ArrowUp');
+    assert.deepEqual(await sent(), []);
+    await rows.nth(1).hover();
+    await settle(page);
+    await shot(page, 'desk-queue-claude-fixed', page.locator('.bottom'));
+
+    // An old daemon (no `features`): the single 插入 for the first message, no
+    // row actions; ⌘↵ queues like Enter; files go as a list in the text.
+    await page.goto(base + '?shell&queue');
+    await expect(rows).toHaveCount(3, {timeout: 60000});
+    await expect(tray.locator('.qrow button')).toHaveCount(0);
+    await expect(tray.locator('.grip.off')).toHaveCount(3);
+    await tray.locator('.qhead').getByRole('button', {name: '插入'}).click();
+    await page.locator('.composer .rich').click();
+    await page.keyboard.type('旧版本');
+    await page.keyboard.press(`${mod}+Enter`);
+    assert.deepEqual((await sent()).map((o) => o.op === 'user_message' ? {op: o.op, content: o.content} : o), [{op: 'steer'}, {op: 'user_message', content: '旧版本'}]);
+    await shot(page, 'desk-queue-old-daemon', page.locator('.bottom'));
+    await page.goto(base + '?shell&queue=claude');
+    await expect(rows).toHaveCount(3, {timeout: 60000});
+    await expect(tray.locator('button:not(.qfold)')).toHaveCount(0);
+
+    // Files as attachments: with `files`, not in the text; a video as a file.
+    const pdf = '/Users/me/Documents/季度报告/2026 Q3 经营分析.pdf';
+    const mov = '/Users/me/Movies/录屏 2026-10-25.mov';
+    await page.goto(base + '?shell&openfile&empty&features=queue,files');
+    await expect(page.locator('.composer .rich')).toBeVisible({timeout: 60000});
+    await page.evaluate(([a, b]) => { window.__chat.pendingAttach = [a, b]; }, [pdf, mov]);
+    await expect(page.locator('.composer-wrap .chip-name')).toHaveText(['2026 Q3 经营分析.pdf', '录屏 2026-10-25.mov']);
+    await page.locator('.composer .rich').click();
+    await page.keyboard.type('对比一下这两份');
+    await page.keyboard.press('Enter');
+    assert.deepEqual((await sent()).filter((o) => o.op === 'user_message'), [{op: 'user_message', content: '对比一下这两份', files: [pdf, mov]}]);
+    assert.equal(await page.evaluate(() => window.__calls.some((c) => c.command === 'process_video')), false);
+    const urow = page.locator('.row.user').last();
+    await expect(urow.locator('.bubble')).toHaveText('对比一下这两份');
+    await expect(urow.locator('.ufile .uname')).toHaveText(['2026 Q3 经营分析.pdf', '录屏 2026-10-25.mov']);
+    // The engine's echo is the same message, its chips too.
+    await page.evaluate(([a, b]) => { const c = window.__chat; c.handle({type: 'user_message', content: '对比一下这两份', files: [a, b]}); c.handle({type: 'connecting'}); c.handle({type: 'status', message: 'streaming'}); c.handle({type: 'assistant_delta', delta: '两份文件的口径不同。'}); }, [pdf, mov]);
+    await expect(page.locator('.row.user')).toHaveCount(1);
+    await settle(page);
+    await shot(page, 'desk-file-chips', page.locator('.row.user').last());
+    // Quoted back, its files attach again.
+    await urow.hover();
+    await urow.getByRole('button', {name: '引用到输入框'}).click();
+    await expect(page.locator('.composer-wrap .chip-name')).toHaveText(['2026 Q3 经营分析.pdf', '录屏 2026-10-25.mov']);
+    // An old daemon reads the list after the text.
+    await page.goto(base + '?shell&openfile&empty');
+    await expect(page.locator('.composer .rich')).toBeVisible({timeout: 60000});
+    await page.evaluate((a) => { window.__chat.pendingAttach = [a]; }, pdf);
+    await page.locator('.composer .rich').click();
+    await page.keyboard.type('看看这份');
+    await page.keyboard.press('Enter');
+    assert.deepEqual((await sent()).filter((o) => o.op === 'user_message'), [{op: 'user_message', content: `看看这份\n\nAttached files (read these):\n${pdf}`}]);
+    await expect(page.locator('.row.user').last().locator('.bubble')).toHaveText('看看这份');
+
+    // A Read row opens the file it read, at the line the reading started.
+    await page.goto(base + '?shell&openfile');
+    await expect(page.locator('.row.user').first()).toBeVisible({timeout: 60000});
+    const cache = '/Users/me/code/lynshen-desktop/src/lib/cache.ts';
+    await page.evaluate((path) => {
+      const c = window.__chat;
+      c.handle({type: 'user_message', content: '缓存在哪里清理的？'});
+      c.handle({type: 'connecting'});
+      c.handle({type: 'status', message: 'streaming'});
+      c.handle({type: 'tool_start', call_id: 'r1', name: 'read'});
+      c.handle({type: 'tool_output', call_id: 'r1', name: 'read', output: JSON.stringify({path, line: 120}), is_error: false});
+      c.handle({type: 'assistant_delta', delta: '在 `evict` 里，第 120 行起。'});
+    }, cache);
+    const readRow = page.locator('.tool .head.opens').last();
+    await expect(readRow).toHaveAttribute('title', '打开读取的文件');
+    await readRow.click();
+    await expect.poll(() => page.evaluate(() => window.__editor.activePath)).toBe(cache);
+    await expect(page.locator('.ed-pane .cm-editor')).toBeVisible();
+    // The cursor is on line 120, in view.
+    await expect(page.locator('.ed-pane .cm-activeLine')).toContainText('export const line120 = 120;');
+    await expect(page.locator('.ed-pane .cm-activeLine')).toBeInViewport();
+    await page.waitForTimeout(300);
+    await readRow.hover();
+    await shot(page, 'desk-read-row-open');
+
+    // The engine went away mid-turn: 未完成, then 继续 once it is back.
+    await page.evaluate(() => {
+      const c = window.__chat;
+      c.handle({type: 'tool_start', call_id: 'b1', name: 'bash'});
+      // The engine exits (SessionStore.handleExit), then is back.
+      c.cutShort();
+      c.engineState = 'ready';
+    });
+    const cut = page.locator('.cutmark');
+    await expect(cut).toContainText('未完成');
+    await expect(page.locator('.cutturn')).toContainText('上一轮因引擎退出或后台服务重启而中断');
+    await page.evaluate(() => { document.querySelector('.ed-pane')?.remove(); });
+    await settle(page);
+    await shot(page, 'desk-unfinished-continue');
+    await clearSent();
+    await page.locator('.cutturn').getByRole('button', {name: '继续'}).click();
+    await expect.poll(sent).toEqual([{op: 'continue'}]);
+    await expect(page.locator('.cutturn')).toHaveCount(0);
+    await expect(cut).toHaveCount(1);
+
+    // Files dragged over the window.
+    await page.goto(base + '?shell&drop=3');
+    await expect(page.locator('.droplayer')).toContainText('松开以添加到对话');
+    await expect(page.locator('.droplayer')).toContainText('3 个文件');
+    await settle(page);
+    await shot(page, 'desk-drop-anywhere');
+    await page.close();
+  }
   assert.deepEqual(errors, []);
-  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel.');
+  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel, the queue tray (into the turn after the running tool, stop and send, take back with its file, delete, reorder by key and drag, ⌘↵ and ⌘⇧↵, Claude Code\'s fixed rows, an old daemon\'s single 插入), files and videos sent as attachments (and listed in the text for an old daemon), a Read row opening its file at its line, an unfinished turn and 继续, files dragged over the window.');
 } finally { await browser.close(); await server.close(); }

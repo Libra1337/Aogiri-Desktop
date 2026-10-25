@@ -9,7 +9,8 @@
 	// are with the engine already (Claude Code): they only show. A daemon
 	// before the queue ops gets the old single "run the first one now"
 	// (`steerFirst`). The heading folds the list. Shared by the desktop
-	// composer and the phone page (`touch`: larger rows, actions always shown).
+	// composer and the phone page (`touch`: larger rows, actions always shown
+	// on a line under the message).
 	import ArrowUUpLeftIcon from 'phosphor-svelte/lib/ArrowUUpLeftIcon';
 	import ArrowSquareUpIcon from 'phosphor-svelte/lib/ArrowSquareUpIcon';
 	import ArrowElbowDownRightIcon from 'phosphor-svelte/lib/ArrowElbowDownRightIcon';
@@ -354,9 +355,20 @@
 		margin-left: auto;
 		color: var(--accent-bright);
 	}
-	/* The phone: rows a thumb can hit, actions always there. */
+	/* The phone: rows a thumb can hit, actions always there, on a line of
+	   their own under the message so it stays readable. */
 	.touch .qrow {
+		flex-wrap: wrap;
 		min-height: 40px;
+		row-gap: 0;
+		padding: 4px 4px 2px;
+	}
+	.touch .qacts {
+		justify-content: flex-end;
+		width: 100%;
+	}
+	.touch .qrow:not(:hover) {
+		background: none;
 	}
 	.touch .qgo,
 	.touch .qicon {

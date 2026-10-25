@@ -5,6 +5,7 @@
 	// phone page at 390×844.
 	//   ?remoteHost              the list
 	//   &open=<session>          as when a notification about it was tapped
+	//   &features=queue,files    the computer's daemon has the queue and files ops
 	// window.__remoteOps: every op the page sent; __remoteSend(frame) sends
 	// one more frame from the computer.
 	import { onMount, type Component } from 'svelte';
@@ -46,7 +47,10 @@
 		onerror: (() => void) | null = null;
 		constructor() {
 			setTimeout(() => {
-				this.emit({ type: 'hello', protocol: 2, version: '0.7.5' });
+				// ?features=queue,files: a computer whose daemon has the queue
+				// and files ops; without, an older one (no `features`).
+				const features = params.get('features');
+				this.emit({ type: 'hello', protocol: 2, version: '0.7.5', ...(features !== null ? { features: features.split(',').filter(Boolean) } : {}) });
 				this.emit({ type: 'sessions', sessions });
 				this.emit(workspaces);
 				this.emit({ type: 'agents', agents: [] });
