@@ -10,19 +10,25 @@
 
 export const CLIENT_ID = 'lynshen-web';
 const KEY = 'lynshen-remote-account';
+/** The account's computers as last listed (no secrets: ids, names, public
+ *  keys), so the page reaches them through the account before the list
+ *  arrives again. */
+const LIST = 'lynshen-remote-computers';
 const GRANT = 'lynshen-remote-signin';
 const INSTALL = 'lynshen-remote-install';
 const PAIR = 'lynshen-remote-pending-pair';
 
-const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
+// Written out in full so Vite replaces them (local end-to-end runs only).
+const GATEWAY_OVERRIDE: string | undefined = import.meta.env.VITE_LYNSHEN_GATEWAY;
+const RELAY_OVERRIDE: string | undefined = import.meta.env.VITE_LYNSHEN_RELAY;
 
 /** The gateway the account lives on. */
-export const GATEWAY = (env.VITE_LYNSHEN_GATEWAY || 'https://www.lynshen.org').replace(/\/+$/, '');
+export const GATEWAY = (GATEWAY_OVERRIDE || 'https://www.lynshen.org').replace(/\/+$/, '');
 
 /** The relay a computer of the account is reached through (the page's own
  *  relay on app.lynshen.org). */
 export function accountRelay(): string {
-	if (env.VITE_LYNSHEN_RELAY) return env.VITE_LYNSHEN_RELAY;
+	if (RELAY_OVERRIDE) return RELAY_OVERRIDE;
 	if (typeof location !== 'undefined' && location.hostname === 'app.lynshen.org') return `wss://${location.host}/relay/v1`;
 	return 'wss://app.lynshen.org/relay/v1';
 }
@@ -30,7 +36,7 @@ export function accountRelay(): string {
 /** This page can sign in to the account here. */
 export function accountAvailable(): boolean {
 	if (typeof location === 'undefined') return false;
-	return location.hostname === 'app.lynshen.org' || !!env.VITE_LYNSHEN_GATEWAY;
+	return location.hostname === 'app.lynshen.org' || !!GATEWAY_OVERRIDE;
 }
 
 export interface AccountUser {
@@ -154,6 +160,8 @@ export class RemoteAccount {
 		if (kept?.key && kept.user?.id) {
 			this.#key = kept.key;
 			this.user = kept.user;
+			const list = read<Computer[]>(local(), LIST);
+			if (Array.isArray(list)) this.computers = list.filter((c) => typeof c?.host_id === 'string' && typeof c.static_pub === 'string');
 		}
 	}
 
@@ -293,6 +301,7 @@ export class RemoteAccount {
 		this.computers = [];
 		this.loaded = false;
 		write(local(), KEY, null);
+		write(local(), LIST, null);
 		if (had) this.onChange?.();
 	}
 
@@ -313,6 +322,7 @@ export class RemoteAccount {
 			this.computers = Array.isArray(reply.computers) ? reply.computers : [];
 			this.loaded = true;
 			this.error = '';
+			write(local(), LIST, this.computers);
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : String(e);
 			throw e;

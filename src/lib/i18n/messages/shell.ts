@@ -451,7 +451,8 @@ const shell = {
 				noDesktop: '电脑上没有打开 Aogiri，没人能允许这次连接。打开 Aogiri 后再请求一次。',
 				denied: '电脑拒绝了这次连接。',
 				expired: '120 秒内没有人允许。可以再请求一次。',
-				requestsBusy: '电脑上已有太多连接请求在等待，稍后再试。'
+				requestsBusy: '电脑上已有太多连接请求在等待，稍后再试。',
+				notAllowed: '这台电脑没有允许这个浏览器连接，或已经把它移除。可以再请求一次。'
 			},
 			installTitle: '先添加到主屏幕',
 			installStep1: '点 Safari 底部的分享按钮，选「添加到主屏幕」。',
@@ -1734,7 +1735,8 @@ const shell = {
 				noDesktop: 'Aogiri is not open on the computer, so nobody can allow this. Open it and ask again.',
 				denied: 'The computer denied this connection.',
 				expired: 'Nobody allowed it within 120 s. You can ask again.',
-				requestsBusy: 'The computer has too many requests waiting. Try again soon.'
+				requestsBusy: 'The computer has too many requests waiting. Try again soon.',
+				notAllowed: 'This computer has not let this browser in, or removed it. You can ask again.'
 			},
 			installTitle: 'Add to Home Screen first',
 			installStep1: 'Tap the Share button in Safari and choose “Add to Home Screen”.',

@@ -323,7 +323,7 @@
 			<div class="corner">{@render switcher()}</div>
 			<span class="hero warn"><DesktopIcon size={28} /></span>
 			<h1>{name}</h1>
-			<p>{t(conn.state.text)}</p>
+			<p>{conn.relayError.kind === 'revoked' ? t('shell.remote.account.notAllowed') : t(conn.state.text)}</p>
 			<div class="actions">
 				<Button variant="primary" onclick={() => conn.askAgain()}>{t('shell.remote.account.askAgain')}</Button>
 				<Button variant="ghost" onclick={onAdd}><QrCodeIcon size={16} /> {t('shell.remote.account.usePairing')}</Button>

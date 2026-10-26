@@ -117,6 +117,8 @@ export class HostConnection {
 	/** A connect request waits for the computer's answer (since `waitingSince`, ms). */
 	waiting = $state(false);
 	waitingSince = $state(0);
+	/** The next connection asks the computer's user (再次请求). */
+	requestNext = false;
 	/** What this phone may do on the computer beyond the defaults (granted
 	 *  there); null until known, or from an engine before scopes. */
 	scopes = $state<Scope[] | null>(null);
@@ -190,7 +192,7 @@ export class HostConnection {
 					device,
 					name,
 					pair,
-					...(v2() ? { token: bearer, request: !pair && request } : {}),
+					...(v2() ? { token: bearer, request: !pair && (request || conn.requestNext) } : {}),
 					onWaiting: (check) => {
 						conn.waiting = true;
 						conn.waitingSince = Date.now();
@@ -199,6 +201,7 @@ export class HostConnection {
 					onAccepted: () => {
 						pair = undefined;
 						request = false;
+						conn.requestNext = false;
 						conn.waiting = false;
 						conn.relayError = null;
 						conn.checkCode = '';
@@ -238,9 +241,11 @@ export class HostConnection {
 		return conn;
 	}
 
-	/** Asks the computer again after a refused or unanswered request. */
+	/** Asks the computer's user again: after a refused or unanswered
+	 *  request, or when the computer no longer knows this device. */
 	askAgain() {
 		if (this.#stopped) return;
+		this.requestNext = true;
 		this.relayError = null;
 		this.agents.start();
 	}
