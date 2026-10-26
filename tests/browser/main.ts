@@ -344,6 +344,25 @@ Object.assign(window, {
           {id: 'xcode', name: 'Xcode', icon: null}
         ] : [];
         case 'open_in_editor': return null;
+        // ?repo: the project is a git repository (the title bar's project
+        // menu, a fork's or a new conversation's worktree): branch feat/fork,
+        // 2 commits ahead of its upstream and 1 behind, 2 files changed
+        // (+12 −3). `window.__git` the commands run. Without it git answers
+        // nothing, which reads as no repository.
+        case 'git': {
+          if (!params0.has('repo')) return null;
+          const a: string[] = args.args;
+          ((window as any).__git ??= []).push(a.join(' '));
+          const key = a.join(' ');
+          if (key === 'branch --show-current') return 'feat/fork\n';
+          if (key === 'status -sb') return '## feat/fork...origin/feat/fork [ahead 2, behind 1]\n M src/lib/cache.ts\n?? notes.md\n';
+          if (key.startsWith('diff HEAD --numstat')) return '12\t3\tsrc/lib/cache.ts\n';
+          if (key === 'status --porcelain=v1') return ' M src/lib/cache.ts\n?? notes.md\n';
+          if (key.startsWith('branch --format')) return 'main\nfeat/fork\nfix/scroll\n';
+          if (key === 'worktree list --porcelain') return 'worktree /Users/me/code/lynshen-desktop\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/feat/fork\n\n';
+          return '';
+        }
+        case 'worktree_base': return '/Users/me/code/.lynshen-worktrees/lynshen-desktop';
         // A Claude Code / Codex conversation carried to LynShen (ticket #40).
         case 'continue_on_lynshen_cmd': return {id: 's19a0b1c2d3e4f5a6', title: '对话宽度跟随窗口', cwd: args.cwd, turns: 12};
         default: return null;

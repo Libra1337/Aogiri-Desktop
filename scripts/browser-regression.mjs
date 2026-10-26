@@ -3857,20 +3857,28 @@ try {
     await expect(menu).toHaveCount(0);
     assert.equal(await fp.evaluate(() => window.__calls.filter((c) => c.command === 'read_text' || c.command === 'open_in_editor').length), 0);
     await fp.keyboard.press('Escape');
-    // The title bar: the editor button and its caret.
-    const button = fp.getByRole('button', {name: '在 VS Code 中打开'});
+    // The title bar's project menu (B09 D16; not a repository here): the
+    // folder, then the editor and its caret.
+    const button = fp.locator('.titlebar').getByRole('button', {name: '项目', exact: true});
     await expect(button).toBeVisible();
     const box = await button.boundingBox();
     assert.equal(Math.round(box.height), 28);
-    await fp.getByRole('button', {name: '选择编辑器'}).click();
-    const pick = fp.locator('.oie .pm');
+    await expect(button).toContainText('lynshen-desktop');
+    await button.click();
+    const pm = fp.locator('.anchor > .menu');
+    await expect(pm.getByRole('menuitem', {name: '在 VS Code 中打开'})).toBeVisible();
+    await pm.getByRole('button', {name: '选择编辑器'}).click();
+    const pick = pm.locator('.sub');
     await expect(pick.locator('.pop-label')).toHaveText(['VS Code', 'Zed', 'Xcode']);
     await expect(pick.getByRole('menuitemradio', {name: 'VS Code'})).toHaveAttribute('aria-checked', 'true');
     await fp.evaluate(() => (window.__calls.length = 0));
     await pick.getByRole('menuitemradio', {name: 'Zed'}).click();
     assert.deepEqual(await fp.evaluate(() => window.__calls.find((c) => c.command === 'open_in_editor')?.args), {id: 'zed', path: '/Users/me/code/lynshen-desktop', line: null, col: null, root: null});
     // Zed is the one a click opens now, here and in the file menu.
-    await expect(fp.getByRole('button', {name: '在 Zed 中打开'})).toBeVisible();
+    await button.click();
+    await expect(pm.getByRole('menuitem', {name: '在 Zed 中打开'})).toBeVisible();
+    await expect(pm.locator('.sep')).toHaveCount(0);
+    await fp.keyboard.press('Escape');
     await link('src/lib/ChatPane.svelte').click({button: 'right'});
     await expect(menu.getByRole('menuitem', {name: '在 Zed 中打开'})).toBeVisible();
     await fp.keyboard.press('Escape');
@@ -3880,7 +3888,8 @@ try {
     await expect(link('docs/old-width.md')).toHaveClass(/dead/);
     await link('src/lib/chatWidth.ts').click({button: 'right'});
     await expect(menu.getByRole('menuitem')).toHaveText(['打开', '添加为附件', '复制绝对路径', '复制相对路径', '复制文件名', reveal]);
-    await expect(fp.locator('.oie')).toHaveCount(0);
+    await fp.locator('.titlebar').getByRole('button', {name: '项目', exact: true}).click();
+    await expect(fp.locator('.anchor > .menu .pop-row')).toHaveCount(1);
     await fp.close();
   }
   // Output speed (?shell): a turn whose output streamed for 2 s in two

@@ -101,7 +101,7 @@
 	import Sidebar from '../../src/lib/Sidebar.svelte';
 	import TabChromePopover from '../../src/lib/workbench/TabChromePopover.svelte';
 	import TitleBar from '../../src/lib/shell/TitleBar.svelte';
-	import OpenInEditor from '../../src/lib/shell/OpenInEditor.svelte';
+	import ProjectMenu from '../../src/lib/shell/ProjectMenu.svelte';
 	import ContextMenuHost from '../../src/lib/ui/ContextMenuHost.svelte';
 	import ConfirmHost from '../../src/lib/ui/ConfirmHost.svelte';
 	import Toaster from '../../src/lib/ui/Toaster.svelte';
@@ -648,7 +648,7 @@
 		onAdd={() => {}}
 	>
 		{#snippet actions()}
-			{#if !settings && !home}<OpenInEditor path={first.path} />{/if}
+			{#if !settings && !home}<ProjectMenu path={first.path} name={first.name} onOpenGit={() => opened.push('git')} />{/if}
 		{/snippet}
 	</TitleBar>
 	<div class="body">

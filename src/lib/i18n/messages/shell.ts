@@ -217,6 +217,19 @@ const shell = {
 		approveFile: '允许修改文件',
 		askQuestion: '请选择',
 		approvalPlace: '第 {n}/{m} 个',
+		// The title bar's project menu (shell/ProjectMenu.svelte).
+		projectMenu: {
+			title: '项目',
+			commit: '提交…',
+			files: '{n} 个文件',
+			push: '推送 {n} 个提交',
+			publish: '发布分支',
+			pull: '拉取 {n} 个提交',
+			pushed: '已推送',
+			pulled: '已拉取',
+			changes: '改动',
+			clean: '无改动'
+		},
 		// A plan's usage limit above the composer (UsageLimit.svelte): {who} the
 		// backend (Claude Code, Codex), {which} the limit.
 		limit: {
@@ -1380,6 +1393,18 @@ const shell = {
 		approveFile: 'Allow file changes',
 		askQuestion: 'Choose an option',
 		approvalPlace: '{n} of {m}',
+		projectMenu: {
+			title: 'Project',
+			commit: 'Commit…',
+			files: '{n} files',
+			push: 'Push {n} commits',
+			publish: 'Publish branch',
+			pull: 'Pull {n} commits',
+			pushed: 'Pushed',
+			pulled: 'Pulled',
+			changes: 'Changes',
+			clean: 'No changes'
+		},
 		limit: {
 			window: {
 				five_hour: '5-hour limit',
