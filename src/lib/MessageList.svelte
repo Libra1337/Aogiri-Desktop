@@ -90,6 +90,7 @@
 		onOpenAgent,
 		onAgentChanges,
 		onChanges,
+		onOpenEdited,
 		onMergeAgent,
 		onStopAgent,
 		onPickAttempt,
@@ -192,6 +193,9 @@
 		/** Shows the project's changes in the Git panel: the end of a turn's
 		 *  list of changed files. */
 		onChanges?: () => void;
+		/** Opens a file the turn that `reply` ends changed, with that turn's
+		 *  changes (absent: as a file). */
+		onOpenEdited?: (path: string, reply: Msg) => void;
 		/** The session's folder: a changed file shows relative to it. */
 		root?: string;
 		/** The last turn still runs, or waits on work it handed off: it does
@@ -978,7 +982,7 @@
 							<!-- The turn's changed files: a click opens one; the last row shows the project's changes in Git. -->
 							<div class="changed" aria-label={t('chat.stat.files')}>
 								{#each m.turn.changes as f (f.path)}
-									<button class="cfile" title={f.path} onclick={() => onFile?.(f.path, m.text)}>
+									<button class="cfile" title={f.path} onclick={() => (onOpenEdited ? onOpenEdited(f.path, m) : onFile?.(f.path, m.text))}>
 										<span class="cpath">{shownPath(f.path)}</span>
 										<span class="mono add">+{f.added}</span><span class="mono del">−{f.removed}</span>
 									</button>

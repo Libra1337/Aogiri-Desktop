@@ -77,6 +77,7 @@
 	import type { SessionStore } from '$lib/session.svelte';
 	import type { Session } from '$lib/types';
 	import { editorStore } from '$lib/editor/editorStore.svelte';
+	import { turnBase, turnDiffs } from '$lib/editor/turnBase';
 	import Composer, { type StyleMenu } from '$lib/Composer.svelte';
 	import { replyStyles } from '$lib/styles.svelte';
 	import { currentStyle } from '$lib/styles';
@@ -1702,6 +1703,29 @@
 		if (!target) return void toast.error(t('chat.fileNotFound', { path: ref.path }));
 		openTarget(target, ref);
 	}
+	// A file a turn changed (its change pill's list) opens in the editor with
+	// that turn's changes: the file before the turn, worked out from the
+	// turn's own edits (turnBase.ts), or git HEAD when that can't be (edited
+	// since; an edit without its own diff).
+	async function openEdited(path: string, reply: Msg) {
+		const { ref, target: pending } = fileTarget(path, reply.kind === 'assistant' ? reply.text : undefined);
+		const target = await pending;
+		if (!target) return void toast.error(t('chat.fileNotFound', { path: ref.path }));
+		if (!target.text) return openTarget(target, ref);
+		const abs = target.path;
+		try {
+			const opened = await editorStore.open(abs, rootOf(abs) ?? folderOf(abs));
+			// Open since before the agent edited it: the file as it is now.
+			if (!opened.dirty) await editorStore.reload(opened.path);
+			const tab = editorStore.tab(opened.path) ?? opened;
+			const diffs = turnDiffs(chat.messages, reply, abs);
+			const base = diffs ? turnBase(tab.doc, diffs) : null;
+			editorStore.showTurn(tab.path, base);
+			if (base == null) toast.info(t('editor.turnBaseUnknown'));
+		} catch (e) {
+			toast.error(t('chat.fileOpenFailed', { path: ref.path, error: String(e) }));
+		}
+	}
 	function openTarget(target: FileTarget, ref: FileRef) {
 		const abs = target.path;
 		const failed = (e: unknown) => toast.error(t('chat.fileOpenFailed', { path: ref.path, error: String(e) }));
@@ -1953,7 +1977,7 @@
 	<main bind:this={scroller} onscroll={onScroll} onwheel={onWheel} onpointerdown={reader.down}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div bind:this={contentEl} oncontextmenu={onFileMenu}>
-			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} turnSince={chat.turnRunningSince} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} busy={turnOpen} foldTurns={prefs.foldTurns} root={project?.path || chat.cwd || ''} onReveal={revealFile} onSchedule={scheduleFrom} onDeclineSchedule={(p) => proposals.set(p.id, 'declined')} scheduleState={(id) => proposals.state(id, agentDirectory.schedules)} />
+			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} turnSince={chat.turnRunningSince} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} onOpenEdited={openEdited} busy={turnOpen} foldTurns={prefs.foldTurns} root={project?.path || chat.cwd || ''} onReveal={revealFile} onSchedule={scheduleFrom} onDeclineSchedule={(p) => proposals.set(p.id, 'declined')} scheduleState={(id) => proposals.state(id, agentDirectory.schedules)} />
 		</div>
 		{#if chat.booting && chat.engineState !== 'exited'}
 			<div class="welcome spawning">
