@@ -11,6 +11,7 @@
 	let {
 		efforts,
 		effort,
+		unset = '',
 		disabled = false,
 		accent = '',
 		onEffort,
@@ -18,6 +19,8 @@
 	}: {
 		efforts: string[];
 		effort: string;
+		/** An ACP agent's effort that leaves the level to it (`default_effort`). */
+		unset?: string;
 		disabled?: boolean;
 		/** The model's colour (modelColor); '' keeps the neutral fill. */
 		accent?: string;
@@ -26,7 +29,7 @@
 	} = $props();
 
 	let shown = $state('');
-	const def = $derived(defaultEffort(efforts));
+	const def = $derived(defaultEffort(efforts, unset));
 </script>
 
 <button class="eff-backdrop" aria-label={t('common.close')} tabindex="-1" onclick={onClose}></button>

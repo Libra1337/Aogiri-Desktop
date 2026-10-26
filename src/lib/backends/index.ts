@@ -21,8 +21,25 @@ export const CAPS: Record<BackendId, BackendCaps> = {
  * gates like the native backend so pre-existing UI behavior is unchanged. An
  * ACP session of OpenCode (`acpOpencode`) has OpenCode's capabilities.
  */
-export function caps(chat?: { backendId?: string; acpOpencode?: boolean } | null): BackendCaps {
+export function caps(
+	chat?: { backendId?: string; acpOpencode?: boolean; engineCaps?: Partial<BackendCaps> | null } | null
+): BackendCaps {
 	const id = chat?.backendId;
-	if (id === 'acp' && chat?.acpOpencode) return OPENCODE_CAPS;
+	if (id === 'acp') {
+		const base = chat?.acpOpencode ? OPENCODE_CAPS : ACP_CAPS;
+		// What the agent reports (`engine_caps`, the daemon's full ACP client)
+		// over that table: only the flags it names, and only as booleans.
+		const reported = chat?.engineCaps;
+		if (!reported) return base;
+		const merged = { ...base };
+		for (const k of ACP_REPORTED) if (typeof reported[k] === 'boolean') merged[k] = reported[k];
+		// OpenCode's plan mode is the daemon's own agent, not the ACP one.
+		if (!merged.approvalModes) merged.planMode = false;
+		return merged;
+	}
 	return (id && id in CAPS ? CAPS[id as BackendId] : CAPS.lynshen);
 }
+
+/** The flags an ACP agent's `engine_caps` sets (its `caps`); the rest stay
+ *  the table's. */
+const ACP_REPORTED = ['interrupt', 'approvalModes', 'modelPicker', 'contextUsage', 'slashCommands', 'transcriptReplay'] as const;

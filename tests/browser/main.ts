@@ -132,6 +132,8 @@ const trialPlan = (used: boolean, full = trialReply === 'full' && !windowRecover
   expires_at: new Date(planEndsFrom + 7 * 86_400_000).toISOString()
 });
 Object.assign(window, {
+  // `listen`'s unlisten (a closed TuiPanel or terminal) calls into this.
+  __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} },
   __windowRecovered: () => { windowRecovered = true; balanceUntil = null; },
   __calls: calls,
   __keptAvatar: KEPT_AVATAR,

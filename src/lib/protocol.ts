@@ -58,6 +58,8 @@ export type Op =
 	/** With `index`: stops the turn and that queued message starts the next. */
 	| { op: 'interrupt'; index?: number; text?: string }
 	| { op: 'shutdown' }
+	// ACP: one of the agent's settings (`session_options`).
+	| { op: 'set_session_option'; id: string; value: string | boolean }
 	// Structured approval answer: `hunks` (edit tools, partial approval) is only
 	// valid with decision "allow"; `always` is whole-call only (never with hunks).
 	// claude: `always_scope` saves the always-allow rule for the project or the user.
@@ -192,6 +194,108 @@ export function acpPresets(): Promise<AcpPreset[]> {
 /** Registers a preset (a no-op when an agent already runs it); the updated list. */
 export function acpPresetAdd(id: string): Promise<AcpAgent[]> {
 	return invoke('acp_preset_add', { id });
+}
+
+/** A built-in ACP agent the daemon starts by id (`acp_presets`, a daemon
+ *  with that feature): OpenCode, oh-my-pi, Pi. Not the registry's one-click
+ *  presets above, which register a command line. */
+export interface AcpBuiltin {
+	id: string;
+	name: string;
+	/** `unsupported`: its version is outside `min_version`..`below_version`. */
+	status: 'ready' | 'missing' | 'unsupported';
+	path: string | null;
+	version: string | null;
+	min_version: string | null;
+	below_version: string | null;
+	/** It asks before it runs tools (false: Pi, which runs in 全自动 only). */
+	approvals: boolean;
+	/** It can run on the LynShen gateway. */
+	gateway: boolean;
+	/** The command that installs it. */
+	install: string;
+	/** Its own TUI can take a session over (`session_tui`). */
+	tui: boolean;
+}
+/** The daemon's built-in ACP agents and whether each can start here. The
+ *  daemon asks each program its version to answer (10 s at most). */
+export async function acpBuiltins(): Promise<AcpBuiltin[]> {
+	await daemon.connect();
+	const reply = await daemon.request({ op: 'acp_presets' });
+	return Array.isArray(reply.presets) ? (reply.presets as AcpBuiltin[]) : [];
+}
+
+/** One of an ACP agent's settings besides model and effort (its mode, a
+ *  thinking switch), from `session_options`; `set_session_option` sets it. */
+export type SessionOption = {
+	id: string;
+	name: string;
+	description: string | null;
+	category: string | null;
+} & (
+	| { type: 'select'; value: string; choices: { value: string; name: string; description: string | null }[] }
+	| { type: 'boolean'; value: boolean }
+);
+
+/** A custom provider of Claude Code or Codex (`tool_providers`). The daemon
+ *  keeps the key and only says whether one is saved. */
+export interface ToolApiProvider {
+	id: string;
+	name: string;
+	base_url: string;
+	format: 'anthropic' | 'responses';
+	/** The default model: new sessions, and Claude Code's background requests. */
+	model: string;
+	/** The models a session may pick (the default among them). */
+	models: string[];
+	has_key: boolean;
+}
+/** One tool's providers and the one new sessions start on (`selected`;
+ *  '': the tool's own login or configuration). */
+export interface ToolProviderConfig {
+	selected: string;
+	providers: ToolApiProvider[];
+}
+export type ProviderTool = 'claude' | 'codex';
+export type ToolProviderOp = 'tool_providers' | 'tool_provider_save' | 'tool_provider_select' | 'tool_provider_remove';
+/** Reads or changes a tool's custom providers; each op answers with the
+ *  whole config. Local clients only (a phone is refused). */
+export async function toolProviders(
+	tool: ProviderTool,
+	op: ToolProviderOp = 'tool_providers',
+	fields: Record<string, unknown> = {}
+): Promise<ToolProviderConfig> {
+	await daemon.connect();
+	const reply = await daemon.request({ op, tool, ...fields });
+	const config = (reply.config ?? {}) as Partial<ToolProviderConfig>;
+	const providers = Array.isArray(config.providers) ? config.providers : [];
+	for (const p of providers) if (!Array.isArray(p.models) || !p.models.length) p.models = [p.model].filter(Boolean);
+	return { selected: typeof config.selected === 'string' ? config.selected : '', providers };
+}
+/** A model an API lists (`tool_provider_models`). */
+export interface ToolListedModel {
+	id: string;
+	name?: string | null;
+	context_window?: number | null;
+}
+/** The models the API at `base_url` lists in the tool's protocol, and how
+ *  many others it lists. The request carries `key` (else the saved key of
+ *  `provider_id`) and nothing else: it also tests the address and the key. */
+export async function toolProviderModels(
+	tool: ProviderTool,
+	fields: { base_url: string; key?: string; provider_id?: string }
+): Promise<{ models: ToolListedModel[]; hidden: number }> {
+	await daemon.connect();
+	const reply = await daemon.request({ op: 'tool_provider_models', tool, ...fields });
+	return { models: Array.isArray(reply.models) ? (reply.models as ToolListedModel[]) : [], hidden: Number(reply.hidden) || 0 };
+}
+/** `tool_provider` (Claude Code / Codex): the custom provider the engine
+ *  process runs on; null on the LynShen gateway or the tool's own config. */
+export interface SessionToolProvider {
+	id: string;
+	name: string;
+	model: string;
+	models: string[];
 }
 
 /** Login-shell environment snapshot state (see src-tauri/src/shell_env.rs). */

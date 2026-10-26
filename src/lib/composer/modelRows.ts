@@ -340,7 +340,13 @@ export function buildModelRows(input: {
 			id: `${cur}::${m.model}`,
 			label: stripGroupSuffix(entry?.display_name || m.label || m.model),
 			vendor: m.vendor || m.model,
-			detail: lineTwo(cur, entry?.groups, m.context_window, !isGateway(cur), entry?.context_total),
+			// An ACP agent's provider is no source ("acp"): the agent's own is
+			// the value's prefix ("deepseek/deepseek-flash"), which the daemon
+			// leaves out of the name.
+			detail:
+				backendId === 'acp'
+					? [m.model.slice(0, Math.max(0, m.model.indexOf('/'))), fmtContext(m.context_window)].filter(Boolean).join(' · ')
+					: lineTwo(cur, entry?.groups, m.context_window, !isGateway(cur), entry?.context_total),
 			active: m.active,
 			command: `/model ${m.model}`,
 			depth: undefined,
@@ -425,4 +431,22 @@ export function buildModelRows(input: {
 		return at < 0 ? order.length : at;
 	};
 	return [...activeRows, ...otherRows].sort((a, b) => rank(a) - rank(b));
+}
+
+/** Claude Code / Codex on one of the tool's custom providers: the models
+ *  picked for it in Settings, the provider named on each. */
+export function customProviderRows(
+	provider: { name: string; models: string[] },
+	current: string
+): ModelRow[] {
+	return provider.models.map((id) => ({
+		id: `custom::${id}`,
+		label: id,
+		vendor: id,
+		detail: provider.name,
+		active: id === current,
+		command: `/model ${id}`,
+		depth: undefined,
+		model: id
+	}));
 }

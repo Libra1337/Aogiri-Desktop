@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildModelRows, splitRoute, stripGroupSuffix } from './modelRows';
+import { buildModelRows, customProviderRows, splitRoute, stripGroupSuffix } from './modelRows';
 
 const groups = { codex: 'Codex', claude: 'Claude', lynshen: 'LynShen', byok: 'BYOK', system: 'System' };
 
@@ -380,5 +380,33 @@ describe('a gateway model whose input window is smaller than its context', () =>
 		// A total equal to the window adds nothing.
 		expect(rows[1]!.detail).toContain('262K');
 		expect(rows[1]!.detail).not.toContain('共');
+	});
+});
+
+describe('ACP agents and custom providers', () => {
+	it("an ACP model names the agent's provider from its value, not \"acp\"", () => {
+		const rows = buildModelRows({
+			models: [
+				{ model: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash', active: true, context_window: 0, reasoning_efforts: [] },
+				{ model: 'gpt-6', label: 'GPT-6', active: false, context_window: 0, reasoning_efforts: [] }
+			],
+			backendId: 'acp',
+			provider: 'acp',
+			providersList: [],
+			configured: [],
+			groups
+		});
+		expect(rows.map((r) => [r.label, r.detail])).toEqual([
+			['DeepSeek V4 Flash', 'deepseek'],
+			['GPT-6', '']
+		]);
+	});
+
+	it("a custom provider's rows are its models, the current one marked", () => {
+		const rows = customProviderRows({ name: 'Relay', models: ['claude-opus-5', 'claude-sonnet-5'] }, 'claude-sonnet-5');
+		expect(rows.map((r) => [r.label, r.detail, r.active, r.command])).toEqual([
+			['claude-opus-5', 'Relay', false, '/model claude-opus-5'],
+			['claude-sonnet-5', 'Relay', true, '/model claude-sonnet-5']
+		]);
 	});
 });

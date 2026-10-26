@@ -3,8 +3,10 @@
 	// running in a pty, rendered by xterm. Two uses: a standalone `tui:*` tab
 	// (a local pty, independent of any GUI session) and a session handoff,
 	// where the chat tile's conversation moves into its engine's TUI on a
-	// daemon terminal (`session`, `onBackToGui`). Closing the panel kills the
-	// process. Only the backend name reaches Rust; binary resolution is
+	// daemon terminal (`session`, `onBackToGui`). Closing a standalone panel
+	// kills the process; a session's TUI belongs to the session and keeps
+	// running when the panel goes (a daemon with `term_attach`; an older one
+	// ends it). Only the backend name reaches Rust; binary resolution is
 	// validated there.
 	import { onMount, onDestroy } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
@@ -13,6 +15,8 @@
 	import '@xterm/xterm/css/xterm.css';
 	import { terminalLook, useTerminalInput, useWebgl } from './terminal';
 	import { ptyOpen, ptyWrite, ptyResize, ptyClose, daemon } from '$lib/protocol';
+	import { DaemonTerminal } from '$lib/daemonTerminal';
+	import { engineHas } from '$lib/engineVersion.svelte';
 	import type { BackendId } from '$lib/backends/types';
 	import { loadBackendSettings } from '$lib/backends/settings';
 	import Button from '$lib/ui/Button.svelte';
@@ -23,7 +27,9 @@
 		backend,
 		cwd = '',
 		session,
+		terminal = '',
 		onBackToGui,
+		onReattach,
 		onOpenSettings
 	}: {
 		backend: BackendId;
@@ -31,10 +37,16 @@
 		 *  the engine's own TUI on a terminal (`session_tui`), with the session's
 		 *  gateway; the engine resumes when the TUI exits. */
 		session?: string;
+		/** The session's TUI already runs on this daemon terminal (opened by
+		 *  another client, or before this panel): view it instead of starting
+		 *  one. */
+		terminal?: string;
 		cwd?: string;
 		/** Present only for session handoffs: hand the conversation back to
 		 *  the GUI chat (the tile's title bar offers it). */
 		onBackToGui?: () => void | Promise<void>;
+		/** The daemon connection came back: watch the session again. */
+		onReattach?: () => Promise<void>;
 		onOpenSettings?: () => void;
 	} = $props();
 
@@ -64,23 +76,37 @@
 		}
 	}
 
-	// The daemon's terminal for a hosted session: its id, and the exit it
+	// The view of the daemon's terminal for a hosted session, and the exit it
 	// reports once the TUI is gone (the engine starts again after it).
-	let daemonTerm = '';
+	let view: DaemonTerminal | undefined;
 	let daemonExit: Promise<void> = Promise.resolve();
-	const encoder = new TextEncoder();
-	const base64 = (bytes: Uint8Array) => btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
-	const unbase64 = (data: string) => Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+	let exited: () => void = () => {};
 
 	function write(data: string) {
 		if (session) {
-			if (daemonTerm) daemon.post({ op: 'term_input', term: daemonTerm, data: base64(encoder.encode(data)) }).catch(() => {});
+			if (view?.term && status === 'running') view.input(data).catch(() => {});
 		} else ptyWrite(id, data).catch(() => {});
 	}
 	function resize(cols: number, rows: number) {
 		if (session) {
-			if (daemonTerm) daemon.post({ op: 'term_resize', term: daemonTerm, cols, rows }).catch(() => {});
+			if (status === 'running') view?.resize(cols, rows);
 		} else ptyResize(id, cols, rows).catch(() => {});
+	}
+
+	function daemonView() {
+		return new DaemonTerminal(daemon, {
+			reset: () => term?.reset(),
+			output: (bytes, done) => (term ? term.write(bytes, done) : done()),
+			exit: () => {
+				exited();
+				// The TUI ended (the user quit it): the conversation is the
+				// GUI's again, its engine already resuming.
+				if (!closing && onBackToGui) void backToGui();
+				else status = 'exited';
+			},
+			// Local: only a dropped connection detaches this view.
+			detached: () => void reconnect()
+		});
 	}
 
 	async function launchDaemon() {
@@ -89,34 +115,74 @@
 		errMsg = '';
 		try {
 			fit?.fit();
-			let exited: () => void = () => {};
 			daemonExit = new Promise((resolve) => (exited = resolve));
-			// `force`: the page asked the user before cutting a running reply
-			// or background task short.
-			const reply = await daemon.request({ op: 'session_tui', session, cols: term.cols, rows: term.rows, force: true });
-			daemonTerm = String(reply.term ?? '');
-			const off = daemon.onTerm(daemonTerm, (frame) => {
-				if (frame.type === 'term_output') term?.write(unbase64(String(frame.data ?? '')));
-				else {
-					exited();
-					// The TUI ended (the user quit it): the conversation is the
-					// GUI's again, its engine already resuming.
-					if (!closing && onBackToGui) void backToGui();
-					else status = 'exited';
-				}
-			});
-			cleanups.push(off);
+			view ??= daemonView();
+			// Already running (another client, or this tab before): viewed.
+			// An older daemon has no term_attach, and asking it again starts
+			// one. `force`: the page asked the user before cutting a running
+			// reply or background task short.
+			const known = terminal && engineHas('term_attach') ? terminal : '';
+			await view.attach(
+				known ? { term: known, cols: term.cols, rows: term.rows } : { session, cols: term.cols, rows: term.rows, force: true }
+			);
 			// Closed while the TUI was starting: nothing could end it then.
 			if (disposed || closing) {
-				daemon.post({ op: 'term_close', term: daemonTerm }).catch(() => {});
-				if (disposed) off();
+				if (disposed) leave();
+				else view.close();
 				return;
 			}
 			status = 'running';
 		} catch (e) {
 			if (disposed || closing) return;
+			// The TUI it was to view ended meanwhile: the conversation is the
+			// GUI's again.
+			if (terminal && engineHas('term_attach') && onBackToGui) {
+				closing = true;
+				exited();
+				await Promise.resolve(onBackToGui()).catch(() => {});
+				return;
+			}
 			status = 'error';
 			errMsg = String(e);
+		}
+	}
+
+	/** This panel goes; the TUI belongs to the session and runs on. An older
+	 *  daemon gives the TUI to its viewer, so leaving ends it there. */
+	function leave() {
+		if (!view) return;
+		if (engineHas('term_attach')) view.detach();
+		else {
+			view.close();
+			view.dispose();
+		}
+	}
+
+	/** The connection to the daemon dropped. Once it is back the session is
+	 *  watched again and this view attaches again; a TUI that ended meanwhile
+	 *  (the daemon restarted, or an older daemon ended it with the
+	 *  connection) hands the conversation back to the GUI. */
+	async function reconnect() {
+		if (disposed || closing || !view || !term) return;
+		status = 'starting';
+		for (;;) {
+			try {
+				await daemon.connect();
+				break;
+			} catch {
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+				if (disposed || closing) return;
+			}
+		}
+		await onReattach?.().catch(() => {});
+		if (disposed || closing) return;
+		try {
+			if (!engineHas('term_attach')) throw new Error('terminal ended with the connection');
+			await view.attach({ term: view.term, cols: term.cols, rows: term.rows });
+			status = 'running';
+		} catch {
+			exited();
+			await backToGui();
 		}
 	}
 
@@ -166,8 +232,11 @@
 			// Quitting the TUI hands the conversation back: the daemon starts
 			// the engine again once the TUI has exited.
 			try {
-				if (daemonTerm) await daemon.post({ op: 'term_close', term: daemonTerm });
-				await daemonExit;
+				// A TUI that failed to open (or is gone) has no exit to wait for.
+				if (status !== 'error' && view?.term) {
+					view.close();
+					await daemonExit;
+				}
 				await onBackToGui();
 			} catch (e) {
 				if (disposed) return;
@@ -248,9 +317,9 @@
 		disposed = true;
 		closing = true;
 		cleanups.forEach((f) => f());
-		if (session) {
-			if (daemonTerm) daemon.post({ op: 'term_close', term: daemonTerm }).catch(() => {});
-		} else ptyClose(id).catch(() => {});
+		// A session's TUI goes on without this view.
+		if (session) leave();
+		else ptyClose(id).catch(() => {});
 		term?.dispose();
 	});
 </script>

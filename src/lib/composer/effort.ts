@@ -1,16 +1,24 @@
 // Pure helpers for the composer's reasoning-effort slider.
 
+import { t } from '$lib/i18n';
+
 /** The effort the engine starts a model at (agent-core config.rs
  *  `default_effort`): "default" (the provider's own setting) when offered,
- *  else "medium", else the first tier. */
-export function defaultEffort(efforts: string[]): string {
+ *  else "medium", else the first tier. An ACP agent whose level can be left
+ *  to it (`unset`, its `default_effort`: OpenCode's "default", oh-my-pi's
+ *  "auto") starts there, which is none of the tiers. */
+export function defaultEffort(efforts: string[], unset = ''): string {
+	if (unset) return unset;
 	return (['default', 'medium'].find((effort) => efforts.includes(effort)) ?? efforts[0]) || '';
 }
 
-/** Display label: "high" → "High", "xhigh" → "XHigh", "default" (send no
- *  thinking setting, LynShen CLI 0.7.1) → "Default". */
+/** Display label: "high" → "High", "xhigh" → "XHigh"; "default" (send no
+ *  thinking setting: LynShen CLI 0.7.1, or an ACP agent's own level) and an
+ *  ACP agent's "auto" in the UI's language. */
 export function effortLabel(effort: string): string {
 	if (effort === 'xhigh') return 'XHigh';
+	if (effort === 'default') return t('chat.effortDefault');
+	if (effort === 'auto') return t('chat.effortAuto');
 	return effort ? effort[0].toUpperCase() + effort.slice(1) : effort;
 }
 

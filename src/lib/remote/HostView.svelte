@@ -138,7 +138,17 @@
 	} as const;
 	/** Pages opened over the tabs, last on top. */
 	type Screen = { key: number } & (
-		| { kind: 'session'; session?: string; agent?: string; cwd?: string; chat?: boolean; engine?: string; title: string }
+		| {
+				kind: 'session';
+				session?: string;
+				agent?: string;
+				cwd?: string;
+				chat?: boolean;
+				engine?: string;
+				/** `acp`: the built-in agent a new session starts on. */
+				acpAgent?: { id: string; name: string; noApprovals?: boolean };
+				title: string;
+		  }
 		| { kind: 'project'; project: ProjectView }
 		| { kind: 'add' }
 		| { kind: 'files' | 'changes'; root: string; title: string; file?: string; line?: number }
@@ -197,7 +207,7 @@
 	/** The new-session dialog, for a given project or a choice of them. */
 	let creating = $state<{ project?: ProjectView; replace: boolean } | null>(null);
 	const ENGINE_TITLES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' };
-	function create(project: ProjectView, engine: string) {
+	function create(project: ProjectView, engine: string, acpAgent?: { id: string; name: string; noApprovals?: boolean }) {
 		const replace = creating?.replace ?? true;
 		creating = null;
 		const screen: NewScreen = {
@@ -205,7 +215,8 @@
 			cwd: project.path,
 			chat: project.chats,
 			engine: engine === 'lynshen' ? undefined : engine,
-			title: ENGINE_TITLES[engine] ?? t('shell.remote.newSession')
+			...(engine === 'acp' && acpAgent ? { acpAgent } : {}),
+			title: acpAgent?.name ?? ENGINE_TITLES[engine] ?? t('shell.remote.newSession')
 		};
 		if (replace) open(screen);
 		else push(screen);
@@ -458,6 +469,7 @@
 								cwd={screen.cwd}
 								chat={screen.chat}
 								engine={screen.engine}
+								acpAgent={screen.acpAgent}
 								title={screen.title}
 								{hostName}
 								register={conn.register}

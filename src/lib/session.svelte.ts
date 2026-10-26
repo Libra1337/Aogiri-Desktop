@@ -247,10 +247,15 @@ export class SessionStore {
 		const id = reuseId && !this.allSessions.some((s) => s.id === reuseId) ? reuseId : this.uid();
 		const chat = new ChatState(backendId);
 		chat.bindRunKey(id);
+		// The built-in OpenCode is OpenCode too (its modes and gateway switch).
+		if (acpAgent?.builtin && acpAgent.id === 'opencode') acpAgent = { ...acpAgent, opencode: true };
 		if (acpAgent) {
 			chat.acpAgentId = acpAgent.id;
 			chat.acpAgentName = acpAgent.name;
 			chat.acpOpencode = !!acpAgent.opencode;
+			// An agent that never asks runs in 全自动, which this window's last
+			// mode must not be pushed over.
+			if (acpAgent.noApprovals) chat.followEngineMode = true;
 		}
 		const adapter = createLynShenAdapter();
 		registerAdapter(id, adapter);
@@ -316,6 +321,7 @@ export class SessionStore {
 							...gateway,
 							...program,
 							...(extraOpts?.model ? { model: extraOpts.model } : {}),
+							...(typeof extraOpts?.tool_provider === 'string' ? { tool_provider: extraOpts.tool_provider } : {}),
 							...(extraOpts?.resume_session_at ? { resume_at: extraOpts.resume_session_at } : {}),
 							...(extraOpts?.fork_from ? { fork_from: extraOpts.fork_from, ...(extraOpts.fork_turns ? { fork_turns: extraOpts.fork_turns } : {}) } : {}),
 							// A restarted engine keeps the session's settings.
@@ -332,12 +338,17 @@ export class SessionStore {
 								approval_mode: mode,
 								...gateway,
 								...program,
+								...(typeof extraOpts?.tool_provider === 'string' ? { tool_provider: extraOpts.tool_provider } : {}),
 								// A restarted engine keeps the session's switches.
 								...(s.chat.fast ? { fast: true } : {}),
 								...(extraOpts?.fork_from ? { fork_from: extraOpts.fork_from, fork_turns: extraOpts.fork_turns } : {}),
 								...(!prefs.thinkingSummaries ? { thinking: false } : {})
 							}
 						})
+					: s.backendId === 'acp' && s.acpAgent?.builtin
+						? // A built-in agent: the daemon finds and starts it by id (it
+							// reopens a session from its record, whatever is named here).
+							Promise.resolve(this.#builtinSpec(s, mode, !!(s.chat.sessionId || resume), extraOpts))
 					: s.backendId === 'acp'
 						? // An ACP agent runs the command its registry entry names.
 							acpAgentsList().then(async (agents) => {
@@ -360,6 +371,9 @@ export class SessionStore {
 										// The agent's own environment wins over the backend's.
 										env: agentEnv(entry, base?.env),
 										acp_agent: { id: entry.id, name: entry.name },
+										// A draft's picks (a daemon with the full ACP client).
+										...(extraOpts?.model ? { model: extraOpts.model } : {}),
+										...(extraOpts?.effort ? { effort: extraOpts.effort } : {}),
 										...(opencode
 											? { approval_mode: mode, ...(s.gateway !== undefined ? { lynshen_gateway: s.gateway } : {}) }
 											: {}),
@@ -421,6 +435,28 @@ export class SessionStore {
 			});
 	}
 
+	/** How the daemon starts a built-in ACP agent: by its id, approval mode
+	 *  and gateway switch, never a command line. A new conversation runs on
+	 *  the LynShen gateway when this computer is signed in (as OpenCode's);
+	 *  a reopened one as it last ran. A draft's model and effort are set once
+	 *  the conversation opens. */
+	#builtinSpec(s: Session, mode: string, reopened: boolean, extraOpts?: Record<string, unknown>): EngineSpec {
+		if (s.gateway === undefined && !reopened) s.gateway = gatewayByDefault();
+		// An agent that never asks (Pi) runs in 全自动 only: the user agreed to
+		// that when picking it (any other mode is refused by the daemon).
+		if (s.acpAgent?.noApprovals || s.chat.agentApprovals === false) mode = 'full-auto';
+		return {
+			engine: 'acp',
+			options: {
+				agent: s.acpAgent?.id,
+				approval_mode: mode,
+				...(s.gateway !== undefined ? { lynshen_gateway: s.gateway } : {}),
+				...(extraOpts?.model ? { model: extraOpts.model } : {}),
+				...(extraOpts?.effort ? { effort: extraOpts.effort } : {})
+			}
+		};
+	}
+
 	/** A new session in `project`, made active, as a draft: nothing starts
 	 *  until its first message (see `#startDraft`). `firstMessage` (e.g. a
 	 *  parallel task's 任务描述) is that message, sent right away. `backend`
@@ -478,7 +514,7 @@ export class SessionStore {
 	addTuiSession(project: Project, backend: BackendId) {
 		const id = this.addSession(project, undefined, backend);
 		const s = this.allSessions.find((x) => x.id === id);
-		if (s && canHandOffToTui(s.backendId)) {
+		if (s && canHandOffToTui(s.backendId, s.acpAgent, engineHas('acp_presets'))) {
 			s.surface = 'tui';
 			startDraft(id);
 		}
@@ -536,22 +572,35 @@ export class SessionStore {
 		const style = s.draftStyle;
 		s.draftStyle = undefined;
 		const model = pick?.model || s.chat.model;
+		// An ACP agent takes no /model before its conversation opens: the
+		// picks are start options it applies once open.
+		const acp = s.backendId === 'acp';
 		// The reply style, model and effort picked while a draft go first; the
 		// held first message follows.
 		const applyPick = () => {
 			if (style && caps(s.chat).replyStyles) dispatch(s.id, { op: 'set_style', style });
-			if (!pick || !model) return;
+			if (acp || !pick || !model) return;
 			const effort = pick.effort ?? '';
 			dispatch(s.id, { op: 'command', input: effort ? `/model ${model} ${effort}` : `/model ${model}` });
 		};
+		// Claude Code / Codex off the gateway: the custom provider picked (the
+		// daemon takes the tool's default otherwise, and keeps it after).
+		const provider = s.draftToolProvider;
+		s.draftToolProvider = undefined;
+		const startOpts =
+			acp && pick
+				? { ...(pick.model ? { model: pick.model } : {}), ...(pick.effort ? { effort: pick.effort } : {}) }
+				: provider !== undefined && !s.gateway && engineHas('tool_providers')
+					? { tool_provider: provider }
+					: undefined;
 		const want = s.draftWorktree;
 		s.draftWorktree = undefined;
 		if (want) {
-			void this.#startInWorktree(s, project, want.base, applyPick);
+			void this.#startInWorktree(s, project, want.base, applyPick, startOpts);
 			return;
 		}
 		(project.newFolder ? this.#chatFolder(project, s.id) : Promise.resolve())
-			.then(() => this.#spawn(s, project.path, applyPick))
+			.then(() => this.#spawn(s, project.path, applyPick, startOpts))
 			.then(() => {
 				// Renamed while a draft, before it had a daemon session.
 				if (s.chat.title !== UNTITLED) this.#share(s, { title: s.chat.title });
@@ -568,7 +617,7 @@ export class SessionStore {
 	 *  opened as a project of its own (a parallel task's), and the draft
 	 *  moves there and starts in it. When it cannot be made, the draft stays
 	 *  where it was, its message back in the composer. */
-	async #startInWorktree(s: Session, project: Project, base: string, after: () => void) {
+	async #startInWorktree(s: Session, project: Project, base: string, after: () => void, startOpts?: Record<string, unknown>) {
 		const first = peekHeldOps(s.id).find((op) => op.op === 'user_message');
 		const text = typeof first?.content === 'string' ? first.content : '';
 		const note: Extract<Session['chat']['messages'][number], { kind: 'system' }> = { kind: 'system', text: t('chat.worktree.creating') };
@@ -587,7 +636,7 @@ export class SessionStore {
 			tree.lastBackend = live.backendId;
 			this.activeId = live.id;
 			SessionStore.onWorktree?.(tree, project);
-			this.#spawn(live, tree.path, after)
+			this.#spawn(live, tree.path, after, startOpts)
 				.then(() => {
 					if (live.chat.title !== UNTITLED) this.#share(live, { title: live.chat.title });
 				})
@@ -687,7 +736,8 @@ export class SessionStore {
 	async switchBackend(id: string, backend: BackendId, acpAgent?: AcpAgentRef) {
 		const s = this.allSessions.find((x) => x.id === id);
 		if (!s) return;
-		if (s.backendId === backend && (backend !== 'acp' || s.acpAgent?.id === acpAgent?.id)) return;
+		if (acpAgent?.builtin && acpAgent.id === 'opencode') acpAgent = { ...acpAgent, opencode: true };
+		if (s.backendId === backend && (backend !== 'acp' || (s.acpAgent?.id === acpAgent?.id && !!s.acpAgent?.builtin === !!acpAgent?.builtin))) return;
 		if (s.chat.userTurns > 0 || s.restored) return;
 		if (backend === 'acp' && !acpAgent) return; // nothing to launch
 		if (s.draft) {
@@ -712,6 +762,7 @@ export class SessionStore {
 			chat.acpAgentId = acpAgent.id;
 			chat.acpAgentName = acpAgent.name;
 			chat.acpOpencode = !!acpAgent.opencode;
+			if (acpAgent.noApprovals) chat.followEngineMode = true;
 			if (project) project.lastAcpAgent = acpAgent;
 		} else {
 			s.acpAgent = undefined;
@@ -742,6 +793,7 @@ export class SessionStore {
 			chat.acpAgentId = agent.id;
 			chat.acpAgentName = agent.name;
 			chat.acpOpencode = !!agent.opencode;
+			if (agent.noApprovals) chat.followEngineMode = true;
 		}
 		const adapter = createLynShenAdapter();
 		registerAdapter(s.id, adapter);
@@ -751,6 +803,7 @@ export class SessionStore {
 		s.acpAgent = agent;
 		s.draftPick = undefined;
 		s.draftStyle = undefined;
+		s.draftToolProvider = undefined;
 		this.#makeDraft(s);
 	}
 
@@ -1319,6 +1372,22 @@ export class SessionStore {
 		}
 	}
 
+	/** A new Claude Code / Codex conversation starts on one of the tool's
+	 *  custom providers (`provider`, its id), or ('') on the tool's own login
+	 *  or config, instead of the tool's default; off the gateway. `model`:
+	 *  the provider's default, shown until it starts. */
+	setDraftToolProvider(id: string, provider: string, model?: string) {
+		const s = this.allSessions.find((x) => x.id === id);
+		if (!s?.draft || (s.backendId !== 'claude' && s.backendId !== 'codex')) return;
+		s.gateway = false;
+		s.draftToolProvider = provider;
+		if (model) {
+			s.draftPick = { ...s.draftPick, model };
+			s.chat.model = model;
+			s.chat.modelLabel = '';
+		}
+	}
+
 	/** Run this Claude Code / Codex / OpenCode session through the LynShen
 	 *  gateway (`lynshen`, optionally on `model`) or the provider in the user's
 	 *  own config (`system`). Only this session's process changes; other
@@ -1326,13 +1395,15 @@ export class SessionStore {
 	async applyToolProfile(id: string, mode: 'system' | 'lynshen', model?: string) {
 		const s = this.allSessions.find((x) => x.id === id);
 		if (!s) return;
-		const opencode = s.backendId === 'acp' && s.chat.acpOpencode;
-		if (s.backendId !== 'claude' && s.backendId !== 'codex' && !opencode) return;
+		// OpenCode, and a built-in agent that runs on the gateway (all of them
+		// do; `engine_caps` says so once it runs).
+		const acpGateway = s.backendId === 'acp' && (s.chat.acpOpencode || (!!s.acpAgent?.builtin && (s.chat.agentGateway || !s.chat.engineCaps)));
+		if (s.backendId !== 'claude' && s.backendId !== 'codex' && !acpGateway) return;
 		s.gateway = mode === 'lynshen';
 		// A draft starts that way with its first message.
 		if (s.draft) {
 			if (model) {
-				s.draftPick = { model };
+				s.draftPick = { ...s.draftPick, model };
 				s.chat.model = model;
 				s.chat.modelLabel = '';
 			}
@@ -1662,10 +1733,29 @@ export class SessionStore {
 	 *  TUI can resume, so a fresh empty chat and ACP sessions are a no-op. */
 	openInTui(id: string) {
 		const s = this.allSessions.find((x) => x.id === id);
-		if (!s || s.surface === 'tui' || s.chat.switching || !canHandOffToTui(s.backendId)) return;
+		if (!s || s.surface === 'tui' || s.chat.switching || !canHandOffToTui(s.backendId, s.acpAgent, engineHas('acp_presets'))) return;
 		if (!isValidResumeSessionId(s.chat.sessionId) || !(s.chat.resumable || s.restored)) return;
 		if (!daemon.sessionOf(id)) return;
 		s.surface = 'tui';
+	}
+
+	/** The conversation is in its TUI on another client (or was left there
+	 *  by this one before a restart): this tile views that terminal too
+	 *  (`ChatState.terminal`, a daemon with `term_attach`). */
+	viewTui(id: string) {
+		const s = this.allSessions.find((x) => x.id === id);
+		if (!s || s.surface === 'tui' || !s.chat.terminal || !daemon.sessionOf(id)) return;
+		s.surface = 'tui';
+	}
+
+	/** The daemon connection came back while this conversation was in its
+	 *  TUI: open and watch it again. A session still in its TUI is only
+	 *  watched (its snapshot names the terminal); one whose TUI ended with
+	 *  the daemon starts its engine. */
+	rewatch(id: string): Promise<void> {
+		const s = this.allSessions.find((x) => x.id === id);
+		if (!s || daemon.sessionOf(id)) return Promise.resolve();
+		return this.#spawn(s, this.projectPathOf(id)).catch((e) => this.#engineFailed(s.chat, e));
 	}
 
 	/** Back to the GUI once the TUI has exited: the daemon has started the
@@ -1752,7 +1842,13 @@ export class SessionStore {
 			// any, never start a bare 'acp' (there is no command to run).
 			const savedAgent =
 				t.acpAgent && typeof t.acpAgent.id === 'string' && typeof t.acpAgent.name === 'string'
-					? { id: t.acpAgent.id, name: t.acpAgent.name, ...(t.acpAgent.opencode === true ? { opencode: true } : {}) }
+					? {
+							id: t.acpAgent.id,
+							name: t.acpAgent.name,
+							...(t.acpAgent.opencode === true ? { opencode: true } : {}),
+							...(t.acpAgent.builtin === true ? { builtin: true } : {}),
+							...(t.acpAgent.noApprovals === true ? { noApprovals: true } : {})
+						}
 					: undefined;
 			let acpAgent = backend === 'acp' ? (savedAgent ?? proj.lastAcpAgent) : undefined;
 			if (backend === 'acp' && !acpAgent) {
@@ -1842,7 +1938,9 @@ export class SessionStore {
 					proj.lastAcpAgent = {
 						id: p.lastAcpAgent.id,
 						name: p.lastAcpAgent.name,
-						...(p.lastAcpAgent.opencode === true ? { opencode: true } : {})
+						...(p.lastAcpAgent.opencode === true ? { opencode: true } : {}),
+						...(p.lastAcpAgent.builtin === true ? { builtin: true } : {}),
+						...(p.lastAcpAgent.noApprovals === true ? { noApprovals: true } : {})
 					};
 				}
 				if (p.worktree) {

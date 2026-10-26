@@ -22,6 +22,7 @@ import type { AgentView, DaemonSessionView } from '$lib/agents.svelte';
 import type { WorkspaceView } from './store.svelte';
 import type { DispatchView } from './dispatch.svelte';
 import { engine } from '$lib/engineVersion.svelte';
+import type { AcpBuiltin } from '$lib/protocol';
 
 /** A computer's lists as kept on the phone (see cache.ts). */
 type Lists = {
@@ -85,6 +86,7 @@ export class HostConnection {
 	#socket: SocketLike | null = null;
 	#stopped = false;
 	#saveTimer: ReturnType<typeof setTimeout> | undefined;
+	#builtins: Promise<AcpBuiltin[]> | null = null;
 
 	constructor(
 		id: string,
@@ -180,6 +182,16 @@ export class HostConnection {
 		return this.scopes === null || this.scopes.includes(scope);
 	}
 
+	/** The computer's built-in ACP agents (`acp_presets`): asked once per
+	 *  connection, since the daemon asks each program its version to answer. */
+	acpBuiltins(): Promise<AcpBuiltin[]> {
+		this.#builtins ??= this.daemon
+			.request({ op: 'acp_presets' })
+			.then((reply) => (Array.isArray(reply.presets) ? (reply.presets as AcpBuiltin[]) : []));
+		this.#builtins.catch(() => (this.#builtins = null));
+		return this.#builtins;
+	}
+
 	/** Paired, and the computer has not confirmed this device yet. */
 	get awaitingConfirm(): boolean {
 		return !!this.checkCode && !this.everConnected;
@@ -210,6 +222,7 @@ export class HostConnection {
 			// The lists stay, as last seen, until the computer is back.
 			this.agents.disconnected();
 			this.projects.reset();
+			this.#builtins = null;
 		};
 		this.daemon.onFrame = (id, raw) => this.#routes.get(id)?.onFrame(raw);
 		this.daemon.onExit = (id) => this.#routes.get(id)?.onExit();

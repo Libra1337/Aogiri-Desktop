@@ -8,6 +8,9 @@
 	//   &features=queue,files    the computer's daemon has the queue and files ops
 	//   &deliver                 the session's last turn presented an image, a
 	//                           video and a page (fs_image answers them)
+	//   &tui                     the session s-cache is in its TUI on the
+	//                           computer (`surface` names t-9); term_attach
+	//                           replays its screen, term_input is echoed
 	// window.__remoteOps: every op the page sent; __remoteSend(frame) sends
 	// one more frame from the computer.
 	import { onMount, type Component } from 'svelte';
@@ -127,6 +130,7 @@
 							]
 						});
 						this.emit({ type: 'attended', session: op.session, attended: true });
+						if (params.has('tui') && op.session === SESSION) this.emit({ type: 'surface', session: op.session, surface: 'tui', term: 't-9', client: 1 });
 						if (op.session === SESSION && !approved) this.emit(approval);
 					}, 30);
 					return;
@@ -148,6 +152,33 @@
 					if (/\.png$/.test(path)) return answer({ type: 'fs_image', data: imageSrc() });
 					return answer({ type: 'error', message: `not an image or a video: ${path}` });
 				}
+				// B11: the computer's built-in agents, a new session, its TUI.
+				case 'acp_presets':
+					return answer({
+						type: 'acp_presets',
+						presets: [
+							{ id: 'opencode', name: 'OpenCode', status: 'ready', path: '/usr/local/bin/opencode', version: '1.19.2', min_version: '1.0.0', below_version: '2.0.0', approvals: true, gateway: true, install: 'npm i -g opencode-ai@1', tui: true },
+							{ id: 'omp', name: 'oh-my-pi', status: 'missing', path: null, version: null, min_version: null, below_version: null, approvals: true, gateway: true, install: 'bun install -g @oh-my-pi/pi-coding-agent', tui: true },
+							{ id: 'pi', name: 'Pi', status: 'ready', path: '/usr/local/bin/pi', version: '0.82.1', min_version: '0.81.0', below_version: null, approvals: false, gateway: true, install: 'npm install -g @earendil-works/pi-coding-agent', tui: true }
+						]
+					});
+				case 'session_create':
+					return answer({ type: 'session_created', session: 's-new' });
+				case 'term_attach':
+					answer({ type: 'term_attached', term: op.term, cols: 80, rows: 24 });
+					setTimeout(() => this.emit({ type: 'term_output', term: op.term, data: btoa('LynShen TUI on the computer\r\n> '), replay: true }), 40);
+					return;
+				case 'session_tui':
+					answer({ type: 'term_opened', term: 't-9' });
+					setTimeout(() => this.emit({ type: 'term_output', term: 't-9', data: btoa('> ') }), 40);
+					return;
+				case 'term_input':
+					setTimeout(() => this.emit({ type: 'term_output', term: op.term, data: op.data }), 10);
+					return;
+				case 'term_ack':
+				case 'term_detach':
+				case 'term_resize':
+					return;
 				case 'feedback_send':
 					// ?oldEngine: a daemon before feedback_send.
 					if (params.has('oldEngine')) return answer({ type: 'error', message: 'feedback_send requires session' });
