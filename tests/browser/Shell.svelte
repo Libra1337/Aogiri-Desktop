@@ -99,6 +99,12 @@
 	//                           goes to the navigator (`window.__shellStore`)
 	//   &forked                 the conversation is a fork of 浅色主题调色 after
 	//                           its first turn (its strip, 带回结论)
+	//   &connect[=<n>]          relay v2 (with &relay=v2): n phones or browsers of
+	//                           the account ask to connect (1 by default), as
+	//                           +page.svelte shows them (ConnectRequestDialog);
+	//                           `window.__daemon.decided` the answers,
+	//                           `window.__connectRequest(frame)` sends another,
+	//                           `window.__notified` the system notifications
 	//   &deliver[=old]          a third turn that presented an image, a video and
 	//                           a page, proposed a scheduled task and started a
 	//                           conversation (=old: a daemon whose tasks carry no
@@ -126,6 +132,8 @@
 	import Toaster from '../../src/lib/ui/Toaster.svelte';
 	import CornerNotices from '../../src/lib/ui/CornerNotices.svelte';
 	import { devServers } from '../../src/lib/devServers.svelte';
+	import ConnectRequestDialog from '../../src/lib/ConnectRequestDialog.svelte';
+	import { connectRequests } from '../../src/lib/connectRequests.svelte';
 	import TrialGrantCard from '../../src/lib/TrialGrantCard.svelte';
 	import { trial } from '../../src/lib/trial.svelte';
 	import { SessionStore } from '../../src/lib/session.svelte';
@@ -647,6 +655,22 @@
 		};
 		void daemon.connect();
 	}
+	// ?shell&connect: requests waiting when the window connects (read by
+	// `connect_requests` on hello), and one more arriving while it shows.
+	if (mode.has('connect')) {
+		const n = Number(mode.get('connect') || 1);
+		const at = Date.now();
+		daemonState.connectRequests = [
+			{ request: 'cr-1', name: 'iPhone 16 Pro', client: 'aogiri-phone', check: '482913', at },
+			{ request: 'cr-2', name: 'Aogiri Web · Safari · iOS', client: 'lynshen-web', check: '051776', at: at + 1 }
+		].slice(0, n);
+		const notified: string[] = [];
+		connectRequests.onRequest = (r) => notified.push(r.name);
+		daemon.onEvent = (frame) => connectRequests.handle(frame);
+		daemon.onHello = () => void connectRequests.sync();
+		void daemon.connect();
+		Object.assign(window, { __connectRequest: (frame: Record<string, unknown>) => daemonState.emit({ type: 'connect_request', ...frame }), __notified: notified });
+	}
 	if (deliverMode === 'old') daemonState.old = true;
 	if (deliverMode !== null) void daemon.connect();
 	if (mode.has('cards') || mode.has('styles') || mode.has('recap') || queueMode !== null || mode.has('openfile') || deliverMode !== null || acpMode || mode.has('tui')) {
@@ -828,6 +852,7 @@
 					{@render chat()}
 				{/if}
 			</div>
+			<ConnectRequestDialog />
 			{#if settings}
 				<!-- 导入's result: folders added and conversations opened go to `window.__opened`. -->
 				<SettingsPage

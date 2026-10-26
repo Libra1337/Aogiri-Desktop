@@ -16,7 +16,7 @@ describe('phone page CSP', () => {
 		const csp = policy(inlineScriptHashes(html));
 		assert.ok(csp.includes(`script-src 'self' ${sha('boot()')} ${sha('\n\tstart()\n')}`));
 		assert.doesNotMatch(csp, /script-src[^;]*unsafe/);
-		for (const part of ["object-src 'none'", "base-uri 'none'", "connect-src 'self' wss://app.lynshen.org", "media-src 'self' blob:"]) assert.ok(csp.includes(part), part);
+		for (const part of ["object-src 'none'", "base-uri 'none'", "connect-src 'self' wss://app.lynshen.org https://www.lynshen.org", "media-src 'self' blob:"]) assert.ok(csp.includes(part), part);
 	});
 
 	it('goes first in <head>, once', () => {

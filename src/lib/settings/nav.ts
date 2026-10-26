@@ -13,6 +13,8 @@ export type SectionKey =
 	| 'purchase'
 	| 'invite'
 	| 'devices'
+	/** 远程访问: phones and the web reaching this computer (relay, account, pairing). */
+	| 'remote'
 	| 'usage'
 	| 'voice'
 	| 'providers'
@@ -33,16 +35,15 @@ export type SectionKey =
 	| 'apptools'
 	| 'acp'
 	| 'import'
-	| 'daemon'
 	/** 聊天连接: chat bots in the daemon (Telegram, …). */
 	| 'chat'
 	| 'updates';
 
 export const GROUPS: { key: string; sections: SectionKey[] }[] = [
-	{ key: 'app', sections: ['general', 'shortcuts', 'account', 'purchase', 'invite', 'devices', 'usage', 'voice'] },
+	{ key: 'app', sections: ['general', 'shortcuts', 'account', 'purchase', 'invite', 'devices', 'remote', 'usage', 'voice'] },
 	{ key: 'models', sections: ['providers', 'models', 'styles', 'network'] },
 	{ key: 'agents', sections: ['agents', 'sandbox', 'team', 'apptools', 'acp', 'skills', 'plugins', 'mcp', 'import'] },
-	{ key: 'system', sections: ['daemon', 'chat', 'updates'] }
+	{ key: 'system', sections: ['chat', 'updates'] }
 ];
 
 const KEYS = new Set<string>(GROUPS.flatMap((g) => g.sections));
@@ -52,6 +53,8 @@ const KEYS = new Set<string>(GROUPS.flatMap((g) => g.sections));
 export function resolveSection(key: string | undefined): SectionKey {
 	if (key === 'overview') return 'usage';
 	if (key === 'market') return 'skills';
+	// 远程访问 was the daemon's page before it had one of its own.
+	if (key === 'daemon') return 'remote';
 	if (key && KEYS.has(key)) return key as SectionKey;
 	return 'general';
 }
@@ -161,8 +164,9 @@ export const ROWS: SearchRow[] = [
 	{ section: 'team', id: 'team-hook-agent_idle', titleKey: 'settings.team.hook.agent_idle', descKey: 'settings.team.hookHint.agent_idle' },
 	{ section: 'acp', id: 'acp-agents', titleKey: 'settings.section.acp' },
 	{ section: 'import', id: 'import-scan', titleKey: 'settings.import.title', descKey: 'settings.import.intro' },
-	{ section: 'daemon', id: 'relay', titleKey: 'settings.backend.relayToggle', descKey: 'settings.backend.relayHint' },
-	{ section: 'daemon', id: 'devices', titleKey: 'settings.backend.devices' },
+	{ section: 'remote', id: 'remote-account', titleKey: 'settings.remote.accountTitle', descKey: 'settings.remote.accountHint' },
+	{ section: 'remote', id: 'relay', titleKey: 'settings.backend.relayToggle', descKey: 'settings.backend.relayHint' },
+	{ section: 'remote', id: 'devices', titleKey: 'settings.backend.devices', descKey: 'settings.remote.devicesHint' },
 	{ section: 'chat', id: 'chat-connectors', titleKey: 'settings.section.chat', descKey: 'settings.chat.intro' },
 	{ section: 'chat', id: 'chat-add', titleKey: 'settings.chat.addBot', descKey: 'settings.chat.addBotHint' },
 	{ section: 'updates', id: 'app-version', titleKey: 'settings.update.currentVersion' },

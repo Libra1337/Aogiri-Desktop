@@ -392,6 +392,11 @@ if (panels || shell) {
   // ?chats[=empty|error|old|all]: Settings → 聊天连接's sample (fakeDaemon.ts).
   daemonState.chats = params.get('chats') ?? '';
   daemonState.pendingPhone = params.has('pending');
+  // ?relay=v2|signedout: 远程访问 on a daemon with account remote access
+  // (relay v2); &relayOn: the relay switch on.
+  const relayMode = params.get('relay');
+  daemonState.relay = relayMode === 'v2' || relayMode === 'signedout' ? relayMode : '';
+  daemonState.relayOn = params.has('relayOn');
   daemonState.connectors = (await import('./fakeDaemon')).chatSample(daemonState.chats);
 }
 // ?remote: the phone remote page's conversation (Remote.svelte), in a
@@ -400,7 +405,10 @@ const remote = params.has('remote');
 // ?remoteHost: the phone page's computer view on a scripted computer
 // (RemoteHost.svelte): the list, a session waiting for an approval, 通知.
 const remoteHost = params.has('remoteHost');
-if (remote || remoteHost || params.has('scheduleBoard')) Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
+// ?remoteAccount: the phone page's account part (RemoteAccount.svelte).
+const remoteAccount = params.has('remoteAccount');
+if (remoteAccount && params.has('signedIn')) localStorage.setItem('lynshen-remote-account', JSON.stringify({key: 'sk-web-test', user: {id: 'u1', username: 'chad'}}));
+if (remote || remoteHost || remoteAccount || params.has('scheduleBoard')) Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
 document.documentElement.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
-const { default: Fixture } = params.has('scheduleBoard') ? await import('./Schedules.svelte') : params.has('addmenu') ? await import('./AddMenu.svelte') : params.has('editor') ? await import('./Editor.svelte') : remoteHost ? await import('./RemoteHost.svelte') : remote ? await import('./Remote.svelte') : shell ? await import('./Shell.svelte') : panels ? await import('./Panels.svelte') : await import('./Regression.svelte');
+const { default: Fixture } = remoteAccount ? await import('./RemoteAccount.svelte') : params.has('scheduleBoard') ? await import('./Schedules.svelte') : params.has('addmenu') ? await import('./AddMenu.svelte') : params.has('editor') ? await import('./Editor.svelte') : remoteHost ? await import('./RemoteHost.svelte') : remote ? await import('./Remote.svelte') : shell ? await import('./Shell.svelte') : panels ? await import('./Panels.svelte') : await import('./Regression.svelte');
 mount(Fixture, {target:document.getElementById('app')!});

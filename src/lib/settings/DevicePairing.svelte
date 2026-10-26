@@ -1,15 +1,21 @@
 <script lang="ts">
-	// Settings → 远程访问 (rows inside a SettingsSection): the relay
-	// switch and status (relay_status / relay_set), "add device" with a QR code
-	// of a one-time pairing link (pair_link; pair_start for the LAN address when
-	// the relay is off), the paired devices with revoke, and the LAN/Tailscale
-	// address as an advanced alternative.
+	// Settings → 远程访问 (rows inside SettingsSections). Remote access
+	// belongs to the LynShen account (relay v2, LynShen-CLI
+	// docs/relay-protocol.md §7): this computer's account and its relay mode
+	// (relay_status `signed_in`, `mode`, `user`), the relay switch, the paired
+	// devices with their client, scopes and revoke, the pairing code as the
+	// fallback for a phone outside the account or an older Aogiri (pair_link),
+	// and the LAN/Tailscale address as an advanced option of a signed-in
+	// computer. A daemon from before v2 has no `signed_in`: the page then
+	// works as before (relay v1, pairing codes, LAN).
 	import { onDestroy, onMount } from 'svelte';
 	import DeviceMobileIcon from 'phosphor-svelte/lib/DeviceMobileIcon';
 	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 	import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
+	import SignInIcon from 'phosphor-svelte/lib/SignInIcon';
+	import QrCodeIcon from 'phosphor-svelte/lib/QrCodeIcon';
 	import { renderSVG } from 'uqr';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -17,15 +23,24 @@
 	import Switch from '$lib/ui/Switch.svelte';
 	import { daemon } from '$lib/protocol';
 	import { isChatDevice } from '$lib/chatConnectors';
+	import { clientKind } from '$lib/connectRequests.svelte';
+	import { account } from '$lib/accountSession.svelte';
 	import { t } from '$lib/i18n';
 	import SettingsRow from './SettingsRow.svelte';
 
 	let {
 		address = $bindable(),
-		onAddressChange
-	}: { address: string; onAddressChange: () => void } = $props();
+		onAddressChange,
+		onSignIn
+	}: {
+		address: string;
+		onAddressChange: () => void;
+		/** The app's LynShen sign-in (Settings → 账户): the daemon reads the same key. */
+		onSignIn?: () => void;
+	} = $props();
 
-	type Device = { id: string; name: string; paired_at: number; pending?: boolean; check?: string; scopes?: string[]; last_seen?: number | null };
+	/** `client`: the sign-in client of a device of the account (v2 daemons). */
+	type Device = { id: string; name: string; paired_at: number; pending?: boolean; check?: string; scopes?: string[]; last_seen?: number | null; client?: string };
 	/** The elevated scopes a phone may be granted (LynShen-CLI scopes.rs). */
 	const SCOPES = [
 		{ id: 'full_auto', label: 'settings.backend.scopeFullAuto' },
@@ -35,7 +50,8 @@
 	] as const;
 	/** The device whose scopes are open. */
 	let openScopes = $state<string | null>(null);
-	type RelayStatus = { enabled: boolean; connected: boolean; host?: string; url?: string };
+	/** `signed_in` undefined: a daemon from before account remote access. */
+	type RelayStatus = { enabled: boolean; connected: boolean; host?: string; url?: string; signed_in?: boolean; refused?: boolean; mode?: 'v1' | 'v2' | 'off'; user?: string };
 	let devices = $state<Device[]>([]);
 	/** The pairing on show: its code, expiry and what the QR code holds. */
 	let pairing = $state<{ code: string; expires_at: number; link: string } | null>(null);
@@ -45,6 +61,11 @@
 	let error = $state('');
 	let copied = $state(false);
 	let lanOpen = $state(false);
+	/** The pairing code (fallback) is open on a v2 computer. */
+	let codeOpen = $state(false);
+	/** A daemon that knows the account (relay v2). */
+	const v2Daemon = $derived(typeof relay?.signed_in === 'boolean');
+	const signedIn = $derived(relay?.signed_in === true);
 	let now = $state(Date.now());
 	let poll: ReturnType<typeof setInterval> | null = null;
 	let tick: ReturnType<typeof setInterval> | null = null;
@@ -71,7 +92,11 @@
 				enabled: Boolean(reply.enabled),
 				connected: Boolean(reply.connected),
 				host: typeof reply.host === 'string' ? reply.host : undefined,
-				url: typeof reply.url === 'string' ? reply.url : undefined
+				url: typeof reply.url === 'string' ? reply.url : undefined,
+				signed_in: typeof reply.signed_in === 'boolean' ? reply.signed_in : undefined,
+				refused: reply.refused === true,
+				mode: reply.mode === 'v1' || reply.mode === 'v2' || reply.mode === 'off' ? reply.mode : undefined,
+				user: typeof reply.user === 'string' ? reply.user : undefined
 			};
 			relayOn = relay.enabled;
 			relayError = '';
@@ -183,8 +208,15 @@
 	}
 
 	onMount(() => {
-		void refresh();
-		void loadRelay();
+		// The page can be the first to need the daemon (opened from search,
+		// or before any conversation): connect, then read.
+		daemon
+			.connect()
+			.catch(() => {})
+			.then(() => {
+				void refresh();
+				void loadRelay();
+			});
 		// The relay connects in the background; keep the status line current,
 		// and a phone that paired (and waits to be confirmed) shows up.
 		statusPoll = setInterval(() => {
@@ -198,11 +230,35 @@
 	});
 </script>
 
-<SettingsRow id="relay" title={t('settings.backend.relayToggle')} description={t('settings.backend.relayHint')}>
+{#if v2Daemon}
+	<!-- This computer's account: remote access goes through it. -->
+	<SettingsRow id="remote-account" title={t('settings.remote.accountTitle')} description={signedIn ? t('settings.remote.accountHint') : t('settings.remote.signInHint')}>
+		{#snippet detail()}
+			<span class="status">
+				{#if relay?.refused}
+					<span class="warn">{t('settings.remote.refused')}</span>
+				{:else if signedIn}
+					<span class="dot ok"></span>{account.user ? t('settings.remote.boundTo', { name: account.user.username || account.user.email || '' }) : t('settings.remote.bound')}
+				{:else}
+					<span class="dot"></span>{t('settings.remote.notBound')}
+				{/if}
+			</span>
+		{/snippet}
+		{#if !signedIn && onSignIn}
+			<Button size="sm" variant="primary" onclick={onSignIn}><SignInIcon size={13} /> {t('settings.remote.signIn')}</Button>
+		{/if}
+	</SettingsRow>
+{/if}
+
+<SettingsRow id="relay" title={t('settings.backend.relayToggle')} description={v2Daemon ? t('settings.remote.relayHint') : t('settings.backend.relayHint')}>
 	{#snippet detail()}
 		<span class="status">
 			{#if relayError}
 				<span class="warn">{t('settings.backend.relayUnavailable', { error: relayError })}</span>
+			{:else if relay?.enabled && relay.connected && relay.mode === 'v2'}
+				<span class="dot ok"></span>{t('settings.remote.connectedV2')}
+			{:else if relay?.enabled && relay.connected && v2Daemon}
+				<span class="dot ok"></span>{t('settings.remote.connectedV1')}
 			{:else if relay?.enabled && relay.connected}
 				<span class="dot ok"></span>{t('settings.backend.relayConnected', { host: relay.host ?? '' })}
 			{:else if relay?.enabled}
@@ -215,11 +271,88 @@
 	<Switch bind:checked={relayOn} label={t('settings.backend.relayToggle')} onChange={setRelay} />
 </SettingsRow>
 
-<SettingsRow id="devices" title={t('settings.backend.devices')}>
-	{#if !pairing}
+{#if v2Daemon && signedIn}
+	<SettingsRow stacked>
+		<p class="hint migrate">{t('settings.remote.migration')}</p>
+	</SettingsRow>
+{/if}
+
+<SettingsRow id="devices" title={t('settings.backend.devices')} description={v2Daemon ? t('settings.remote.devicesHint') : undefined}>
+	{#if !pairing && !v2Daemon}
 		<Button size="sm" onclick={addDevice}><DeviceMobileIcon size={13} /> {t('settings.backend.addDevice')}</Button>
 	{/if}
 </SettingsRow>
+
+<SettingsRow stacked>
+	<div class="devices">
+		{#if devices.length === 0}
+			<span class="none">{t('settings.backend.noDevices')}</span>
+		{/if}
+		{#each devices as device (device.id)}
+			{#if device.pending}
+				<!-- Paired with the code just shown; trusted once the user sees the
+				     phone shows the same check code. -->
+				<div class="confirm" role="alertdialog" aria-label={t('settings.backend.pairPending', { name: device.name })}>
+					<strong>{t('settings.backend.pairPending', { name: device.name })}</strong>
+					<span class="check">{(device.check ?? '').slice(0, 3)} {(device.check ?? '').slice(3)}</span>
+					<span class="hint">{t('settings.backend.pairPendingHint')}</span>
+					<div class="confirm-actions">
+						<Button size="sm" variant="primary" onclick={() => confirmDevice(device)}>{t('settings.backend.pairConfirm')}</Button>
+						<Button size="sm" variant="ghost" onclick={() => revoke(device)}>{t('settings.backend.pairReject')}</Button>
+					</div>
+				</div>
+			{:else}
+				<div class="device">
+					<DeviceMobileIcon size={14} />
+					<button class="name link" aria-expanded={openScopes === device.id} onclick={() => (openScopes = openScopes === device.id ? null : device.id)}>
+						{device.name}
+						{#if device.scopes?.length}<span class="granted">+{device.scopes.length}</span>{/if}
+					</button>
+					{#if clientKind(device.client)}<span class="kind">{t(clientKind(device.client))}</span>{/if}
+					<span class="when">{new Date(device.paired_at).toLocaleDateString()}</span>
+					<Button size="sm" variant="ghost" onclick={() => revoke(device)}>{t('settings.backend.revoke')}</Button>
+				</div>
+				{#if openScopes === device.id}
+					<div class="scopes">
+						<span class="scopes-head">{t('settings.backend.deviceScopes')}</span>
+						<span class="hint">{t('settings.backend.deviceScopesHint')}</span>
+						{#each SCOPES as scope (scope.id)}
+							<label class="scope">
+								<span>{t(scope.label)}</span>
+								<Switch
+									checked={device.scopes?.includes(scope.id) ?? false}
+									label={t(scope.label)}
+									onChange={(on) => setScope(device, scope.id, on)}
+								/>
+							</label>
+						{/each}
+					</div>
+				{/if}
+			{/if}
+		{/each}
+		{#if error}<Notice>{error}</Notice>{/if}
+	</div>
+</SettingsRow>
+
+{#if v2Daemon}
+	<!-- The pairing code: for a phone outside the account, or an Aogiri from
+	     before account remote access. -->
+	<SettingsRow stacked>
+		<button class="adv" aria-expanded={codeOpen} onclick={() => (codeOpen = !codeOpen)}>
+			<span class="chev" class:open={codeOpen}><CaretRightIcon size={12} /></span>
+			{t('settings.remote.codeFallback')}
+		</button>
+		{#if codeOpen}
+			<div class="lan">
+				<p class="hint">{t('settings.remote.codeFallbackHint')}</p>
+				{#if !pairing}
+					<div><Button size="sm" disabled={!relay?.enabled} onclick={addDevice}><QrCodeIcon size={13} /> {t('settings.remote.showCode')}</Button></div>
+					{#if !relay?.enabled}<p class="hint">{t('settings.remote.codeNeedsRelay')}</p>{/if}
+				{/if}
+			</div>
+		{/if}
+	</SettingsRow>
+{/if}
 
 {#if pairing}
 	<SettingsRow stacked>
@@ -253,73 +386,34 @@
 	</SettingsRow>
 {/if}
 
-<SettingsRow stacked>
-	<div class="devices">
-		{#if devices.length === 0}
-			<span class="none">{t('settings.backend.noDevices')}</span>
-		{/if}
-		{#each devices as device (device.id)}
-			{#if device.pending}
-				<!-- Paired with the code just shown; trusted once the user sees the
-				     phone shows the same check code. -->
-				<div class="confirm" role="alertdialog" aria-label={t('settings.backend.pairPending', { name: device.name })}>
-					<strong>{t('settings.backend.pairPending', { name: device.name })}</strong>
-					<span class="check">{(device.check ?? '').slice(0, 3)} {(device.check ?? '').slice(3)}</span>
-					<span class="hint">{t('settings.backend.pairPendingHint')}</span>
-					<div class="confirm-actions">
-						<Button size="sm" variant="primary" onclick={() => confirmDevice(device)}>{t('settings.backend.pairConfirm')}</Button>
-						<Button size="sm" variant="ghost" onclick={() => revoke(device)}>{t('settings.backend.pairReject')}</Button>
-					</div>
-				</div>
-			{:else}
-				<div class="device">
-					<DeviceMobileIcon size={14} />
-					<button class="name link" aria-expanded={openScopes === device.id} onclick={() => (openScopes = openScopes === device.id ? null : device.id)}>
-						{device.name}
-						{#if device.scopes?.length}<span class="granted">+{device.scopes.length}</span>{/if}
-					</button>
-					<span class="when">{new Date(device.paired_at).toLocaleDateString()}</span>
-					<Button size="sm" variant="ghost" onclick={() => revoke(device)}>{t('settings.backend.revoke')}</Button>
-				</div>
-				{#if openScopes === device.id}
-					<div class="scopes">
-						<span class="scopes-head">{t('settings.backend.deviceScopes')}</span>
-						<span class="hint">{t('settings.backend.deviceScopesHint')}</span>
-						{#each SCOPES as scope (scope.id)}
-							<label class="scope">
-								<span>{t(scope.label)}</span>
-								<Switch
-									checked={device.scopes?.includes(scope.id) ?? false}
-									label={t(scope.label)}
-									onChange={(on) => setScope(device, scope.id, on)}
-								/>
-							</label>
-						{/each}
-					</div>
+<!-- LAN / Tailscale: an advanced option of a computer signed in to LynShen
+     (an older daemon: always, as before). -->
+{#if !v2Daemon || signedIn}
+	<SettingsRow stacked>
+		<button class="adv" aria-expanded={lanOpen} onclick={() => (lanOpen = !lanOpen)}>
+			<span class="chev" class:open={lanOpen}><CaretRightIcon size={12} /></span>
+			{t('settings.backend.lanAdvanced')}
+		</button>
+		{#if lanOpen}
+			<div class="lan">
+				<input
+					bind:value={address}
+					aria-label={t('settings.backend.remoteLabel')}
+					placeholder={t('settings.backend.remotePlaceholder')}
+					onchange={onAddressChange}
+				/>
+				<p class="hint">{t('settings.backend.lanAdvancedHint')}</p>
+				{#if !relay?.enabled && !pairing}
+					<div><Button size="sm" onclick={addDevice}><DeviceMobileIcon size={13} /> {t('settings.remote.lanCode')}</Button></div>
 				{/if}
-			{/if}
-		{/each}
-		{#if error}<Notice>{error}</Notice>{/if}
-	</div>
-</SettingsRow>
-
-<SettingsRow stacked>
-	<button class="adv" onclick={() => (lanOpen = !lanOpen)}>
-		<span class="chev" class:open={lanOpen}><CaretRightIcon size={12} /></span>
-		{t('settings.backend.lanAdvanced')}
-	</button>
-	{#if lanOpen}
-		<div class="lan">
-			<input
-				bind:value={address}
-				aria-label={t('settings.backend.remoteLabel')}
-				placeholder={t('settings.backend.remotePlaceholder')}
-				onchange={onAddressChange}
-			/>
-			<p class="hint">{t('settings.backend.lanAdvancedHint')}</p>
-		</div>
-	{/if}
-</SettingsRow>
+			</div>
+		{/if}
+	</SettingsRow>
+{:else}
+	<SettingsRow stacked>
+		<p class="hint">{t('settings.remote.lanSignedOut')}</p>
+	</SettingsRow>
+{/if}
 
 <style>
 	.status {
@@ -416,6 +510,13 @@
 		color: var(--dim2);
 		font-size: var(--fs-xs);
 		font-family: var(--font-mono);
+	}
+	.kind {
+		color: var(--dim2);
+		font-size: var(--fs-xs);
+	}
+	.migrate {
+		margin: 0;
 	}
 	.adv {
 		display: inline-flex;

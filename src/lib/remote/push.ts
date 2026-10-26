@@ -1,10 +1,19 @@
 // Notifications on this phone (Web Push). The browser's subscription is
 // made with the relay's key (the relay sends the notifications, see
-// lynshen-relay push.go) and handed to each paired computer, which asks the
+// lynshen-relay push.go). Signed in to the LynShen account, it is registered
+// with the account (relay v2: every computer of the account reads it there);
+// each computer paired over v1 also gets it (`push_subscribe`), and asks the
 // relay to notify it (LynShen-CLI daemon push.rs). The service worker shows
 // them.
 
 import type { DaemonClient } from '$lib/daemon';
+
+/** The account the subscription is registered with (remote/account.svelte.ts). */
+export interface PushAccount {
+	signedIn: boolean;
+	registerPush(subscription: PushSubscriptionJSON): Promise<void>;
+	unregisterPush(endpoint: string): Promise<void>;
+}
 
 const ON = 'lynshen-push-on';
 
@@ -40,12 +49,30 @@ async function subscription(): Promise<PushSubscription> {
 	return registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlKey(key) });
 }
 
-/** Asks for permission and subscribes this browser on `daemons`. */
-export async function enablePush(daemons: DaemonClient[]): Promise<void> {
+/** Asks for permission and subscribes this browser: with the account when
+ *  signed in, and on `daemons` (the computers paired over v1). */
+export async function enablePush(daemons: DaemonClient[], account?: PushAccount): Promise<void> {
 	if ((await Notification.requestPermission()) !== 'granted') throw new Error('notifications were not allowed');
 	const sub = (await subscription()).toJSON();
-	await Promise.all(daemons.map((d) => d.request({ op: 'push_subscribe', subscription: sub })));
+	await Promise.all([
+		...(account?.signedIn ? [account.registerPush(sub)] : []),
+		...daemons.map((d) => d.request({ op: 'push_subscribe', subscription: sub }))
+	]);
 	localStorage.setItem(ON, '1');
+}
+
+/** Registers the subscription with the account again (signed in, or the
+ *  browser renewed it). */
+export async function reregister(account: PushAccount): Promise<void> {
+	if (!pushSupported() || !pushOn() || !account.signedIn) return;
+	await account.registerPush((await subscription()).toJSON());
+}
+
+/** This browser's subscription endpoint, if it has one (to unregister it). */
+export async function pushEndpoint(): Promise<string | undefined> {
+	if (!pushSupported()) return undefined;
+	const registration = await navigator.serviceWorker.ready;
+	return (await registration.pushManager.getSubscription())?.endpoint;
 }
 
 /** Shows a notification on this phone now: a request came while the page
@@ -119,15 +146,18 @@ export async function saveRules(daemon: DaemonClient, rules: Partial<PushRules>)
 	return { ...DEFAULT_RULES, ...((reply.rules as Partial<PushRules>) ?? {}) };
 }
 
-/** Turns notifications off on this phone: every computer forgets this
- *  browser's subscription, and the browser drops it. */
-export async function disablePush(daemons: DaemonClient[]): Promise<void> {
+/** Turns notifications off on this phone: the account and every computer
+ *  forget this browser's subscription, and the browser drops it. */
+export async function disablePush(daemons: DaemonClient[], account?: PushAccount): Promise<void> {
 	localStorage.removeItem(ON);
 	if (!pushSupported()) return;
 	const registration = await navigator.serviceWorker.ready;
 	const existing = await registration.pushManager.getSubscription();
 	if (!existing) return;
-	await Promise.allSettled(daemons.map((d) => d.request({ op: 'push_unsubscribe', endpoint: existing.endpoint })));
+	await Promise.allSettled([
+		...(account?.signedIn ? [account.unregisterPush(existing.endpoint)] : []),
+		...daemons.map((d) => d.request({ op: 'push_unsubscribe', endpoint: existing.endpoint }))
+	]);
 	await existing.unsubscribe();
 }
 

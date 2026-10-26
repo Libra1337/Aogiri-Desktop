@@ -117,7 +117,7 @@
 	import ShellSection from './ShellSection.svelte';
 	import StylesSection from './StylesSection.svelte';
 	import AcpSection from './AcpSection.svelte';
-	import DaemonSection from './DaemonSection.svelte';
+	import RemoteSection from './RemoteSection.svelte';
 	import ChatConnectorsSection from './ChatConnectorsSection.svelte';
 	import McpSection from './McpSection.svelte';
 	import AndroidUseSection from './AndroidUseSection.svelte';
@@ -185,6 +185,7 @@
 		purchase: WalletIcon,
 		invite: GiftIcon,
 		devices: DesktopTowerIcon,
+		remote: DeviceMobileIcon,
 		usage: ChartBarIcon,
 		voice: MicrophoneIcon,
 		providers: PlugsIcon,
@@ -201,7 +202,6 @@
 		apptools: ToolboxIcon,
 		acp: PlugsConnectedIcon,
 		import: TrayArrowDownIcon,
-		daemon: DeviceMobileIcon,
 		chat: ChatsCircleIcon,
 		updates: InfoIcon
 	};
@@ -1536,8 +1536,8 @@
 					<AcpSection />
 				{:else if current === 'import'}
 					<ImportSection {onAddFolders} {onOpenSession} />
-				{:else if current === 'daemon'}
-					<DaemonSection />
+				{:else if current === 'remote'}
+					<RemoteSection onSignIn={() => { section = 'account'; editing = '__monoize__'; }} />
 				{:else if current === 'chat'}
 					<ChatConnectorsSection />
 				{:else if current === 'updates'}

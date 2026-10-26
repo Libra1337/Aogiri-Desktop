@@ -36,8 +36,10 @@ export function policy(hashes) {
 		// A presented video, played from the bytes the computer sent (a blob).
 		"media-src 'self' blob:",
 		"font-src 'self' data:",
-		// The relay and its push key, on this origin.
-		"connect-src 'self' wss://app.lynshen.org",
+		// The relay and its push key, on this origin; the LynShen account
+		// (sign-in, the account's computers, relay tokens, push registration)
+		// on the gateway, which allows this origin (CORS).
+		"connect-src 'self' wss://app.lynshen.org https://www.lynshen.org",
 		"worker-src 'self'",
 		"manifest-src 'self'",
 		"object-src 'none'",

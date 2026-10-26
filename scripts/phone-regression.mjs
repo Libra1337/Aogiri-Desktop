@@ -590,6 +590,95 @@ try {
 				await expect(p.locator('.termview')).toHaveCount(0);
 				await p.close();
 			}
+			// B14 P02: the account (relay v2). Signed out: 用 LynShen 账号登录
+			// runs the gateway's device flow as lynshen-web (approval page in
+			// a new tab, its code here) and lists the account's computers;
+			// rename and remove go to the account; 请求连接 opens the request
+			// screen (the 6-digit code, the countdown); a refused request says
+			// why and offers 再次请求 and the pairing code.
+			{
+				const shots = process.env.B14_SHOTS;
+				const p = await ctx.newPage();
+				p.on('pageerror', (e) => errors.push(e.message));
+				const gw = [];
+				const COMPUTER = { host_id: 'H'.repeat(22), name: 'MacBook Pro', platform: 'macos', version: '0.8.0', static_pub: 'S'.repeat(43), online: true, last_seen_at: Date.now(), created_at: 1 };
+				let computers = [COMPUTER, { ...COMPUTER, host_id: 'W'.repeat(22), name: 'Windows 台式机', platform: 'windows', online: false, last_seen_at: Date.now() - 86_400_000 }];
+				let polls = 0;
+				// The gateway, for this page and the approval tab it opens.
+				const gateway = async (route) => {
+					const req = route.request();
+					const path = new URL(req.url()).pathname;
+					const body = req.postData() ? JSON.parse(req.postData()) : null;
+					gw.push({ method: req.method(), path, body, auth: req.headers()['authorization'] ?? '', device: req.headers()['x-lynshen-device'] ?? '' });
+					const json = (status, b) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(b) });
+					if (path === '/api/desktop/oauth/device') return json(200, { device_code: 'd'.repeat(64), user_code: 'WXYZ-2345', expires_in: 600, interval: 1 });
+					if (path === '/api/desktop/oauth/token') return json(200, ++polls < 2 ? { error: 'authorization_pending' } : { access_token: 'sk-web-test', user: { id: 'u1', username: 'chad' } });
+					if (path === '/api/desktop/oauth/computers' && req.method() === 'GET') return json(200, { computers });
+					if (path.startsWith('/api/desktop/oauth/computers/') && req.method() === 'PATCH') {
+						computers = computers.map((c) => (path.endsWith(c.host_id) ? { ...c, name: body.name } : c));
+						return json(200, { computers });
+					}
+					if (path.startsWith('/api/desktop/oauth/computers/') && req.method() === 'DELETE') {
+						computers = computers.filter((c) => !path.endsWith(c.host_id));
+						return json(200, { computers });
+					}
+					return json(404, { error: { code: 'not_found', message: 'not found' } });
+				};
+				await ctx.route('https://www.lynshen.org/**', gateway);
+				await p.goto(`${base}?remoteAccount`);
+				await expect(p.getByText('用 LynShen 账号登录后，这里会列出登录了同一账号的电脑')).toBeVisible({ timeout: 30000 });
+				const popup = p.waitForEvent('popup');
+				await p.getByRole('button', { name: '用 LynShen 账号登录' }).tap();
+				const approval = await popup;
+				assert.match(approval.url(), /\/oauth\/authorize\?user_code=WXYZ-2345$/);
+				await approval.close();
+				await expect(p.locator('.code')).toHaveText('WXYZ-2345');
+				// Approved: the computers, online first; signed in as the account.
+				const rows = p.locator('.computers li');
+				await expect(rows).toHaveCount(2, { timeout: 15000 });
+				await expect(p.getByText('已登录 chad')).toBeVisible();
+				await expect(rows.nth(0)).toContainText('macOS · 在线');
+				await expect(rows.nth(1)).toContainText('Windows · 最近在线');
+				await expect(rows.nth(1).getByRole('button', { name: '请求连接' })).toBeDisabled();
+				const flow = gw.filter((c) => c.path.endsWith('/device') || c.path.endsWith('/token'));
+				assert.ok(flow.every((c) => c.body.client_id === 'lynshen-web' && !c.auth && /^v1;inst=[A-Za-z0-9_-]{43};host=/.test(c.device)), 'the device flow runs as lynshen-web with the device header');
+				assert.ok(gw.filter((c) => c.path.endsWith('/computers')).every((c) => c.auth === 'Bearer sk-web-test'), 'the list is read with the key');
+				await expect(p.getByText(/以前配对的电脑第一次通过账号连接时会自动绑定到账号/)).toBeVisible();
+				await p.waitForTimeout(400);
+				if (shots && name === 'webkit') await p.screenshot({ path: `${shots}/phone-account-computers.png` });
+				// Renamed for the account; asked to connect.
+				p.once('dialog', (d) => d.accept('工作 Mac'));
+				await rows.nth(0).getByRole('button', { name: '更多操作' }).tap();
+				await p.getByRole('menuitem', { name: '重命名' }).tap();
+				await expect(rows.nth(0)).toContainText('工作 Mac');
+				assert.deepEqual(gw.filter((c) => c.method === 'PATCH').map((c) => c.body), [{ name: '工作 Mac' }]);
+				await rows.nth(0).getByRole('button', { name: '请求连接' }).tap();
+				assert.deepEqual(await p.evaluate(() => window.__opened), ['H'.repeat(22)]);
+				// Removed from the account.
+				p.once('dialog', (d) => d.accept());
+				await rows.nth(1).getByRole('button', { name: '更多操作' }).tap();
+				await p.getByRole('menuitem', { name: '从账号移除' }).tap();
+				await expect(rows).toHaveCount(1);
+				// Kept for the next visit: signed in at once.
+				await p.goto(`${base}?remoteAccount&signedIn&paired`);
+				await expect(p.locator('.computers li').getByRole('button', { name: '打开' })).toBeVisible({ timeout: 30000 });
+				// The request screen: the code the computer shows too, the countdown.
+				await p.goto(`${base}?remoteAccount&waiting`);
+				await expect(p.getByRole('heading', { name: '在「MacBook Pro」上点允许' })).toBeVisible({ timeout: 30000 });
+				await expect(p.locator('.check')).toHaveText('482913');
+				await expect(p.getByText(/等待电脑允许… 1[12]\d 秒/)).toBeVisible();
+				await p.waitForTimeout(400);
+				if (shots && name === 'webkit') await p.screenshot({ path: `${shots}/phone-connect-request.png` });
+				// Refused: why, 再次请求, the pairing code.
+				for (const [error, text] of [['denied', '电脑拒绝了这次连接。'], ['expired', '120 秒内没有人允许。可以再请求一次。'], ['no_desktop', '电脑上没有打开 Aogiri']]) {
+					await p.goto(`${base}?remoteAccount&refused=${error}`);
+					await expect(p.getByText(text)).toBeVisible({ timeout: 30000 });
+					await expect(p.getByRole('button', { name: '再次请求' })).toBeVisible();
+					await expect(p.getByRole('button', { name: '改用配对码' })).toBeVisible();
+				}
+				await ctx.unroute('https://www.lynshen.org/**', gateway);
+				await p.close();
+			}
 			assert.deepEqual(errors, [], 'no page errors');
 			console.log(`${name}: PHONE CHECKS PASSED`);
 		} catch (e) {

@@ -65,6 +65,8 @@
 	import { trial } from '$lib/trial.svelte';
 	import { browser, type WebRef } from '$lib/browser.svelte';
 	import { devServers } from '$lib/devServers.svelte';
+	import ConnectRequestDialog from '$lib/ConnectRequestDialog.svelte';
+	import { connectRequests } from '$lib/connectRequests.svelte';
 	import { prefs } from '$lib/prefs.svelte';
 	import { playChime, unlockChimes, type Chime } from '$lib/chime';
 	import { fmtTokens } from '$lib/usageStats';
@@ -243,6 +245,14 @@
 			toast[event.kind === 'stopped' ? 'error' : 'info'](`${title} · ${event.detail}`, {
 				action: { label: t('shell.desk.title'), run: () => openDesk(event.agent ?? null) }
 			});
+	};
+	// A phone or browser of the account asks to connect (relay v2): the
+	// dialog shows over everything, and a system notification while the
+	// window is in the background.
+	connectRequests.onRequest = (r) => {
+		chime('attention');
+		if (!document.hasFocus())
+			void notify(t('shell.connectRequest.notifyTitle'), t('shell.connectRequest.notifyBody', { name: r.name || t('shell.connectRequest.device'), code: r.check }));
 	};
 	let showSettings = $state(false);
 	let settingsSection = $state<SectionKey>('general');
@@ -1583,17 +1593,21 @@
 				sync.handle(frame);
 				requirements.handle(frame);
 				devServers.handle(frame);
+				connectRequests.handle(frame);
 			};
 			daemon.onDisconnect = () => {
 				agentDirectory.disconnected();
 				sync.reset();
 				devServers.disconnected();
+				connectRequests.disconnected();
 			};
 			// A dev server's notice names the conversation that started it.
 			devServers.titleOf = (sid) => store.allSessions.find((s) => s.chat.sessionId === sid)?.chat.title ?? agentDirectory.sessions.find((s) => s.session === sid)?.title ?? '';
 			daemon.onHello = (version, features) => {
 				engine.version = version;
 				engine.features = features;
+				// Requests made while this window was not connected.
+				void connectRequests.sync();
 				// The terminal shell the settings name, ready for the first terminal.
 				void shells.load();
 				checkDaemonVersion(version).then((outcome) => {
@@ -1747,6 +1761,7 @@
 <Toaster />
 <CornerNotices />
 <ConfirmHost />
+<ConnectRequestDialog />
 {#if dragFiles}<DropLayer count={dragFiles} />{/if}
 
 <div class="app">

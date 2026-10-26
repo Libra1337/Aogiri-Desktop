@@ -74,11 +74,11 @@ Use `⌘` on macOS and `Ctrl` on Windows and Linux.
 
 Remote access is off by default. To enable it:
 
-1. Open Settings → Remote Access and enable relay access.
-2. Select Add Device, then scan the QR code with your phone or open the pairing link.
+1. Sign in to your LynShen account, open Settings → Remote Access and enable relay access.
+2. On the phone or in a browser, sign in to the same account and select Ask to connect on your computer. The computer shows a connect request: compare the 6 digits, then select Allow. A phone outside the account, or an older Aogiri, can use the QR code under Add a device with a pairing code.
 3. View sessions, send messages, and respond to approvals in your phone's browser. You can also start a session on a built-in ACP agent installed on the computer (Pi needs the phone to be allowed "Switch to full auto"). When a conversation is in its TUI, the phone can watch it; a phone allowed "Open a terminal" can also type into it and open it, and one without that permission watches read-only.
 
-Your phone and computer can be on different networks. Connection contents are end-to-end encrypted and cannot be read by the relay service. Paired devices can be revoked at any time.
+Your phone and computer can be on different networks. Connection contents are end-to-end encrypted and cannot be read by the relay service. Paired devices can be revoked at any time. Devices paired before join the account on their first connection through it; after the computer switches accounts, allow them once more. Direct LAN / Tailscale connections are an advanced option for a signed-in computer.
 
 ## Data and privacy
 
