@@ -16,7 +16,10 @@ export function loadToolProviders(tool: ProviderTool, fresh = false): Promise<To
 	let load = fresh ? undefined : loads.get(tool);
 	if (!load) {
 		load = toolProviders(tool).then(
-			(config) => (toolProviderConfigs[tool] = config),
+			(config) => {
+				toolProviderConfigs[tool] = config;
+				return config;
+			},
 			(e) => {
 				loads.delete(tool);
 				throw e;

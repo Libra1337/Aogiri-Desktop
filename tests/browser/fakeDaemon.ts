@@ -65,6 +65,21 @@ export const daemonState = {
 	phoneScopes: [] as string[],
 	/** The scheduled tasks (schedule_list / schedule_save). */
 	schedules: [] as Frame[],
+	/** The built-in ACP agents (acp_presets): OpenCode installed, oh-my-pi
+	 *  not, Pi installed (it never asks). */
+	builtins: [
+		{ id: 'opencode', name: 'OpenCode', status: 'ready', path: '/Users/me/.opencode/bin/opencode', version: '1.19.2', min_version: '1.0.0', below_version: '2.0.0', approvals: true, gateway: true, install: 'npm i -g opencode-ai@1', tui: true },
+		{ id: 'omp', name: 'oh-my-pi', status: 'missing', path: null, version: null, min_version: null, below_version: null, approvals: true, gateway: true, install: 'bun install -g @oh-my-pi/pi-coding-agent', tui: true },
+		{ id: 'pi', name: 'Pi', status: 'ready', path: '/Users/me/.npm-global/bin/pi', version: '0.82.1', min_version: '0.81.0', below_version: null, approvals: false, gateway: true, install: 'npm install -g @earendil-works/pi-coding-agent', tui: true }
+	] as Frame[],
+	/** Claude Code's and Codex's custom providers (tool_providers*), keys
+	 *  apart as the daemon keeps them: a row says `has_key` only. */
+	toolProviders: {
+		claude: { selected: '', providers: [] as Frame[] },
+		codex: { selected: '', providers: [] as Frame[] }
+	} as Record<string, { selected: string; providers: Frame[] }>,
+	/** The keys saved, by `<tool>:<id>` (never sent back). */
+	toolKeys: {} as Record<string, string>,
 	/** The app tools' switches (app_tools / app_tools_set). */
 	appTools: { present_files: true, propose_schedule: true, sessions: 'on' } as Frame,
 	/** Leave the catalog's first request unanswered (a stuck daemon). */
@@ -380,6 +395,39 @@ function androidReply(op: Frame): Frame {
 	};
 }
 
+/** Custom providers as the daemon answers them: the key is kept apart and
+ *  never in a reply; the models list answers the key `sk-good` only. */
+function toolProviderReply(op: Frame): Frame {
+	const s = daemonState;
+	if (s.old) return { type: 'error', message: `unknown op ${op.op}` };
+	const config = s.toolProviders[op.tool];
+	if (!config) return { type: 'error', message: `tool must be claude or codex` };
+	const answer = () => ({ type: 'tool_providers', tool: op.tool, config: { selected: config.selected, providers: config.providers.map((p) => ({ ...p, has_key: !!s.toolKeys[`${op.tool}:${p.id}`] })) } });
+	if (op.op === 'tool_provider_models') {
+		const key = op.key ?? s.toolKeys[`${op.tool}:${op.provider_id}`];
+		if (key !== 'sk-good') return { type: 'error', message: `${op.base_url}/models: 401 Unauthorized` };
+		return op.tool === 'claude'
+			? { type: 'tool_provider_models', models: [{ id: 'claude-opus-5', name: 'Claude Opus 5', context_window: 1000000 }, { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', context_window: 1000000 }, { id: 'claude-haiku-5', name: null, context_window: 200000 }], hidden: 2 }
+			: { type: 'tool_provider_models', models: [{ id: 'gpt-6', name: 'GPT-6', context_window: 400000 }], hidden: 0 };
+	}
+	if (op.op === 'tool_provider_save') {
+		const p = op.provider as Frame;
+		if (!/^https?:\/\//.test(p.base_url)) return { type: 'error', message: 'base_url must be http(s)' };
+		const { key, ...row } = p;
+		if (key) s.toolKeys[`${op.tool}:${p.id}`] = key;
+		const at = config.providers.findIndex((x) => x.id === p.id);
+		if (at >= 0) config.providers[at] = row;
+		else config.providers.push(row);
+	}
+	if (op.op === 'tool_provider_select') config.selected = op.provider_id;
+	if (op.op === 'tool_provider_remove') {
+		config.providers = config.providers.filter((x) => x.id !== op.provider_id);
+		delete s.toolKeys[`${op.tool}:${op.provider_id}`];
+		if (config.selected === op.provider_id) config.selected = '';
+	}
+	return answer();
+}
+
 function reply(op: Frame): Frame | null {
 	const s = daemonState;
 	if (String(op.op).startsWith('android_use_')) return androidReply(op);
@@ -461,6 +509,27 @@ function reply(op: Frame): Frame | null {
 			s.schedules.push(made);
 			return { type: 'schedule_saved', schedule: made };
 		}
+		// A session's TUI (term_attach): the replay, then what was typed echoed.
+		case 'term_attach':
+			if (s.old) return { type: 'error', message: 'unknown op term_attach' };
+			setTimeout(() => termEmit({ type: 'term_output', term: op.term, data: utf8b64('\x1b[2J\x1b[HLynShen TUI \u2014 对话宽度跟随窗口\r\n> '), replay: true }), 40);
+			return { type: 'term_attached', term: op.term, cols: op.cols ?? 80, rows: op.rows ?? 24 };
+		// A conversation reopened (?shell&tui: the page watches it).
+		case 'session_open':
+			return { type: 'session_opened', session: op.session };
+		case 'session_tui':
+			setTimeout(() => termEmit({ type: 'term_output', term: 't-7', data: btoa('> ') }), 40);
+			return { type: 'term_opened', term: 't-7' };
+		// The built-in ACP agents (a daemon with acp_presets).
+		case 'acp_presets':
+			return s.old ? { type: 'error', message: 'unknown op acp_presets' } : { type: 'acp_presets', presets: s.builtins };
+		// Claude Code's and Codex's custom providers.
+		case 'tool_providers':
+		case 'tool_provider_save':
+		case 'tool_provider_select':
+		case 'tool_provider_remove':
+		case 'tool_provider_models':
+			return toolProviderReply(op);
 		// The app tools' switches (Settings → 应用工具).
 		case 'app_tools':
 		case 'app_tools_set': {
@@ -480,6 +549,12 @@ function reply(op: Frame): Frame | null {
 	}
 }
 
+/** Terminal output as the daemon sends it: base64 of the UTF-8 bytes. */
+const utf8b64 = (text: string) => btoa(Array.from(new TextEncoder().encode(text), (b) => String.fromCharCode(b)).join(''));
+
+/** A frame from the daemon outside a reply (a terminal's output). */
+let termEmit: (frame: Frame) => void = () => {};
+
 export function installFakeDaemon() {
 	const ops: Frame[] = [];
 	class FakeSocket {
@@ -493,10 +568,14 @@ export function installFakeDaemon() {
 			const features = new URL(location.href).searchParams.get('features');
 			const hello = { type: 'hello', protocol: 2, version: 'test', ...(features !== null ? { features: features.split(',').filter(Boolean) } : {}) };
 			setTimeout(() => this.onmessage?.({ data: JSON.stringify(hello) }));
+			termEmit = (frame) => this.onmessage?.({ data: JSON.stringify(frame) });
 		}
 		send(text: string) {
 			const op = JSON.parse(text) as Frame;
 			ops.push(op);
+			// What was typed into a TUI comes back as its output.
+			if (op.op === 'term_input') setTimeout(() => termEmit({ type: 'term_output', term: op.term, data: op.data }), 10);
+			if (op.op === 'term_close') setTimeout(() => termEmit({ type: 'term_exit', term: op.term, code: 0 }), 10);
 			const answer = reply(op);
 			if (answer) setTimeout(() => this.onmessage?.({ data: JSON.stringify({ ...answer, id: op.id }) }), op.wait ? daemonState.waitMs : 30);
 		}

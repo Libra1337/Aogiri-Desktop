@@ -7,7 +7,7 @@
 	// `acp_presets`): what each can do, whether it is installed, and how to
 	// install it. An older daemon has none: the registry's one-click presets
 	// (OpenCode) are offered instead.
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
 	import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon';
@@ -96,7 +96,7 @@
 
 	function loadPresets() {
 		acpPresets()
-			.then((list) => (presets = list))
+			.then((list) => (presets = Array.isArray(list) ? list : []))
 			.catch(() => (presets = []));
 	}
 
@@ -179,9 +179,11 @@
 			.catch((e) => (draftError = String(e)));
 	}
 
-	onMount(() => {
-		load();
-		void loadBuiltinAgents(true);
+	onMount(load);
+	// Read once the daemon says it has them (its hello may come after this
+	// page opened).
+	$effect(() => {
+		if (hasBuiltins) untrack(() => void loadBuiltinAgents(true));
 	});
 </script>
 

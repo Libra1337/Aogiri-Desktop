@@ -4506,6 +4506,156 @@ try {
     }
     await page.close();
   }
+  // B11: Claude Code / Codex custom providers in Settings (add with a masked
+  // key and 测试连接, the privacy copy, default, delete), and on a daemon
+  // without them a note; the built-in ACP agents in Settings, the start
+  // picker and the model menu (capabilities, install, Pi asking first); an
+  // ACP session's settings and unset effort; a conversation in its TUI on
+  // another client viewed here, closing the view only detaching.
+  {
+    const SHOTS = process.env.B11_SHOTS;
+    const shot = async (p, name, loc) => { if (SHOTS) await (loc ?? p).screenshot({path: `${SHOTS}/${name}.png`}); };
+    const page = await browser.newPage({viewport: {width: 1280, height: 860}});
+    page.setDefaultTimeout(30000);
+    page.on('pageerror', (e) => errors.push(e.message));
+    const B11 = 'features=queue,files,tool_providers,acp_presets,term_attach';
+    const dops = () => page.evaluate(() => window.__ops.map((o) => JSON.parse(JSON.stringify({...o, id: undefined}))));
+
+    // D34: add a provider to Claude Code.
+    await page.goto(base + `?shell&settings=agents&${B11}`);
+    const claude = page.locator('#set-providers-claude');
+    await expect(claude).toContainText('不经过 LynShen 账号', {timeout: 60000});
+    await expect(claude).toContainText('不计入 LynShen 的用量和计费');
+    await claude.getByRole('button', {name: '添加提供商'}).click();
+    const dialog = page.getByRole('dialog', {name: '添加提供商 · Claude Code'});
+    await expect(dialog).toContainText('接口格式：Anthropic Messages');
+    const fields = dialog.locator('input');
+    await fields.nth(0).fill('https://relay.example.com/v1');
+    // A wrong key: the test says why.
+    await fields.nth(1).fill('sk-bad');
+    await dialog.getByRole('button', {name: '测试连接'}).click();
+    await expect(dialog).toContainText('连接失败：https://relay.example.com/v1/models: 401 Unauthorized');
+    await fields.nth(1).fill('sk-good');
+    assert.equal(await fields.nth(1).getAttribute('type'), 'password');
+    await dialog.getByRole('button', {name: '测试连接'}).click();
+    await expect(dialog).toContainText('连接成功，列出 3 个模型');
+    await expect(dialog).toContainText('另有 2 个模型不是 Anthropic Messages 格式');
+    await dialog.getByRole('option', {name: /claude-opus-5/}).click();
+    await dialog.getByRole('option', {name: /claude-sonnet-5/}).click();
+    await fields.nth(2).fill('Relay');
+    await shot(page, 'd34-provider-editor', dialog);
+    await dialog.getByRole('button', {name: '保存'}).click();
+    await expect(dialog).toHaveCount(0);
+    const saved = (await dops()).filter((o) => o.op === 'tool_provider_save').map((o) => o.provider);
+    assert.deepEqual(saved, [{id: 'relay', name: 'Relay', format: 'anthropic', base_url: 'https://relay.example.com/v1', key: 'sk-good', models: ['claude-opus-5', 'claude-sonnet-5'], model: 'claude-opus-5'}]);
+    // The row: no key, only that one is saved.
+    await expect(claude.locator('.prow')).toContainText('relay.example.com · 2 个模型 · claude-opus-5 · ••••••••');
+    assert.ok(!(await claude.innerText()).includes('sk-good'), 'the key is never shown');
+    await claude.locator('.defrow .trigger').click();
+    await claude.locator('.defrow .opt', {hasText: 'Relay'}).click();
+    await expect.poll(async () => (await dops()).filter((o) => o.op === 'tool_provider_select').map((o) => o.provider_id)).toEqual(['relay']);
+    await expect(claude.locator('.ptag')).toHaveText('新对话默认');
+    await shot(page, 'd34-providers', claude);
+    // Edit keeps the key unless one is typed.
+    await claude.locator('.pmain').click();
+    const edit = page.getByRole('dialog', {name: '编辑「Relay」'});
+    await expect(edit.locator('input').nth(1)).toHaveAttribute('placeholder', '已保存；留空则保留');
+    await edit.getByRole('button', {name: '取消'}).click();
+    await expect(edit).toHaveCount(0);
+    // Delete asks first.
+    await claude.getByRole('button', {name: '删除'}).click();
+    const ask = page.getByRole('dialog', {name: '删除提供商「Relay」？'});
+    await expect(ask).toContainText('保存的密钥会一起删除');
+    await ask.getByRole('button', {name: '删除'}).click();
+    await expect(claude.locator('.prow')).toHaveCount(0);
+    // An older daemon: a note, nothing asked.
+    await page.goto(base + '?shell&settings=agents&features=queue,files');
+    await expect(page.locator('#set-providers-claude')).toContainText('版本较旧', {timeout: 60000});
+    assert.equal((await dops()).filter((o) => String(o.op).startsWith('tool_provider')).length, 0);
+
+    // D37: Settings → 外部智能体 lists the built-in agents.
+    await page.goto(base + `?shell&settings=acp&${B11}`);
+    const builtins = page.locator('#set-acp-builtins');
+    await expect(builtins.locator('.arow')).toHaveCount(3, {timeout: 60000});
+    await expect(builtins.locator('[data-agent=opencode]')).toContainText('1.19.2');
+    await expect(builtins.locator('[data-agent=opencode] .cap')).toHaveText(['运行工具前询问', '可用 LynShen 网关', '有 TUI']);
+    await expect(builtins.locator('[data-agent=omp]')).toContainText('未安装');
+    await expect(builtins.locator('[data-agent=omp] code')).toHaveText('bun install -g @oh-my-pi/pi-coding-agent');
+    await expect(builtins.locator('[data-agent=pi] .cap.warn')).toHaveText('无审批，只能全自动');
+    // The registry's one-click OpenCode is not offered: the daemon runs it.
+    await expect(page.locator('.arow.preset')).toHaveCount(0);
+    await shot(page, 'd37-settings-builtins', builtins);
+    // An older daemon: a note, and the one-click OpenCode as before.
+    await page.goto(base + '?shell&settings=acp&features=queue,files');
+    await expect(page.locator('#set-acp-builtins')).toContainText('版本较旧', {timeout: 60000});
+    assert.equal((await dops()).filter((o) => o.op === 'acp_presets').length, 0);
+
+    // D37: the start picker lists them; Pi asks first.
+    await page.goto(base + `?shell&draft&${B11}`);
+    await page.getByRole('button', {name: '后端'}).click({timeout: 60000});
+    const menu = page.getByRole('menu');
+    await expect(menu.getByRole('menuitemradio', {name: /OpenCode/})).toBeEnabled();
+    await expect(menu.getByRole('menuitemradio', {name: /oh-my-pi/})).toBeDisabled();
+    await expect(menu.getByRole('menuitemradio', {name: /oh-my-pi/})).toContainText('bun install -g @oh-my-pi/pi-coding-agent');
+    await shot(page, 'd37-start-picker');
+    await menu.getByRole('menuitemradio', {name: /^Pi/}).click();
+    const piAsk = page.getByRole('dialog', {name: '用 Pi 开始这个对话？'});
+    await expect(piAsk).toContainText('只能在全自动模式下使用');
+    await piAsk.getByRole('button', {name: '用全自动开始'}).click();
+    await expect(page.getByRole('button', {name: '后端'})).toContainText('Pi');
+    assert.equal(await page.evaluate(() => JSON.stringify(window.__shellStore.allSessions.find((x) => x.id === window.__shellSession).acpAgent)), JSON.stringify({id: 'pi', name: 'Pi', builtin: true, noApprovals: true}));
+    await expect(page.locator('.fbtn.noappr')).toHaveCount(0); // known once the agent reports it
+
+    // D28 + D37: an ACP session's own settings and its unset effort.
+    await page.goto(base + `?shell&acp=omp&${B11}`);
+    await page.locator('.fbtn.model').click({timeout: 60000});
+    const mm = page.locator('.pop.mm');
+    await expect(mm.locator('.options .olabel')).toHaveText(['模式', 'Show thinking']);
+    await expect(mm.locator('.options .seg button')).toHaveText(['默认', '计划']);
+    await mm.locator('.options .seg button', {hasText: '计划'}).click();
+    await expect.poll(() => page.evaluate(() => window.__sent.filter((o) => o.op === 'set_session_option'))).toEqual([{op: 'set_session_option', id: 'mode', value: 'plan'}]);
+    await shot(page, 'd37-acp-model-menu');
+    await page.keyboard.press('Escape');
+    await page.locator('.mm-backdrop').click({force: true}).catch(() => {});
+    await page.locator('.fbtn.effort').click();
+    await expect(page.locator('.pop.eff .evalue')).toHaveText('自动');
+    await expect(page.locator('.pop.eff .thumb')).toHaveCount(0);
+    await shot(page, 'd28-acp-effort');
+    // Pi: 无审批 beside the model button.
+    await page.goto(base + `?shell&acp=pi&${B11}`);
+    await expect(page.locator('.fbtn.noappr')).toHaveText('无审批', {timeout: 60000});
+
+    // D36: the conversation is in its TUI on another client: view it here;
+    // typing reaches it; leaving the view only detaches.
+    await page.goto(base + `?shell&tui&${B11}`);
+    // 查看 TUI, once the page watches the session.
+    const view = page.locator('.interm').getByRole('button', {name: '查看 TUI'});
+    await expect(view).toBeVisible({timeout: 60000});
+    await expect.poll(async () => {
+      if (await view.count()) await view.click();
+      return page.locator('.tui-wrap').count();
+    }).toBe(1);
+    const tui = page.locator('.tui-wrap');
+    await expect(tui.locator('.xterm')).toBeVisible({timeout: 30000});
+    await expect.poll(async () => (await dops()).some((o) => o.op === 'term_attach' && o.term === 't-7')).toBe(true);
+    let ops = await dops();
+    assert.ok(!ops.some((o) => o.op === 'session_tui'), 'never started another');
+    await tui.locator('.xterm').click();
+    await page.keyboard.type('hi');
+    await expect.poll(async () => (await dops()).filter((o) => o.op === 'term_input').map((o) => atob(o.data)).join('')).toBe('hi');
+    await page.waitForTimeout(300);
+    await shot(page, 'd36-tui-viewed');
+    await page.evaluate(() => { const s = window.__shellStore.allSessions.find((x) => x.id === window.__shellSession); s.surface = 'gui'; });
+    await expect(tui).toHaveCount(0);
+    ops = await dops();
+    assert.ok(ops.some((o) => o.op === 'term_detach' && o.term === 't-7'), 'closing the view detaches');
+    assert.ok(!ops.some((o) => o.op === 'term_close'), 'and never ends the TUI');
+    // An older daemon names no terminal: the line, and nothing to view.
+    await page.goto(base + '?shell&tui&features=queue,files');
+    await expect(page.locator('.interm')).toContainText('此对话正在 TUI 中进行', {timeout: 60000});
+    await expect(page.locator('.interm button')).toHaveCount(0);
+    await page.close();
+  }
   assert.deepEqual(errors, []);
-  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel, the queue tray (into the turn after the running tool, stop and send, take back with its file, delete, reorder by key and drag, ⌘↵ and ⌘⇧↵, Claude Code\'s fixed rows, an old daemon\'s single 插入), files and videos sent as attachments (and listed in the text for an old daemon), a Read row opening its file at its line, an unfinished turn and 继续, files dragged over the window, a run of edits with rolling counts, a turn\'s deliverables, proposed task and started conversation, course dividers and the turn clock, a dev server\'s corner notice, Settings → 应用工具.');
+  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel, the queue tray (into the turn after the running tool, stop and send, take back with its file, delete, reorder by key and drag, ⌘↵ and ⌘⇧↵, Claude Code\'s fixed rows, an old daemon\'s single 插入), files and videos sent as attachments (and listed in the text for an old daemon), a Read row opening its file at its line, an unfinished turn and 继续, files dragged over the window, a run of edits with rolling counts, a turn\'s deliverables, proposed task and started conversation, course dividers and the turn clock, a dev server\'s corner notice, Settings → 应用工具, Claude Code and Codex custom providers (key masked, 测试连接, default, delete, an old daemon), the built-in ACP agents (Settings, the start picker, Pi asking first, an old daemon), an ACP session\'s settings and unset effort, a TUI open on another client viewed and only detached.');
 } finally { await browser.close(); await server.close(); }

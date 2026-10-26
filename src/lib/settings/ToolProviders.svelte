@@ -5,7 +5,7 @@
 	// the provider it started on. The daemon keeps them and their keys
 	// (`tool_providers`); requests go to the provider with its key alone,
 	// never with the LynShen account. A daemon without the feature: a note.
-	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
 	import KeyIcon from 'phosphor-svelte/lib/KeyIcon';
@@ -94,8 +94,10 @@
 		}
 	}
 
-	onMount(() => {
-		if (supported) void load();
+	// Read once the daemon says it keeps them (its hello may come after this
+	// page opened).
+	$effect(() => {
+		if (supported) untrack(() => void load());
 	});
 </script>
 

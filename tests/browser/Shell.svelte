@@ -76,6 +76,16 @@
 	//                           first one fixed); `window.__sent` the ops. With
 	//                           ?features=queue,files the daemon's hello has
 	//                           them (fakeDaemon.ts); without, it is an old one
+	//   &features=a,b           the daemon's hello names these features
+	//                           (fakeDaemon.ts); without, an older daemon
+	//   &draft                  the conversation is new, nothing sent: the
+	//                           start picker (project, agent) over the composer
+	//   &acp=<id>               an ACP session of that built-in agent, as the
+	//                           daemon's full client reports it (caps, its own
+	//                           settings, its model and the unset effort);
+	//                           =pi: an agent that never asks
+	//   &tui                    the conversation is in its TUI on another
+	//                           client (`surface` names the terminal)
 	//   &openfile               the app's editor beside the conversation (a Read
 	//                           row opens its file there); `window.__editor`
 	//   &drop=<n>               files dragged over the window (the drop layer)
@@ -114,6 +124,7 @@
 	import { daemonState } from './fakeDaemon';
 	import { Requirements, provideRequirements } from '../../src/lib/requirements.svelte';
 	import { daemon, type Op } from '../../src/lib/protocol';
+	import TuiPanel from '../../src/lib/TuiPanel.svelte';
 	import { adapterFor, clearDraft } from '../../src/lib/backends/router';
 	import { prefs } from '../../src/lib/prefs.svelte';
 	import { showWaiting } from '../../src/lib/shell/attention.svelte';
@@ -549,8 +560,42 @@
 			...(queueMode === 'claude' ? { fixed: 1 } : {})
 		});
 	}
+	// B11: a new conversation (the start picker), an ACP session of a
+	// built-in agent, a conversation in its TUI elsewhere.
+	if (mode.has('draft')) {
+		session.draft = true;
+		session.chat.messages = [];
+	}
+	const acpMode = mode.get('acp');
+	if (acpMode) {
+		const agents: Record<string, { name: string; approvals: boolean }> = { opencode: { name: 'OpenCode', approvals: true }, omp: { name: 'oh-my-pi', approvals: true }, pi: { name: 'Pi', approvals: false } };
+		const a = agents[acpMode] ?? agents.omp;
+		session.backendId = 'acp';
+		session.chat.backendId = 'acp';
+		session.chat.acpAgentId = acpMode;
+		session.chat.acpAgentName = a.name;
+		session.acpAgent = { id: acpMode, name: a.name, builtin: true, ...(a.approvals ? {} : { noApprovals: true }) };
+		feed({ type: 'engine_caps', agent: { id: acpMode, name: a.name, version: '18.1.21' }, approvals: a.approvals, gateway: true, caps: { interrupt: true, approvalModes: a.approvals, modelPicker: true, contextUsage: false, slashCommands: true, transcriptReplay: true, fork: false } });
+		feed({
+			type: 'session_options',
+			options: [
+				{ id: 'mode', name: 'Mode', description: null, category: 'mode', type: 'select', value: 'default', choices: [{ value: 'default', name: 'Default', description: null }, { value: 'plan', name: 'Plan', description: null }] },
+				{ id: 'show_thinking', name: 'Show thinking', description: 'Stream the reasoning', category: null, type: 'boolean', value: true }
+			]
+		});
+		feed({ type: 'model_status', provider: 'acp', model: 'lynshen/gpt-6', model_label: 'GPT-6', reasoning_effort: 'auto', reasoning_efforts: ['minimal', 'low', 'medium', 'high'], default_effort: 'auto', state: 'ready', context_window: 0 });
+		session.chat.silentModelView = 1;
+		feed({ type: 'model_view', active_effort: 'auto', models: [{ model: 'lynshen/gpt-6', label: 'GPT-6', active: true, context_window: 0, reasoning_efforts: ['minimal', 'low', 'medium', 'high'] }, { model: 'lynshen-claude/claude-opus-5', label: 'Claude Opus 5', active: false, context_window: 0, reasoning_efforts: ['low', 'medium', 'high'] }] });
+	}
+	if (mode.has('tui')) {
+		// Watched in the daemon, as the page does once it opened the session.
+		session.chat.sessionId = 's-shell';
+		session.restored = true;
+		void daemon.open(session.id, first.path, 's-shell');
+		feed({ type: 'surface', session: 's-shell', surface: 'tui', term: 't-7', client: 3 });
+	}
 	// As +page.svelte does: the daemon's hello says what it takes.
-	if (queueMode !== null || mode.has('openfile')) {
+	if (queueMode !== null || mode.has('openfile') || mode.has('features')) {
 		daemon.onHello = (version, features) => {
 			engine.version = version;
 			engine.features = features;
@@ -559,7 +604,7 @@
 	}
 	if (deliverMode === 'old') daemonState.old = true;
 	if (deliverMode !== null) void daemon.connect();
-	if (mode.has('cards') || mode.has('styles') || mode.has('recap') || queueMode !== null || mode.has('openfile') || deliverMode !== null) {
+	if (mode.has('cards') || mode.has('styles') || mode.has('recap') || queueMode !== null || mode.has('openfile') || deliverMode !== null || acpMode || mode.has('tui')) {
 		clearDraft(session.id);
 		const adapter = adapterFor(session.id);
 		if (adapter) adapter.encodeOp = (op: Op) => (sent.push(op), []);
@@ -618,6 +663,11 @@
 </script>
 
 {#snippet chat()}
+	{#if session.surface === 'tui'}
+		<!-- As +page.svelte renders a conversation in its TUI: the session's
+		     terminal, viewed (the fake daemon echoes what is typed). -->
+		<TuiPanel backend={session.backendId} session="s-shell" terminal={session.chat.terminal} onBackToGui={() => store.returnToGui(session.id)} />
+	{:else}
 	<ChatPane
 		{session}
 		{store}
@@ -628,6 +678,7 @@
 		onOpenTeam={mode.has('cards') ? () => opened.push('team') : undefined}
 		onOpenChanges={mode.has('recap') ? () => opened.push('changes') : undefined}
 	/>
+	{/if}
 {/snippet}
 
 <ConfirmHost />

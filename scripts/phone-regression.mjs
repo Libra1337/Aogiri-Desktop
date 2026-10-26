@@ -471,6 +471,83 @@ try {
 			await expect(shown.locator('.deliver video')).toHaveCount(1);
 			await expect.poll(presentedOps).toEqual(['q3-mau.png', 'demo.webm']);
 			await shown.close();
+			// B11 P04: the new-session dialog lists the computer's built-in
+			// agents; one not installed cannot be picked; Pi needs 全自动 here;
+			// a session of one starts by its id alone. P03: a session in its
+			// TUI on the computer shows its terminal; without the terminal
+			// permission read-only (no keys), with it the keys reach the TUI;
+			// leaving only detaches. An older computer offers neither.
+			{
+				const B11 = 'features=queue,files,tool_providers,acp_presets,term_attach';
+				const shots = process.env.B11_SHOTS;
+				const p = await ctx.newPage();
+				p.on('pageerror', (e) => errors.push(e.message));
+				const pops = () => p.evaluate(() => window.__remoteOps.map((o) => JSON.parse(JSON.stringify({ ...o, id: undefined }))));
+				await p.goto(`${base}?remoteHost&${B11}`);
+				await p.getByRole('button', { name: '新会话' }).first().tap({ timeout: 30000 });
+				const dlg = p.getByRole('dialog', { name: '新会话' });
+				await expect(dlg.locator('.agent')).toHaveCount(3, { timeout: 30000 });
+				await expect(dlg.locator('[data-agent=omp]')).toBeDisabled();
+				await expect(dlg.locator('[data-agent=omp]')).toContainText('未安装');
+				// This phone may not switch to 全自动: Pi waits for that.
+				await expect(dlg.locator('[data-agent=pi]')).toBeDisabled();
+				await expect(dlg.locator('[data-agent=pi]')).toContainText('要先在电脑上授权这台手机');
+				await dlg.locator('[data-agent=opencode]').tap();
+				if (shots && name === 'webkit') await p.screenshot({ path: `${shots}/p04-new-session.png` });
+				await dlg.getByRole('button', { name: '创建' }).tap();
+				await expect(p.locator('.session .title')).toHaveText('OpenCode');
+				await p.locator('.session textarea').fill('看看这个仓库');
+				await p.locator('.session .composer').getByRole('button', { name: '发送', exact: true }).tap();
+				await expect.poll(async () => (await pops()).find((o) => o.op === 'session_create')).toMatchObject({ op: 'session_create', engine: 'acp', options: { agent: 'opencode' } });
+				const created = (await pops()).find((o) => o.op === 'session_create');
+				assert.ok(!('command' in created.options) && !('args' in created.options), 'never a command line from a phone');
+				// With 全自动 allowed, Pi starts in it.
+				await p.goto(`${base}?remoteHost&${B11}&scopes=full_auto`);
+				await p.getByRole('button', { name: '新会话' }).first().tap({ timeout: 30000 });
+				await dlg.locator('[data-agent=pi]').tap();
+				await expect(dlg.locator('.warnline')).toContainText('只能在全自动模式下使用');
+				await dlg.getByRole('button', { name: '创建' }).tap();
+				await p.locator('.session textarea').fill('hi');
+				await p.locator('.session .composer').getByRole('button', { name: '发送', exact: true }).tap();
+				await expect.poll(async () => (await pops()).find((o) => o.op === 'session_create')?.options).toEqual({ agent: 'pi', approval_mode: 'full-auto' });
+				// An older computer: the three engines only, nothing asked.
+				await p.goto(`${base}?remoteHost&features=queue,files`);
+				await p.getByRole('button', { name: '新会话' }).first().tap({ timeout: 30000 });
+				await expect(dlg.locator('.agent')).toHaveCount(0);
+				assert.ok(!(await pops()).some((o) => o.op === 'acp_presets'), 'an older computer is not asked');
+
+				// P03: read-only without the terminal permission.
+				await p.goto(`${base}?remoteHost&open=s-cache&tui&${B11}`);
+				const tv = p.locator('.termview');
+				await expect(tv.locator('.xterm')).toBeVisible({ timeout: 30000 });
+				await expect.poll(async () => (await pops()).some((o) => o.op === 'term_attach' && o.term === 't-9')).toBe(true);
+				await expect(tv.locator('.ro')).toContainText('只读');
+				await expect(tv.locator('.keys')).toHaveCount(0);
+				await expect(p.getByRole('button', { name: '回到对话' })).toHaveCount(0);
+				await tv.locator('.xterm').tap();
+				await p.keyboard.type('x');
+				await p.waitForTimeout(200);
+				assert.ok(!(await pops()).some((o) => o.op === 'term_input'), 'a read-only view types nothing');
+				await expect.poll(async () => (await pops()).some((o) => o.op === 'term_ack' && o.term === 't-9')).toBe(true);
+				if (shots && name === 'webkit') await p.screenshot({ path: `${shots}/p03-tui-readonly.png` });
+				// With it: keys, and the row's Esc.
+				await p.goto(`${base}?remoteHost&open=s-cache&tui&scopes=terminal&${B11}`);
+				await expect(tv.locator('.keys')).toBeVisible({ timeout: 30000 });
+				await expect.poll(async () => (await pops()).filter((o) => o.op === 'term_attach').length).toBe(1);
+				await p.waitForTimeout(300);
+				await tv.locator('.keys').getByRole('button', { name: 'Esc' }).tap();
+				await expect.poll(async () => (await pops()).filter((o) => o.op === 'term_input').map((o) => atob(o.data))).toEqual(['\x1b']);
+				if (shots && name === 'webkit') await p.screenshot({ path: `${shots}/p03-tui.png` });
+				// Leaving only detaches.
+				await p.locator('.session > header').getByRole('button', { name: '返回' }).tap();
+				await expect.poll(async () => (await pops()).some((o) => o.op === 'term_detach' && o.term === 't-9')).toBe(true);
+				assert.ok(!(await pops()).some((o) => o.op === 'term_close'), 'leaving never ends the TUI');
+				// An older computer names no terminal: the line, no view.
+				await p.goto(`${base}?remoteHost&open=s-cache&tui&features=queue,files`);
+				await expect(p.locator('.session .interm')).toContainText('此对话正在 TUI 中进行', { timeout: 30000 });
+				await expect(p.locator('.termview')).toHaveCount(0);
+				await p.close();
+			}
 			assert.deepEqual(errors, [], 'no page errors');
 			console.log(`${name}: PHONE CHECKS PASSED`);
 		} catch (e) {
