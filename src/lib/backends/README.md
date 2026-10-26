@@ -8,7 +8,7 @@ Every session runs in the local `lynshen daemon` (LynShen-CLI
 | `lynshen` | the LynShen engine, in-process |
 | `claude` | `claude --print --input-format stream-json …` |
 | `codex`  | `codex app-server` |
-| `acp`    | a registered ACP agent (`opencode acp`, a Settings preset; `gemini --experimental-acp`, …), command line from the registry (`docs/acp.md`) |
+| `acp`    | a built-in ACP agent the daemon starts by id (`opencode`, `omp`, `pi`; `acp_presets`, a daemon with that feature), or a registered one (`gemini --experimental-acp`, …) with the registry's command line (`docs/acp.md`) |
 
 The daemon translates each engine into the lynshen event protocol and client
 ops into the engine's own frames, so the desktop talks one protocol to all of
@@ -23,7 +23,13 @@ environment from Settings). `SessionStore.#spawn` opens a session with
 `session_create`, or reopens one with `session_open` by its conversation id
 (restore, restart, provider or gateway switch). Claude Code and Codex
 sessions pass an engine spec: approval mode, the LynShen gateway switch, the
-binary and environment from Settings, and claude's `resume_at` for a rewind.
+binary and environment from Settings, and claude's `resume_at` for a rewind;
+a new one may name a custom provider (`tool_provider`, a daemon with
+`tool_providers`; `toolProviders.svelte.ts`), which the session keeps. A
+built-in ACP agent passes its id (`agent`), approval mode (Pi: full-auto),
+gateway switch and a draft's model and effort; a registered one passes its
+command line. An ACP session's caps are its agent's (`engine_caps` over
+`ACP_CAPS`, `caps(chat)`), and its own settings come as `session_options`.
 
 - Closing the desktop only disconnects: sessions keep running, and deferred
   actions wait in the daemon.
@@ -37,8 +43,13 @@ binary and environment from Settings, and claude's `resume_at` for a rewind.
   `tui`; `TuiPanel` with `session` asks the daemon for `session_tui` and
   draws the engine's own TUI with xterm in the same tile. Quitting it returns
   the tab to the chat (`returnToGui`); the daemon restarts the engine and
-  sends the transcript with the TUI's turns. Other clients see a notice
-  while the conversation is in the terminal (`ChatState.inTerminal`).
+  sends the transcript with the TUI's turns. The terminal belongs to the
+  session (a daemon with `term_attach`): other clients see a notice
+  (`ChatState.inTerminal`) and can view and type in it (`ChatState.terminal`,
+  `daemonTerminal.ts`; a phone without the `terminal` scope read-only);
+  closing a view or losing the connection only detaches it. Built-in ACP
+  agents and a registered OpenCode hand off too. An older daemon gives the
+  TUI to the client that opened it, and closing the panel ends it.
 - File paths in replies (`src/a.ts:12`, a code block titled with a path)
   become links (`fileRefs.ts`, `markdown.ts`); clicking one opens the file in
   the editor at that line, or in the files screen on a paired device.
