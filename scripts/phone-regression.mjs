@@ -322,6 +322,48 @@ try {
 			await go.click();
 			await expect(page.getByRole('heading', { name: /派发|新派发/ }).first()).toBeVisible();
 
+			// 定时任务 on 工作台 (P06): every task with how its latest run goes
+			// (后台任务运行中), a switch and 立即运行; one switched off after
+			// failures says so; a session with background work says so in 会话.
+			await page.goto(`${base}?remoteHost&schedules&features=queue,files,schedule_runs`);
+			await nav.getByRole('button', { name: /工作台/ }).click();
+			const tasks = page.locator('.rest .row').filter({ has: page.getByRole('switch') });
+			await expect(tasks).toHaveCount(3, { timeout: 30000 });
+			await expect(tasks.nth(0)).toContainText('巡检');
+			await expect(tasks.nth(0).locator('.state')).toHaveText('后台任务运行中');
+			await expect(tasks.nth(0).getByRole('button', { name: '立即运行' }), 'a run that is not over cannot start again').toBeDisabled();
+			await expect(tasks.nth(1)).toContainText('周报');
+			await expect(tasks.nth(2)).toContainText('连续失败 3 次，已自动停用');
+			await expect(tasks.nth(2).getByRole('switch')).toHaveAttribute('aria-checked', 'false');
+			for (const row of [0, 1, 2]) {
+				const box = await tasks.nth(row).getByRole('button', { name: '立即运行' }).boundingBox();
+				assert.ok(box.width >= 39.5 && box.height >= 39.5, `立即运行 is a 40px target (${box.width}×${box.height})`);
+			}
+			await tasks.first().scrollIntoViewIfNeeded();
+			await page.waitForTimeout(300);
+			await page.screenshot({ path: `/tmp/phone-schedules-${name}.png` });
+			await tasks.nth(1).getByRole('button', { name: '立即运行' }).click();
+			await expect.poll(async () => (await ops()).some((o) => o.op === 'schedule_run' && o.schedule === 'sch-c')).toBe(true);
+			await expect(page.getByText('已开始运行「周报」')).toBeVisible();
+			await tasks.filter({ hasText: '夜间构建' }).getByRole('switch').click();
+			await expect.poll(async () => (await ops()).find((o) => o.op === 'schedule_save')?.schedule).toEqual({ id: 'sch-b', enabled: true });
+			await expect(tasks.filter({ hasText: '夜间构建' }).getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+			await nav.getByRole('button', { name: /会话/ }).click();
+			await page.evaluate(() => window.scrollTo(0, 0));
+			const dev = page.locator('.sess').filter({ hasText: '启动开发服务器' });
+			await expect(dev.locator('.tag')).toHaveText('后台任务运行中');
+			await expect(page.locator('.sess').filter({ hasText: '会话缓存分片' }).locator('.tag.bg')).toHaveCount(0);
+			await page.waitForTimeout(300);
+			await page.screenshot({ path: `/tmp/phone-background-${name}.png` });
+			// An older computer (no schedule_runs, no run records): the same
+			// list, with no run state.
+			await page.goto(`${base}?remoteHost&schedules&oldSchedules`);
+			await nav.getByRole('button', { name: /工作台/ }).click();
+			await expect(tasks).toHaveCount(3, { timeout: 30000 });
+			await expect(page.locator('.rest .row .state')).toHaveCount(0);
+			await expect(tasks.filter({ hasText: '夜间构建' })).toContainText('已停用');
+			await expect(tasks.first().getByRole('button', { name: '立即运行' })).toBeEnabled();
+
 			// A turn that ended with a next step: the recap card above the
 			// composer, as on the desktop; 暂不 leaves a receipt under the reply.
 			await page.goto(`${base}?remoteHost&open=s-docs`);

@@ -98,6 +98,22 @@ export interface DaemonSessionView {
 	/** A fork: the conversation it came from and the turns it took (B08,
 	 *  LynShen CLI with the hello's `fork`). */
 	forked_from?: { session?: string | null; turns?: number | null; at?: string | null } | null;
+	/** Background work its turn left going runs: 后台任务运行中 (daemons with
+	 *  `schedule_runs`). */
+	background?: boolean;
+	/** The scheduled task it is a run of (daemons with `schedule_runs`). */
+	schedule?: string | null;
+}
+
+/** A scheduled run the user hears of (`schedule_event`). */
+export interface ScheduleEventView {
+	schedule: string;
+	/** Daemons with `schedule_runs` name the agent. */
+	agent?: string;
+	name: string;
+	kind: 'failed' | 'stopped' | 'waiting' | 'skipped';
+	detail: string;
+	session: string;
 }
 
 export interface QuestionView {
@@ -210,6 +226,10 @@ export class AgentDirectory {
 	onArrival:
 		| ((kind: 'question' | 'action' | 'report' | 'closed', agent: string, text: string, agentId?: string) => void)
 		| null = null;
+	/** Called when a scheduled run failed (the first in a row), its task was
+	 *  switched off after failures, or a time was skipped. Waiting for an
+	 *  approval is an action arrival already. */
+	onScheduleEvent: ((event: ScheduleEventView) => void) | null = null;
 	#daemon: DaemonClient;
 
 	/** `daemon`: the connection it lists; the app's shared one by default
@@ -281,6 +301,9 @@ export class AgentDirectory {
 			this.onArrival?.('report', this.agentName(report.agent), report.title, report.agent);
 		} else if (frame.type === 'schedules' && Array.isArray(frame.schedules)) {
 			this.schedules = frame.schedules as Schedule[];
+		} else if (frame.type === 'schedule_event' && typeof frame.schedule === 'string') {
+			const event = frame as unknown as ScheduleEventView;
+			if (event.kind !== 'waiting') this.onScheduleEvent?.(event);
 		}
 	}
 

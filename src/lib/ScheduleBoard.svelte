@@ -7,7 +7,8 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { confirm } from '$lib/ui/confirm.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { agentDirectory, type AgentView, type TimerView } from '$lib/agents.svelte';
+	import { type AgentView, type TimerView } from '$lib/agents.svelte';
+	import { useAgents } from '$lib/agentScope';
 	import { t } from '$lib/i18n';
 
 	let {
@@ -20,6 +21,7 @@
 		onOpenSession: (session: string) => void;
 		onOpenAgent: (agent: string) => void;
 	} = $props();
+	const agentDirectory = useAgents();
 
 	let timers = $state<Record<string, TimerView[]>>({});
 	let cancelling = $state<Record<string, boolean>>({});
@@ -46,7 +48,12 @@
 		for (const a of agents) {
 			if (a.id in timers) continue;
 			timers[a.id] = [];
-			agentDirectory.timers(a.id).then((list) => (timers[a.id] = list), () => {});
+			agentDirectory.timers(a.id).then(
+				(list) => {
+					timers[a.id] = list;
+				},
+				() => {}
+			);
 		}
 	});
 

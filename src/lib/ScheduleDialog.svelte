@@ -11,7 +11,8 @@
 	import Switch from '$lib/ui/Switch.svelte';
 	import Chip from '$lib/ui/Chip.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { agentDirectory } from '$lib/agents.svelte';
+	import { useAgents } from '$lib/agentScope';
+	import { engineHas } from '$lib/engineVersion.svelte';
 	import { toDraft, validate, WEEK, type Repeat, type Schedule, type ScheduleDraft } from '$lib/schedules';
 	import { t } from '$lib/i18n';
 
@@ -36,14 +37,30 @@
 		onSaved?: (saved: Schedule) => void;
 		onClose: () => void;
 	} = $props();
+	const agentDirectory = useAgents();
 
 	const pad = (n: number) => String(n).padStart(2, '0');
 	const tomorrow = new Date(Date.now() + 86_400_000);
 	// The dialog edits a copy taken when it opens.
+	// A daemon that keeps run options (`schedule_runs`) is offered the
+	// worktree switch and the cost limit; an older one never sees them.
+	const runOptions = untrack(() => (schedule ? schedule.worktree !== undefined : engineHas('schedule_runs')));
 	const initial: ScheduleDraft = untrack(() =>
 		schedule
 			? toDraft(schedule)
-			: { agent: agent || agents?.[0]?.id || '', name: '', prompt: '', enabled: true, repeat: 'daily', time: '09:00', days: [1], date: '', new_session: true, ...preset }
+			: {
+				agent: agent || agents?.[0]?.id || '',
+				name: '',
+				prompt: '',
+				enabled: true,
+				repeat: 'daily',
+				time: '09:00',
+				days: [1],
+				date: '',
+				new_session: true,
+				...(runOptions ? { worktree: false, budget: '' } : {}),
+				...preset
+			}
 	);
 	const agentOpts = $derived((agents ?? []).map((a) => ({ value: a.id, label: a.name })));
 	// Every run is a new session, told what the last run concluded.
@@ -85,6 +102,10 @@
 		busy = true;
 		try {
 			const saved = await agentDirectory.saveSchedule(next);
+			// Saved by a daemon that drops what it does not know.
+			if ((next.worktree || next.budget?.trim()) && saved.worktree === undefined) {
+				toast.info(t('shell.schedule.optionsOutdated'));
+			}
 			onSaved?.(saved);
 			if (run) {
 				await agentDirectory.runSchedule(saved.id);
@@ -165,6 +186,17 @@
 		</div>
 	{/if}
 
+	{#if runOptions}
+		<div class="row">
+			<span class="label">{t('shell.schedule.worktree')}<small>{t('shell.schedule.worktreeHint')}</small></span>
+			<Switch checked={draft.worktree ?? false} label={t('shell.schedule.worktree')} onChange={(on) => (draft.worktree = on)} />
+		</div>
+		<label class="field">
+			<span>{t('shell.schedule.budget')}</span>
+			<input inputmode="decimal" bind:value={draft.budget} placeholder={t('shell.schedule.budgetPlaceholder')} />
+			<small>{t('shell.schedule.budgetHint')}</small>
+		</label>
+	{/if}
 
 	{#if error}<Notice>{error}</Notice>{/if}
 	{#snippet footer()}
@@ -215,6 +247,18 @@
 		justify-content: space-between;
 		gap: 12px;
 		font-size: var(--fs-sm);
+	}
+	.label {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+	.label small,
+	.field small {
+		font-size: var(--fs-2xs);
+		color: var(--dim2);
+		line-height: 1.45;
 	}
 	.days {
 		display: flex;

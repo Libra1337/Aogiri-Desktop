@@ -180,6 +180,18 @@ describe('schedules', () => {
 		expect(dir.schedules.map((s) => s.id)).toEqual(['b']);
 	});
 
+	it('tells of failed, stopped and skipped runs, not of a run waiting (that is an action)', () => {
+		const dir = new AgentDirectory();
+		const heard: string[] = [];
+		dir.onScheduleEvent = (event) => heard.push(`${event.kind}:${event.name}`);
+		for (const kind of ['failed', 'waiting', 'stopped', 'skipped'])
+			dir.handle({ type: 'schedule_event', schedule: 'sch-1', agent: 'ops', name: '巡检', kind, detail: 'x', session: 's1' });
+		expect(heard).toEqual(['failed:巡检', 'stopped:巡检', 'skipped:巡检']);
+		// An older daemon's frame without an agent still arrives.
+		dir.handle({ type: 'schedule_event', schedule: 'sch-2', name: 'old', kind: 'failed', detail: '', session: '' });
+		expect(heard.at(-1)).toBe('failed:old');
+	});
+
 	it("lists only this agent's reminders, soonest first", async () => {
 		const dir = new AgentDirectory();
 		expect((await dir.timers('ops')).map((x) => x.timer)).toEqual(['t1', 't2']);

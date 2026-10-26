@@ -6,6 +6,10 @@
 	//   ?remoteHost              the list
 	//   &open=<session>          as when a notification about it was tapped
 	//   &features=queue,files    the computer's daemon has the queue and files ops
+	//   &schedules               an agent with scheduled tasks: one running a
+	//                            background task, one switched off after
+	//                            failures, one coming up (with &features=schedule_runs
+	//                            as a newer daemon lists them)
 	//   &deliver                 the session's last turn presented an image, a
 	//                           video and a page (fs_image answers them)
 	//   &tui                     the session s-cache is in its TUI on the
@@ -35,10 +39,25 @@
 	let rules: Frame = { daily_budget: 20, quiet_start: '23:00', quiet_end: '08:00', turn_done: true, sent_today: 3 };
 	const SESSION = 's-cache';
 	const DIR = '/Users/me/code/lynshen-desktop/out';
-	const sessions = [
+	const sessions: Frame[] = [
 		{ session: SESSION, running: true, cwd: '/Users/me/code/lynshen-desktop', title: '会话缓存分片', open: true, watchers: 0, updated_at: Date.now(), created_at: Date.now(), entries: 4, engine: 'lynshen', agent: null, archived: false, chat: false },
 		{ session: 's-docs', cwd: '/Users/me/code/lynshen-desktop', title: '翻译文档', open: false, watchers: 0, updated_at: Date.now() - 3_600_000, created_at: Date.now() - 3_600_000, entries: 9, engine: 'lynshen', agent: null, archived: false, chat: false }
 	];
+	// &schedules: a session whose turn ended with a dev server left going.
+	if (params.has('schedules'))
+		sessions.push({ session: 's-dev', cwd: '/Users/me/code/lynshen-desktop', title: '启动开发服务器', open: true, watchers: 0, updated_at: Date.now() - 60_000, created_at: Date.now() - 60_000, entries: 3, engine: 'lynshen', agent: null, archived: false, chat: false, running: false, background: true });
+	// &schedules: 巡检 on background work, 夜间构建 off after 3 failures, 周报 next.
+	const now = Math.floor(Date.now() / 1000);
+	let schedules: Frame[] = params.has('schedules')
+		? [
+				{ id: 'sch-a', agent: 'ops', name: '巡检', prompt: 'check', enabled: true, repeat: 'hourly', time: '00:15', days: [], date: null, new_session: true, created_at: 1, last_run_at: now - 300, last_session: 's-run', next_run_at: now + 3000, worktree: false, budget: null, failures: 0, last_run: { at: now - 300, session: 's-run', status: 'background' }, history: [] },
+				{ id: 'sch-b', agent: 'ops', name: '夜间构建', prompt: 'build', enabled: false, repeat: 'daily', time: '02:00', days: [], date: null, new_session: true, created_at: 2, last_run_at: now - 80000, last_session: 's-old', next_run_at: null, worktree: true, budget: 5, failures: 3, last_run: { at: now - 80000, session: 's-old', status: 'failed', error: 'HTTP 502' }, history: [] },
+				{ id: 'sch-c', agent: 'ops', name: '周报', prompt: 'report', enabled: true, repeat: 'weekly', time: '18:00', days: [5], date: null, new_session: true, created_at: 3, last_run_at: null, last_session: null, next_run_at: now + 90000, worktree: false, budget: null, failures: 0, last_run: null, history: [] }
+			]
+		: [];
+	// &oldSchedules: as a daemon before schedule_runs lists them.
+	if (params.has('oldSchedules'))
+		schedules = schedules.map(({ worktree, budget, failures, last_run, history, ...rest }) => (void [worktree, budget, failures, last_run, history], rest));
 	const workspaces = { type: 'workspaces', rev: 1, workspaces: [{ id: 'w1', name: '工作', projects: [{ id: 'p1', name: 'lynshen-desktop', path: '/Users/me/code/lynshen-desktop', dirs: [] }] }] };
 	const approval = {
 		type: 'approval_request', session: SESSION, call_id: 'call-push', name: 'bash', summary: 'git push origin feat/session-cache',
@@ -61,7 +80,8 @@
 				this.emit({ type: 'hello', protocol: 2, version: '0.7.5', ...(features !== null ? { features: features.split(',').filter(Boolean) } : {}) });
 				this.emit({ type: 'sessions', sessions });
 				this.emit(workspaces);
-				this.emit({ type: 'agents', agents: [] });
+				this.emit({ type: 'agents', agents: params.has('schedules') ? [{ id: 'ops', name: 'Ops', enabled: true, busy: true, cwd: '/Users/me/code/ops' }] : [] });
+				if (params.has('schedules')) this.emit({ type: 'schedules', schedules });
 				// &bench: things waiting (two actions, a question, a dispatch plan)
 				// and a running session, for 工作台.
 				const bench = params.has('bench');
@@ -94,7 +114,19 @@
 				case 'agent_list':
 					return answer({ type: 'agents', agents: [] });
 				case 'schedule_list':
-					return answer({ type: 'schedules', schedules: [] });
+					return answer({ type: 'schedules', schedules });
+				case 'schedule_save': {
+					const change = op.schedule as Frame;
+					schedules = schedules.map((x) => (x.id === change.id ? { ...x, ...change, ...(change.enabled ? { failures: 0, next_run_at: now + 3600 } : { next_run_at: null }) } : x));
+					const saved = schedules.find((x) => x.id === change.id);
+					setTimeout(() => this.emit({ type: 'schedules', schedules }), 10);
+					return answer({ type: 'schedule_saved', schedule: saved });
+				}
+				case 'schedule_run': {
+					schedules = schedules.map((x) => (x.id === op.schedule ? { ...x, last_run: { at: now, session: null, status: 'running' } } : x));
+					setTimeout(() => this.emit({ type: 'schedules', schedules }), 10);
+					return answer({ type: 'schedule_started', schedule: op.schedule });
+				}
 				case 'workspaces':
 					return answer(workspaces);
 				case 'session_open':

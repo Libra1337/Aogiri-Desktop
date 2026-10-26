@@ -400,7 +400,7 @@ const remote = params.has('remote');
 // ?remoteHost: the phone page's computer view on a scripted computer
 // (RemoteHost.svelte): the list, a session waiting for an approval, 通知.
 const remoteHost = params.has('remoteHost');
-if (remote || remoteHost) Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
+if (remote || remoteHost || params.has('scheduleBoard')) Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
 document.documentElement.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
-const { default: Fixture } = params.has('addmenu') ? await import('./AddMenu.svelte') : params.has('editor') ? await import('./Editor.svelte') : remoteHost ? await import('./RemoteHost.svelte') : remote ? await import('./Remote.svelte') : shell ? await import('./Shell.svelte') : panels ? await import('./Panels.svelte') : await import('./Regression.svelte');
+const { default: Fixture } = params.has('scheduleBoard') ? await import('./Schedules.svelte') : params.has('addmenu') ? await import('./AddMenu.svelte') : params.has('editor') ? await import('./Editor.svelte') : remoteHost ? await import('./RemoteHost.svelte') : remote ? await import('./Remote.svelte') : shell ? await import('./Shell.svelte') : panels ? await import('./Panels.svelte') : await import('./Regression.svelte');
 mount(Fixture, {target:document.getElementById('app')!});
