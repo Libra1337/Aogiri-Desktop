@@ -1,6 +1,7 @@
 <script lang="ts">
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon';
 	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
+	import GitForkIcon from 'phosphor-svelte/lib/GitForkIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 	import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
 	import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon';
@@ -54,6 +55,7 @@
 	import ListPlusIcon from 'phosphor-svelte/lib/ListPlusIcon';
 	import { copyText } from '$lib/clipboard';
 	import { lastTurnStart, turnEnds, turnText } from '$lib/turnText';
+	import { forkPoints } from '$lib/forks';
 	import { contextItems, type ContextItem } from '$lib/ui/contextMenu';
 	import { streamText } from '$lib/streamText';
 	import type { PlainSource } from '$lib/streamPlain';
@@ -90,6 +92,8 @@
 		onOpenAgent,
 		onAgentChanges,
 		onChanges,
+		onOpenEdited,
+		onFork,
 		onMergeAgent,
 		onStopAgent,
 		onPickAttempt,
@@ -192,6 +196,12 @@
 		/** Shows the project's changes in the Git panel: the end of a turn's
 		 *  list of changed files. */
 		onChanges?: () => void;
+		/** Opens a file the turn that `reply` ends changed, with that turn's
+		 *  changes (absent: as a file). */
+		onOpenEdited?: (path: string, reply: Msg) => void;
+		/** Forks the conversation after the turn a reply ends, keeping that
+		 *  many user turns (absent: it cannot fork). */
+		onFork?: (keep: number) => void;
 		/** The session's folder: a changed file shows relative to it. */
 		root?: string;
 		/** The last turn still runs, or waits on work it handed off: it does
@@ -476,9 +486,15 @@
 		for (let j = i; j < messages.length && messages[j]!.kind !== 'user'; j++) if (ends.has(messages[j]!)) end = messages[j];
 		return copy(turnText(messages, i), end);
 	}
+	// Where the conversation can fork: the reply that ends each finished turn.
+	const forks = $derived(onFork ? forkPoints(messages.slice(0, liveFrom), false) : new Map<Msg, number>());
 	function turnMenu(i: number): ContextItem[] {
 		if (i >= liveFrom || !turnText(messages, i)) return [];
-		return [{ key: 'copy-turn', label: t('chat.copyTurn'), run: () => copyTurn(i) }];
+		const keep = forks.get(messages[i]!);
+		return [
+			{ key: 'copy-turn', label: t('chat.copyTurn'), run: () => copyTurn(i) },
+			...(keep && onFork ? [{ key: 'fork', label: t('chat.fork.here'), run: () => onFork(keep) }] : [])
+		];
 	}
 
 	// A sent message's state shows on its bubble; the bottom indicator would
@@ -967,9 +983,14 @@
 								{#if m.tokens}<span class="mono">{t('chat.tokens', { n: m.tokens })}</span>{/if}
 							{/if}
 							{#if turnEnd}
+								{@const keep = forks.get(m)}
 								<button class="tcopy" class:done={copied === m} onclick={() => copyTurn(i)} aria-label={t(copied === m ? 'common.copied' : 'chat.copyTurn')} title={t('chat.copyTurn')}>
 									{#if copied === m}<CheckIcon size={13} /><span>{t('common.copied')}</span>{:else}<CopyIcon size={13} />{/if}
 								</button>
+								{#if keep && onFork}
+									<!-- Fork from here: a new conversation with the turns up to this one. -->
+									<button class="tcopy tfork" onclick={() => onFork(keep)} aria-label={t('chat.fork.here')} title={t('chat.fork.here')}><GitForkIcon size={13} /></button>
+								{/if}
 							{/if}
 						</div>
 					{/if}
@@ -978,7 +999,7 @@
 							<!-- The turn's changed files: a click opens one; the last row shows the project's changes in Git. -->
 							<div class="changed" aria-label={t('chat.stat.files')}>
 								{#each m.turn.changes as f (f.path)}
-									<button class="cfile" title={f.path} onclick={() => onFile?.(f.path, m.text)}>
+									<button class="cfile" title={f.path} onclick={() => (onOpenEdited ? onOpenEdited(f.path, m) : onFile?.(f.path, m.text))}>
 										<span class="cpath">{shownPath(f.path)}</span>
 										<span class="mono add">+{f.added}</span><span class="mono del">−{f.removed}</span>
 									</button>

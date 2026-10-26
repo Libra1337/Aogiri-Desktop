@@ -23,9 +23,10 @@ export const UNQUEUE_SINCE = '0.4.27';
 /** What a daemon takes beyond its protocol version, by its hello's
  *  `features`: `queue`, queued messages picked by place (steer, take back,
  *  drop, move, interrupt and send, on every engine); `files`, a message's
- *  attachments other than images as `files`. A daemon from before sends
- *  none. */
-export type EngineFeature = 'queue' | 'files';
+ *  attachments other than images as `files`; `fork`, `session_create` with
+ *  `fork_from` (B08); `engine_probe`, an engine asked what it offers before
+ *  any session of it runs. A daemon from before sends none. */
+export type EngineFeature = 'queue' | 'files' | 'fork' | 'engine_probe';
 
 /** The daemon this page talks to has `feature` (see `EngineFeature`). */
 export function engineHas(feature: EngineFeature): boolean {

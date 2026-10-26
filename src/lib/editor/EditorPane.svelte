@@ -37,6 +37,7 @@
 	import { diffGutter, setDiffMarks } from './diffGutter';
 	import { aiHighlight, setAiRange } from './aiHighlight';
 	import { lineDiff, gutterMarks } from './lineDiff';
+	import { unifiedMergeView } from '@codemirror/merge';
 
 	// ⌘K sends a structured instruction to the active session (wired by the page).
 	let { onAiSend }: { onAiSend?: (content: string) => boolean } = $props();
@@ -59,6 +60,32 @@
 
 	const langCompartment = new Compartment();
 	const themeCompartment = new Compartment();
+	// The changes against what the tab compares with (a turn's start, git
+	// HEAD): removed lines shown in place above what replaced them, unchanged
+	// stretches folded; the file stays editable.
+	const compareCompartment = new Compartment();
+	function compareBase(tab: EditorTab): string | null {
+		if (tab.compare === 'turn') return tab.turnBase;
+		if (tab.compare === 'head') return tab.headText;
+		return null;
+	}
+	function compareExt(tab: EditorTab) {
+		const original = compareBase(tab);
+		return original == null
+			? []
+			: [
+					unifiedMergeView({ original, mergeControls: false, gutter: true, syntaxHighlightDeletions: true, collapseUnchanged: { margin: 3, minSize: 8 } }),
+					EditorState.phrases.of({ '$ unchanged lines': t('editor.unchangedLines') })
+				];
+	}
+	// The comparison the view shows: reconfigured only when it changes.
+	let shownCompare = '';
+	function applyCompare(v: EditorView, tab: EditorTab) {
+		const key = `${tab.path}\n${tab.compare}\n${compareBase(tab) ?? ''}`;
+		if (key === shownCompare) return;
+		shownCompare = key;
+		v.dispatch({ effects: compareCompartment.reconfigure(compareExt(tab)) });
+	}
 
 	let syncTimer: ReturnType<typeof setTimeout> | null = null;
 	let diffTimer: ReturnType<typeof setTimeout> | null = null;
@@ -105,6 +132,7 @@
 			]),
 			langCompartment.of([]),
 			themeCompartment.of(editorTheme(themeState.value === 'dark')),
+			compareCompartment.of([]),
 			EditorView.updateListener.of((update) => {
 				if (update.docChanged) {
 					const path = shownPath;
@@ -131,7 +159,8 @@
 
 	function refreshDiff(v: EditorView, tab: EditorTab) {
 		let marks: ReturnType<typeof gutterMarks> = [];
-		if (tab.headText != null) {
+		// Comparing: the comparison marks the changed lines itself.
+		if (tab.headText != null && compareBase(tab) == null) {
 			const chunks = lineDiff(tab.headText, v.state.doc.toString());
 			if (chunks) marks = gutterMarks(chunks, v.state.doc.lines);
 		}
@@ -188,6 +217,8 @@
 			// changed while another tab was showing) — reassert it.
 			v.dispatch({ effects: themeCompartment.reconfigure(editorTheme(themeState.value === 'dark')) });
 			void applyLanguage(v, tab, entry);
+			shownCompare = '';
+			applyCompare(v, tab);
 			refreshDiff(v, tab);
 			applyAiRange(v, tab);
 			aiPrompt = null;
@@ -225,12 +256,18 @@
 		untrack(() => view?.dispatch({ effects: themeCompartment.reconfigure(editorTheme(dark)) }));
 	});
 
-	// Reflect async headText arrival and AI-range changes onto the live view.
+	// Reflect async headText arrival, the comparison picked and AI-range
+	// changes onto the live view.
 	$effect(() => {
 		const tab = store.active;
 		tab?.headText;
+		tab?.compare;
+		tab?.turnBase;
 		untrack(() => {
-			if (view && tab && shownPath === tab.path) refreshDiff(view, tab);
+			if (view && tab && shownPath === tab.path) {
+				applyCompare(view, tab);
+				refreshDiff(view, tab);
+			}
 		});
 	});
 	$effect(() => {
@@ -401,6 +438,18 @@
 			{/each}
 		</div>
 		<div class="eactions">
+			{#if active && (active.turnBase != null || active.headText != null)}
+				<!-- 对比 · 本轮 / HEAD: the changes since the turn the file was opened from, or since git HEAD; a second click shows neither. -->
+				<div class="cmp" role="group" aria-label={t('editor.compare')}>
+					<span class="cmp-label">{t('editor.compare')}</span>
+					{#if active.turnBase != null}
+						<button class="cmp-opt" class:on={active.compare === 'turn'} aria-pressed={active.compare === 'turn'} title={t('editor.compareTurnTitle')} onclick={() => store.setCompare(active.path, active.compare === 'turn' ? 'off' : 'turn')}>{t('editor.compareTurn')}</button>
+					{/if}
+					{#if active.headText != null}
+						<button class="cmp-opt" class:on={active.compare === 'head'} aria-pressed={active.compare === 'head'} title={t('editor.compareHeadTitle')} onclick={() => store.setCompare(active.path, active.compare === 'head' ? 'off' : 'head')}>HEAD</button>
+					{/if}
+				</div>
+			{/if}
 			{#if active}
 				<IconButton size="sm" label={t('editor.revealFile')} title={t('editor.revealFile')} onclick={() => revealFile(active)}><FolderOpenIcon size={14} /></IconButton>
 				<IconButton size="sm" label={t('editor.copyPath')} title={t('editor.copyPath')} onclick={() => copyPath(active)}><CopySimpleIcon size={14} /></IconButton>
@@ -542,6 +591,44 @@
 		align-items: center;
 		gap: 2px;
 		flex-shrink: 0;
+	}
+	/* 对比 · 本轮 / HEAD: two quiet toggles before the bar's buttons. */
+	.cmp {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		margin-right: 6px;
+	}
+	.cmp-label {
+		margin-right: 2px;
+		color: var(--dim2);
+		font-size: var(--fs-2xs);
+	}
+	.cmp-opt {
+		height: 22px;
+		padding: 0 8px;
+		border: none;
+		border-radius: var(--r-sm);
+		background: none;
+		color: var(--dim);
+		font: inherit;
+		font-size: var(--fs-xs);
+		cursor: pointer;
+		transition:
+			background var(--t-fast) var(--ease-out),
+			color var(--t-fast) var(--ease-out);
+	}
+	.cmp-opt:hover {
+		color: var(--text);
+		background: var(--surface2);
+	}
+	.cmp-opt:focus-visible {
+		outline: 2px solid var(--brand);
+		outline-offset: 1px;
+	}
+	.cmp-opt.on {
+		background: var(--surface2);
+		color: var(--text);
 	}
 	.conflict {
 		display: flex;

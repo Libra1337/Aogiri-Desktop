@@ -80,6 +80,15 @@
 	//                           row opens its file there); `window.__editor`
 	//   &drop=<n>               files dragged over the window (the drop layer)
 	//   &devserver              a dev server comes up: the corner notice
+	//   &pick                   ⌘N asks the new conversation's project first
+	//                           (ProjectPickDialog); a pick goes to
+	//                           `window.__opened` as `pick:<name>` (none: `pick:`)
+	//   &repo                   the project is a git repository (main.ts)
+	//   &fork                   the conversation has a daemon session and the
+	//                           daemon can fork (add &features=fork); a fork
+	//                           goes to the navigator (`window.__shellStore`)
+	//   &forked                 the conversation is a fork of 浅色主题调色 after
+	//                           its first turn (its strip, 带回结论)
 	//   &deliver[=old]          a third turn that presented an image, a video and
 	//                           a page, proposed a scheduled task and started a
 	//                           conversation (=old: a daemon whose tasks carry no
@@ -101,7 +110,7 @@
 	import Sidebar from '../../src/lib/Sidebar.svelte';
 	import TabChromePopover from '../../src/lib/workbench/TabChromePopover.svelte';
 	import TitleBar from '../../src/lib/shell/TitleBar.svelte';
-	import OpenInEditor from '../../src/lib/shell/OpenInEditor.svelte';
+	import ProjectMenu from '../../src/lib/shell/ProjectMenu.svelte';
 	import ContextMenuHost from '../../src/lib/ui/ContextMenuHost.svelte';
 	import ConfirmHost from '../../src/lib/ui/ConfirmHost.svelte';
 	import Toaster from '../../src/lib/ui/Toaster.svelte';
@@ -123,6 +132,8 @@
 	import { setLocale } from '../../src/lib/i18n';
 	import { fileName, withFiles, withVideo } from '../../src/lib/attachments';
 	import HomePage from '../../src/lib/HomePage.svelte';
+	import ProjectPickDialog from '../../src/lib/ProjectPickDialog.svelte';
+	import { matches } from '../../src/lib/shortcuts';
 	import SettingsPage from '../../src/lib/settings/SettingsPage.svelte';
 	import { SIDEBAR_RAIL_WIDTH } from '../../src/lib/shell/sidebarState';
 	import { SAMPLE_PLAIN_IDS } from '../../src/lib/models/catalogSample';
@@ -167,6 +178,7 @@
 	let rowMenu = $state<{ sid: string; x: number; y: number } | null>(null);
 	const menuSession = $derived(rowMenu ? (store.allSessions.find((s) => s.id === rowMenu!.sid) ?? null) : null);
 	const session = store.allSessions.find((s) => s.id === first.sessions[0].id)!;
+	let picking = $state(false);
 	store.activeId = session.id;
 	// ?claudeChat: a Claude Code conversation that has started (ticket #40:
 	// it can go on in a new LynShen conversation).
@@ -221,7 +233,9 @@
 	const gatewayModels = mode.has('models');
 	const providersList = gatewayModels
 		? [{ id: 'monoize', name: 'LynShen', base_url: 'https://api.lynshen.org/v1', format: 'responses', models: SAMPLE_PLAIN_IDS.map((name) => ({ name, display_name: name })) }]
-		: [];
+		: mode.has('forked')
+			? [{ id: 'lynshen', name: 'LynShen', base_url: 'https://api.lynshen.org/v1', format: 'responses', models: [{ name: 'deepseek-v4.1-flash', display_name: 'deepseek-v4.1-flash' }] }]
+			: [];
 	if (gatewayModels) {
 		feed({ type: 'model_status', provider: 'monoize', model: 'deepseek-v4.1-flash', model_label: 'deepseek-v4.1-flash', reasoning_effort: 'medium', reasoning_efforts: ['low', 'medium', 'high'], state: 'ready', context_window: 384000 });
 		session.chat.silentModelView = 1;
@@ -412,6 +426,23 @@
 			feed({ type: 'prompt_suggestion', text: recapMode === 'long' ? '提交并推送，然后在 PR 描述里写清楚缓存键的新格式、旧缓存的迁移方式和回滚办法，再请两位同事评审' : '提交并推送' });
 	}
 
+	// ?shell&turnedit (with &openfile): a third turn that changed cache.ts
+	// (the 200 numbered lines main.ts reads for it): line 5 was rewritten and
+	// a line was added after line 9. Its change pill lists the file; a row
+	// opens it with the turn's changes (D20). &turnedit=lost: the edit's diff
+	// no longer matches the file (changed since): compared with git HEAD.
+	const turnEdit = mode.get('turnedit');
+	if (turnEdit !== null && !mode.has('empty')) {
+		const diff = turnEdit === 'lost' ? '-export const gone = 0;\n+export const renamed = 5;' : ['--- a/src/lib/cache.ts', '+++ b/src/lib/cache.ts', '@@ -4,3 +4,3 @@', ' export const line4 = 4;', '-export const five = 5;', '+export const line5 = 5;', ' export const line6 = 6;', '@@ -9,2 +9,3 @@', ' export const line9 = 9;', '+export const line10 = 10;', ' export const extra = 11;'].join('\n');
+		feed({ type: 'user_message', content: '把常量改成按行号命名。' });
+		feed({ type: 'connecting' });
+		feed({ type: 'status', message: 'streaming' });
+		feed({ type: 'tool_start', call_id: 'te1', name: 'edit' });
+		feed({ type: 'tool_output', call_id: 'te1', name: 'edit', output: JSON.stringify({ path: '/Users/me/code/lynshen-desktop/src/lib/cache.ts', diff }) });
+		feed({ type: 'assistant_delta', delta: '改好了：第 5 行改名，第 9 行后加了一个常量。' });
+		feed({ type: 'status', message: 'ready' });
+	}
+
 	// ?shell&deliver: a third turn that ends with deliverables (an image, a
 	// video, a page), a proposed scheduled task and a conversation it started
 	// (answered meanwhile). &deliver=old: a daemon before the origin of a
@@ -549,8 +580,22 @@
 			...(queueMode === 'claude' ? { fixed: 1 } : {})
 		});
 	}
+	// ?empty&repo: a new conversation (a draft) in a repository: the third
+	// menu of its sentence, where it works.
+	if (mode.has('empty') && mode.has('repo')) session.draft = true;
+	// ?fork / ?forked: a conversation the daemon has, and (forked) one it
+	// was forked from.
+	if (mode.has('fork') || mode.has('forked')) {
+		session.chat.sessionId = 'conv-main';
+		session.restored = true;
+	}
+	if (mode.has('forked')) {
+		const src = first.sessions[1]!;
+		src.chat.sessionId = 'conv-src';
+		session.forkedFrom = { sid: 'conv-src', title: '浅色主题调色', turns: 1 };
+	}
 	// As +page.svelte does: the daemon's hello says what it takes.
-	if (queueMode !== null || mode.has('openfile')) {
+	if (queueMode !== null || mode.has('openfile') || mode.has('fork')) {
 		daemon.onHello = (version, features) => {
 			engine.version = version;
 			engine.features = features;
@@ -617,6 +662,12 @@
 	});
 </script>
 
+<!-- ?pick: ⌘N asks the project first (+page.svelte's askProject). -->
+<svelte:window onkeydown={(e) => mode.has('pick') && matches(e, 'newSession') && (e.preventDefault(), (picking = true))} />
+{#if picking}
+	<ProjectPickDialog projects={store.codeProjects} current={first.id} onPick={(p) => opened.push(`pick:${p?.name ?? ''}`)} onOpenFolder={() => opened.push('pick-folder')} onClose={() => (picking = false)} />
+{/if}
+
 {#snippet chat()}
 	<ChatPane
 		{session}
@@ -648,7 +699,7 @@
 		onAdd={() => {}}
 	>
 		{#snippet actions()}
-			{#if !settings && !home}<OpenInEditor path={first.path} />{/if}
+			{#if !settings && !home}<ProjectMenu path={first.path} name={first.name} onOpenGit={() => opened.push('git')} />{/if}
 		{/snippet}
 	</TitleBar>
 	<div class="body">
@@ -687,7 +738,7 @@
 			/>
 			<div class="canvas" data-testid="canvas">
 				{#if home}
-					<HomePage projects={store.userProjects} onStart={() => {}} onOpenSession={() => {}} onOpenProject={() => {}} onAddProject={() => {}} onOpenAgent={() => {}} />
+					<HomePage projects={store.userProjects} onStart={(text, _model, project) => opened.push(`start:${project?.name ?? ''}:${text}`)} onOpenSession={() => {}} onOpenProject={() => {}} onAddProject={() => {}} onOpenAgent={() => {}} />
 				{:else if mode.has('preview') || toolPanel}
 					<Mosaic
 						hideSoloBar

@@ -15,6 +15,8 @@ export interface BackendProfile {
 	catalog?: ModelOption[];
 	catalogEffort?: string;
 	commands?: CommandItem[];
+	/** When the daemon last probed the engine for it (engineProbe.ts), ms. */
+	probedAt?: number;
 }
 
 const KEY = 'lynshen-backend-profiles';

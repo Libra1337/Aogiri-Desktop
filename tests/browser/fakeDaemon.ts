@@ -50,6 +50,8 @@ const builtin = (id: string, name: string, description: string, instructions: st
 });
 
 export const daemonState = {
+	/** Sessions `session_create` made. */
+	created: 0,
 	/** Answer the skill ops as a daemon older than them does. */
 	old: false,
 	/** Chat connectors (Settings → 聊天连接); `chats` picks a sample:
@@ -469,6 +471,9 @@ function reply(op: Frame): Frame | null {
 			if (typeof op.sessions === 'string') s.appTools.sessions = op.sessions;
 			return { type: 'app_tools', ...s.appTools };
 		}
+		// A new session (a fork, ?shell&fork): named, then its engine starts.
+		case 'session_create':
+			return { type: 'session_created', session: `fork-${++s.created}` };
 		case 'skill_install': {
 			const item = s.catalog.find((x) => x.id === op.skill);
 			if (op.skill === 'mcp-builder') return { type: 'error', message: 'GitHub returned 403 for the skill tree' };

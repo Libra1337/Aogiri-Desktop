@@ -1236,6 +1236,14 @@ export function gitCheckpointCapture(cwd: string, session?: string, turn?: numbe
 	return invoke('git_checkpoint_capture', { cwd, session, turn });
 }
 
+/** A fork's worktree: `<container>/<slug>` (`path`) on a new `branch` at the
+ *  commit the checkpoint was taken on, its files as the checkpoint has them
+ *  and uncommitted as they were. The checkpoint: the sha given, else the one
+ *  kept for `session`'s turn `turn`. Returns the branch's base commit. */
+export function gitForkWorktree(repo: string, path: string, branch: string, checkpoint: string, session?: string, turn?: number): Promise<string> {
+	return invoke('git_fork_worktree', { repo, path, branch, checkpoint, session, turn });
+}
+
 /** Restore the working tree to a checkpoint: the sha given (empty: none), else
  *  the one kept for the session's turn. Snapshots the current state first
  *  (returns that recovery sha, kept under refs/lynshen/rewind-backup/<session>)
