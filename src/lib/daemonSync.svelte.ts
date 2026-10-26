@@ -20,7 +20,7 @@
 import { daemon } from '$lib/protocol';
 import type { DaemonSessionView } from '$lib/agents.svelte';
 import { savedEmpty } from '$lib/savedEmpty';
-import type { SavedProject, SessionStore } from '$lib/session.svelte';
+import { forkedFromList, type SavedProject, type SessionStore } from '$lib/session.svelte';
 import type { Project, WorktreeMeta } from '$lib/types';
 import type { WorkspaceStore } from '$lib/workbench/workspaceStore.svelte';
 import { normalizeColor, parseTabIcon, type TabIcon } from '$lib/workbench/tabChrome';
@@ -301,6 +301,8 @@ export class DaemonSync {
 				// Saved with nothing in it: not listed until it has something.
 				const empty = savedEmpty(r) || undefined;
 				if (s.empty !== empty) s.empty = empty;
+				// A fork another client made: where it came from (B08).
+				if (!s.forkedFrom && r.forked_from) s.forkedFrom = forkedFromList(r.forked_from, (sid) => this.store.bySid(sid)?.chat.title);
 				continue;
 			}
 			if (daemon.desktopOf(r.session)) continue;

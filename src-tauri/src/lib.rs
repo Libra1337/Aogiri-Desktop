@@ -3513,6 +3513,58 @@ fn git_checkpoint_restore(
     Ok(Some(safety))
 }
 
+/// A fork of a conversation in its own worktree: a new branch at the commit
+/// the checkpoint was taken on, in `<container>/<slug>` (`path`), with the
+/// working tree as the checkpoint has it (what was not committed then is not
+/// committed there either). The checkpoint is the sha given, else the one
+/// kept for `session`'s turn `turn`. Returns the branch's base commit.
+#[tauri::command(async)]
+fn git_fork_worktree(
+    repo: String,
+    path: String,
+    branch: String,
+    checkpoint: String,
+    session: Option<String>,
+    turn: Option<u32>,
+) -> Result<String, String> {
+    let dir = PathBuf::from(&repo);
+    if !is_valid_ref_name(&branch) {
+        return Err(format!("invalid ref name: {branch}"));
+    }
+    confine_worktree_path(&path, &dir)?;
+    let checkpoint = if checkpoint.is_empty() {
+        let (Some(session), Some(turn)) = (session.as_deref(), turn) else {
+            return Err("no checkpoint given".to_string());
+        };
+        match git_plumb(
+            &dir,
+            None,
+            &["rev-parse", "--verify", "--quiet", &checkpoint_ref(session, turn)?],
+        ) {
+            Ok(sha) if !sha.is_empty() => sha,
+            _ => return Err("no checkpoint for that turn".to_string()),
+        }
+    } else if checkpoint.len() < 7
+        || checkpoint.len() > 64
+        || !checkpoint.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return Err(format!("invalid checkpoint sha: {checkpoint}"));
+    } else {
+        checkpoint
+    };
+    let base = git_plumb(
+        &dir,
+        None,
+        &["rev-parse", "--verify", "--quiet", &format!("{checkpoint}^")],
+    )
+    .map_err(|_| "the repository had no commit when the checkpoint was taken".to_string())?;
+    git_plumb(&dir, None, &["worktree", "add", "-b", &branch, &path, &base])?;
+    let tree = PathBuf::from(&path);
+    git_plumb(&tree, None, &["read-tree", "-u", "--reset", &checkpoint])?;
+    git_plumb(&tree, None, &["reset", "-q"])?;
+    Ok(base)
+}
+
 // --- terminal (real PTY) ---
 
 struct Pty {
@@ -4102,6 +4154,7 @@ pub fn run() {
             generate_text,
             git_checkpoint_capture,
             git_checkpoint_restore,
+            git_fork_worktree,
             editors::list_editors,
             editors::open_in_editor,
             wheel::smooth_wheel_ready,
@@ -4595,6 +4648,96 @@ mod tests {
             "must resolve codex.cmd, not the extensionless POSIX shim (got {resolved:?})"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fork_worktree_has_the_checkpoints_files_uncommitted() {
+        use std::process::Command;
+        let dir = std::env::temp_dir().join(format!("lynshen-fork-wt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |at: &Path, args: &[&str]| {
+            let out = Command::new("git")
+                .current_dir(at)
+                .env("GIT_AUTHOR_NAME", "T")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "T")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .args(args)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        git(&dir, &["init", "-q"]);
+        std::fs::write(dir.join("a.txt"), "v1").unwrap();
+        std::fs::write(dir.join("b.txt"), "gone later").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        let head = git(&dir, &["rev-parse", "HEAD"]).trim().to_string();
+        // The state at the fork: a change, a deletion and a new file, none committed.
+        std::fs::write(dir.join("a.txt"), "v2").unwrap();
+        std::fs::remove_file(dir.join("b.txt")).unwrap();
+        std::fs::write(dir.join("c.txt"), "new").unwrap();
+        let repo = dir.to_string_lossy().to_string();
+        let cp = super::git_checkpoint_capture(repo.clone(), Some("s-1".into()), Some(1)).unwrap();
+        // The source goes on after the fork point; the fork does not see it.
+        std::fs::write(dir.join("a.txt"), "v3").unwrap();
+        let container = super::worktree_base_dir(&dir).unwrap();
+        let path = container.join("fork-one").to_string_lossy().to_string();
+        let base = super::git_fork_worktree(
+            repo.clone(),
+            path.clone(),
+            "fork/one".into(),
+            String::new(),
+            Some("s-1".into()),
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(base, head);
+        let tree = Path::new(&path);
+        assert_eq!(std::fs::read_to_string(tree.join("a.txt")).unwrap(), "v2");
+        assert!(!tree.join("b.txt").exists());
+        assert_eq!(std::fs::read_to_string(tree.join("c.txt")).unwrap(), "new");
+        assert_eq!(git(tree, &["rev-parse", "HEAD"]).trim(), head);
+        assert_eq!(git(tree, &["branch", "--show-current"]).trim(), "fork/one");
+        let status = git(tree, &["status", "--porcelain"]);
+        assert!(
+            status.contains(" M a.txt") && status.contains(" D b.txt") && status.contains("?? c.txt"),
+            "{status}"
+        );
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "v3");
+        // The sha form, and the checks.
+        let other = container.join("fork-two").to_string_lossy().to_string();
+        assert!(super::git_fork_worktree(repo.clone(), other, "fork/two".into(), cp, None, None).is_ok());
+        assert!(super::git_fork_worktree(
+            repo.clone(),
+            "/tmp/elsewhere".into(),
+            "fork/x".into(),
+            String::new(),
+            Some("s-1".into()),
+            Some(1)
+        )
+        .is_err());
+        assert!(super::git_fork_worktree(
+            repo.clone(),
+            container.join("fork-three").to_string_lossy().to_string(),
+            "fork/three".into(),
+            String::new(),
+            Some("s-1".into()),
+            Some(9)
+        )
+        .is_err());
+        assert!(super::git_fork_worktree(
+            repo.clone(),
+            container.join("fork-four").to_string_lossy().to_string(),
+            "-bad".into(),
+            String::new(),
+            Some("s-1".into()),
+            Some(1)
+        )
+        .is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&container);
     }
 
     #[test]

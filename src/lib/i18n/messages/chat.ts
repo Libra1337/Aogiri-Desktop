@@ -16,6 +16,37 @@ const chat = {
 		rewindRestoreFailed: '文件没有还原：{error}',
 		quoteTitle: '引用到输入框',
 		copyTurn: '复制整段回复',
+		// Forks (ForkDialog.svelte, the fork strip in ChatPane).
+		fork: {
+			here: '从这里分叉',
+			title: '从这一轮分叉',
+			hint: '新对话带着前 {n} 轮继续，原对话保持不变。',
+			sameDir: '原目录',
+			sameDirDesc: '和原对话共用同一份文件，双方的改动互相可见。',
+			worktree: '新 worktree',
+			worktreeDesc: '新建分支 {branch}，文件是这一轮结束时的样子，双方的改动互不影响。打开为单独的项目。',
+			noRepo: '这个目录不是 git 仓库，不能新建 worktree。',
+			noCheckpoint: '这一轮没有保存文件检查点，只能在原目录分叉。',
+			making: '正在创建…',
+			confirm: '分叉',
+			forkTitle: '{title}（分叉）',
+			from: '分叉自「{title}」',
+			open: '打开原对话',
+			bring: '带回结论',
+			bringHint: '总结这个分叉做了什么，放进原对话的输入框',
+			bringing: '正在总结…',
+			sourceGone: '原对话不在这个窗口里',
+			nothingYet: '这个分叉还没有新的进展',
+			noModel: '没有可用的模型来写总结',
+			empty: '模型没有返回内容',
+			brought: '总结已放进原对话的输入框，看过再发送'
+		},
+		// A conversation started in a new worktree (SessionStore.#startInWorktree).
+		worktree: {
+			creating: '正在创建 worktree…',
+			created: '在 worktree「{name}」中开始（分支 {branch}，基于 {base}）',
+			failed: '没能创建 worktree：{msg}。消息已放回输入框。'
+		},
 		diagram: '图表',
 		tokens: '{n} tokens',
 		// Composer
@@ -669,6 +700,35 @@ const chat = {
 		rewindRestoreFailed: 'Could not restore the files: {error}',
 		quoteTitle: 'Quote into the composer',
 		copyTurn: 'Copy the whole reply',
+		fork: {
+			here: 'Fork from here',
+			title: 'Fork from this turn',
+			hint: 'A new conversation goes on from the first {n} turns; the original stays as it is.',
+			sameDir: 'Same folder',
+			sameDirDesc: 'It shares the files with the original: each sees the other’s edits.',
+			worktree: 'New worktree',
+			worktreeDesc: 'A new branch {branch}, with the files as they were when this turn ended: neither side’s edits reach the other. Opens as a project of its own.',
+			noRepo: 'This folder is not a git repository, so no worktree can be made.',
+			noCheckpoint: 'No file checkpoint was kept for this turn: it can only fork in the same folder.',
+			making: 'Creating…',
+			confirm: 'Fork',
+			forkTitle: '{title} (fork)',
+			from: 'Forked from “{title}”',
+			open: 'Open the original',
+			bring: 'Bring back',
+			bringHint: 'Sum up what this fork did and put it in the original’s composer',
+			bringing: 'Summing up…',
+			sourceGone: 'The original conversation is not in this window',
+			nothingYet: 'This fork has nothing new yet',
+			noModel: 'No model is available to write the summary',
+			empty: 'The model returned nothing',
+			brought: 'The summary is in the original’s composer, to read and send'
+		},
+		worktree: {
+			creating: 'Creating a worktree…',
+			created: 'Started in worktree “{name}” (branch {branch}, from {base})',
+			failed: 'Could not create the worktree: {msg}. The message is back in the input.'
+		},
 		diagram: 'Diagram',
 		tokens: '{n} tokens',
 		// Composer

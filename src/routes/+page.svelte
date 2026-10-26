@@ -123,6 +123,8 @@
 	import { readSidebarCollapsed, writeSidebarCollapsed, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH } from '$lib/shell/sidebarState';
 	import TaskDialog from '$lib/TaskDialog.svelte';
 	import ProjectPickDialog from '$lib/ProjectPickDialog.svelte';
+	import { llmTarget as llmTargetOf } from '$lib/llmTarget';
+	import { setupCommand } from '$lib/forks';
 	import DeskPage from '$lib/DeskPage.svelte';
 	import ProjectPage from '$lib/ProjectPage.svelte';
 	import FeedbackDialog from '$lib/FeedbackDialog.svelte';
@@ -516,19 +518,7 @@
 	// Target endpoint for one-shot AI text (commit / PR). Prefer the active
 	// session's provider; fall back to the default lynshen gateway or the first
 	// configured provider. Strip any `[1m]`-style alias suffix from the model id.
-	const llmTarget = $derived.by(() => {
-		const pick =
-			providersList.find((p) => p.id === chat?.provider) ??
-			providersList.find((p) => p.id === 'lynshen') ??
-			providersList[0];
-		if (!pick) return null;
-		const model =
-			chat?.provider === pick.id && chat?.model
-				? chat.model.replace(/\[.*?\]$/, '')
-				: (pick.models[0]?.name ?? '');
-		if (!model) return null;
-		return { provider: pick.id, baseUrl: pick.base_url, format: pick.format, model };
-	});
+	const llmTarget = $derived(llmTargetOf(providersList, chat));
 
 	const savedSidebarWidth = Number(localStorage.getItem('lynshen-sidebar-width'));
 	/** The expanded navigator's width (the user drags it, 240–460px). */
@@ -865,6 +855,18 @@
 			applyTiles(openElsewhere(tab, { place: 'side', sessionId: request.sessionId || store.activeId }));
 		});
 	});
+	// A new worktree of a project (a parallel task, a fork, a conversation
+	// started in a new worktree): the project's setup script runs in a
+	// terminal there, beside the worktree's conversation (B09, D15).
+	async function runSetup(tree: Project, from: Project) {
+		const script = from.setup?.trim();
+		if (!script) return;
+		const shell = await shells.terminal().catch(() => null);
+		const windows = /Windows/.test(navigator.userAgent) && !/bash/i.test(shell?.program ?? '');
+		const command = setupCommand(script, from.path, tree.path, windows);
+		if (command) terminalRequests.open(command, tree.path, tree.sessions[0]?.id ?? '', true);
+	}
+	SessionStore.onWorktree = (tree, from) => void runSetup(tree, from);
 	/** A worktree subagent's changes beside its session's chat: the Changes
 	 *  panel at the agent's workdir, one tab per agent. */
 	function openAgentChanges(sessionId: string, agent: string) {
@@ -1312,6 +1314,8 @@
 		// Started on a requirement: the description goes with its start (the
 		// start card), not as a first message.
 		const project = store.createProject(path, meta, (!requirement && description) || undefined);
+		const main = store.userProjects.find((x) => !x.worktree && normPath(x.path) === normPath(meta.mainRepoPath));
+		if (main) void runSetup(project, main);
 		const first = project.sessions[0];
 		if (requirement && first) {
 			first.requirement = requirement;
@@ -1840,6 +1844,7 @@
 							{currentStep}
 							onClose={() => (projectPageId = null)}
 							onDirs={(dirs) => store.setProjectDirs(pageProject, dirs)}
+							onSetup={pageProject.worktree || pageProject.home || pageProject.chats ? undefined : (script) => (pageProject.setup = script || undefined)}
 							onStartRequirement={startRequirement}
 							onOpenSession={(s) => openDaemonSession(s)}
 							onOpenAgent={(id) => openDesk(id)}

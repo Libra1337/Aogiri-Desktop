@@ -84,6 +84,11 @@
 	//                           (ProjectPickDialog); a pick goes to
 	//                           `window.__opened` as `pick:<name>` (none: `pick:`)
 	//   &repo                   the project is a git repository (main.ts)
+	//   &fork                   the conversation has a daemon session and the
+	//                           daemon can fork (add &features=fork); a fork
+	//                           goes to the navigator (`window.__shellStore`)
+	//   &forked                 the conversation is a fork of 浅色主题调色 after
+	//                           its first turn (its strip, 带回结论)
 	//   &deliver[=old]          a third turn that presented an image, a video and
 	//                           a page, proposed a scheduled task and started a
 	//                           conversation (=old: a daemon whose tasks carry no
@@ -228,7 +233,9 @@
 	const gatewayModels = mode.has('models');
 	const providersList = gatewayModels
 		? [{ id: 'monoize', name: 'LynShen', base_url: 'https://api.lynshen.org/v1', format: 'responses', models: SAMPLE_PLAIN_IDS.map((name) => ({ name, display_name: name })) }]
-		: [];
+		: mode.has('forked')
+			? [{ id: 'lynshen', name: 'LynShen', base_url: 'https://api.lynshen.org/v1', format: 'responses', models: [{ name: 'deepseek-v4.1-flash', display_name: 'deepseek-v4.1-flash' }] }]
+			: [];
 	if (gatewayModels) {
 		feed({ type: 'model_status', provider: 'monoize', model: 'deepseek-v4.1-flash', model_label: 'deepseek-v4.1-flash', reasoning_effort: 'medium', reasoning_efforts: ['low', 'medium', 'high'], state: 'ready', context_window: 384000 });
 		session.chat.silentModelView = 1;
@@ -556,8 +563,22 @@
 			...(queueMode === 'claude' ? { fixed: 1 } : {})
 		});
 	}
+	// ?empty&repo: a new conversation (a draft) in a repository: the third
+	// menu of its sentence, where it works.
+	if (mode.has('empty') && mode.has('repo')) session.draft = true;
+	// ?fork / ?forked: a conversation the daemon has, and (forked) one it
+	// was forked from.
+	if (mode.has('fork') || mode.has('forked')) {
+		session.chat.sessionId = 'conv-main';
+		session.restored = true;
+	}
+	if (mode.has('forked')) {
+		const src = first.sessions[1]!;
+		src.chat.sessionId = 'conv-src';
+		session.forkedFrom = { sid: 'conv-src', title: '浅色主题调色', turns: 1 };
+	}
 	// As +page.svelte does: the daemon's hello says what it takes.
-	if (queueMode !== null || mode.has('openfile')) {
+	if (queueMode !== null || mode.has('openfile') || mode.has('fork')) {
 		daemon.onHello = (version, features) => {
 			engine.version = version;
 			engine.features = features;

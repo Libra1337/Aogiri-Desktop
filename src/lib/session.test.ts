@@ -17,6 +17,7 @@ vi.mock('./protocol', () => ({
 	listDir: vi.fn(() => Promise.resolve([{ name: '2026-10-01 old', path: '/home/u/Documents/LynShen/2026-10-01 old', is_dir: true }])),
 	writeConfig: vi.fn(() => Promise.resolve()),
 	git: vi.fn(() => Promise.resolve('')),
+	worktreeBase: vi.fn(() => Promise.resolve('/tmp/.lynshen-worktrees/p1')),
 	sessionHistory: vi.fn(() =>
 		Promise.resolve([
 			{ session: 's6old', title: 'old chat', updated_at: 1_700_000_000_000, entries: 4, archived: false, agent: null, open: false, engine: 'lynshen' },
@@ -31,6 +32,7 @@ import { dispatch, startDraft } from './backends/router';
 import { daemon, hostSession, closeSession, sendLine, git, writeConfig, sessionHistory, sessionMeta } from './protocol';
 import type { EngineSpec } from './daemon';
 import { setLocale } from './i18n';
+import { engine } from './engineVersion.svelte';
 import type { Project, Session, WorktreeMeta } from './types';
 
 const proj = (id = 'p1'): Project => ({ id, name: id, path: `/tmp/${id}`, sessions: [] });
@@ -1754,5 +1756,147 @@ describe('新对话: one new conversation waits until its first message', () => 
 		const id = store.addSession(p);
 		const items = await store.historyItems(p, p.sessions.find((s) => s.id === id)!.chat);
 		expect(items.map((x) => x.id)).toEqual(['s-full', 's-named']);
+	});
+});
+
+describe('forks and worktree sessions (B09)', () => {
+	/** A started conversation of `backend` with two finished turns. */
+	async function twoTurns(store: SessionStore, p: Project, backend: 'lynshen' | 'claude' = 'lynshen') {
+		const id = store.addSession(p, undefined, backend);
+		begin(id);
+		await flush();
+		const s = p.sessions.find((x) => x.id === id)!;
+		s.chat.messages = [
+			{ kind: 'user', text: 'one' },
+			{ kind: 'assistant', text: 'a' },
+			{ kind: 'user', text: 'two' },
+			{ kind: 'assistant', text: 'b' }
+		];
+		s.chat.title = 'Cache work';
+		return s;
+	}
+	afterEach(() => {
+		engine.features = [];
+	});
+
+	it('forks only on a daemon that says it can', async () => {
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		const src = await twoTurns(store, p);
+		expect(store.canFork(src.id)).toBe(false);
+		expect(store.forkSession(src.id, 1)).toBeUndefined();
+		engine.features = ['fork'];
+		expect(store.canFork(src.id)).toBe(true);
+	});
+
+	it('a fork beside the original takes its first turns and asks the daemon to fork', async () => {
+		engine.features = ['fork'];
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		const src = await twoTurns(store, p);
+		const id = store.forkSession(src.id, 1)!;
+		await flush();
+		const fork = p.sessions.find((x) => x.id === id)!;
+		expect(p.sessions.indexOf(fork)).toBe(p.sessions.indexOf(src) + 1);
+		expect(store.activeId).toBe(id);
+		expect(fork.forkedFrom).toEqual({ sid: src.chat.sessionId, title: 'Cache work', turns: 1 });
+		expect(fork.chat.messages.map((m) => m.kind === 'user' || m.kind === 'assistant' ? m.text : '')).toEqual(['one', 'a']);
+		expect(fork.chat.title).toBe('Cache work（分叉）');
+		// LynShen: an engine spec carrying the fork (no fork_cwd beside the original).
+		expect(lastSpec()).toEqual({ engine: 'lynshen', options: { fork_from: src.chat.sessionId, fork_turns: 1 } });
+		expect(vi.mocked(hostSession).mock.calls.at(-1)![1]).toBe(p.path);
+		// The original is untouched, and the fork's place survives a save.
+		expect(src.chat.messages).toHaveLength(4);
+		const saved = store.serialize()[0]!.tabs!.find((t) => t.id === id)!;
+		expect(saved.forkedFrom).toEqual({ sid: src.chat.sessionId, title: 'Cache work', turns: 1 });
+	});
+
+	it('a fork into a worktree opens it as a project beside the original, reading LynShen from the original folder', async () => {
+		engine.features = ['fork'];
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		const made: string[] = [];
+		SessionStore.onWorktree = (tree, from) => made.push(`${tree.path}<-${from.path}`);
+		const src = await twoTurns(store, p);
+		const meta: WorktreeMeta = { isWorktree: true, mainRepoPath: p.path, branch: 'fork/cache-1', baseBranch: 'main', slug: 'fork-cache-1' };
+		const id = store.forkSession(src.id, 2, { path: '/tmp/.lynshen-worktrees/p1/fork-cache-1', meta })!;
+		await flush();
+		SessionStore.onWorktree = null;
+		const tree = store.projects.find((x) => x.worktree)!;
+		expect(store.projects.indexOf(tree)).toBe(store.projects.indexOf(store.projects.find((x) => x.id === p.id)!) + 1);
+		expect(tree.sessions.map((s) => s.id)).toEqual([id]);
+		expect(tree.worktree).toEqual(meta);
+		expect(vi.mocked(hostSession).mock.calls.at(-1)![1]).toBe(tree.path);
+		expect(lastSpec()).toEqual({ engine: 'lynshen', options: { fork_from: src.chat.sessionId, fork_turns: 2, fork_cwd: p.path } });
+		expect(made).toEqual([`${tree.path}<-${p.path}`]);
+	});
+
+	it('Claude Code forks at the turn the daemon finds (fork_turns)', async () => {
+		engine.features = ['fork'];
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		const src = await twoTurns(store, p, 'claude');
+		store.forkSession(src.id, 1);
+		await flush();
+		expect(lastSpec()?.engine).toBe('claude');
+		expect(lastSpec()?.options).toMatchObject({ fork_from: src.chat.sessionId, fork_turns: 1 });
+		expect(lastSpec()?.options.fork_cwd).toBeUndefined();
+	});
+
+	it('a draft that chose a new worktree starts there, in a project of its own, with its first message', async () => {
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		const id = store.addSession(p);
+		store.setDraftWorktree(id, 'main');
+		dispatch(id, { op: 'user_message', content: 'Add dark mode' });
+		await flush();
+		await flush();
+		const add = vi.mocked(git).mock.calls.find((c) => c[0][0] === 'worktree')!;
+		expect(add[0].slice(0, 2)).toEqual(['worktree', 'add']);
+		expect(add[0][2]).toMatch(/^\/tmp\/\.lynshen-worktrees\/p1\/add-dark-mode-[a-z0-9]+$/);
+		expect(add[0].slice(3)).toEqual(['-b', `task/${add[0][2].split('/').pop()}`, 'main']);
+		expect(add[1]).toBe(p.path);
+		const tree = store.projects.find((x) => x.worktree)!;
+		expect(tree.path).toBe(add[0][2]);
+		expect(tree.sessions.map((s) => s.id)).toEqual([id]);
+		expect(store.projects.find((x) => x.id === p.id)!.sessions).toHaveLength(0);
+		await flush();
+		expect(vi.mocked(hostSession).mock.calls.at(-1)!.slice(0, 2)).toEqual([id, tree.path]);
+		expect(vi.mocked(sendLine).mock.calls.some(([sid, line]) => sid === id && line.includes('Add dark mode'))).toBe(true);
+	});
+
+	it('a worktree that cannot be made leaves the draft where it was, its message back in the composer', async () => {
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		const id = store.addSession(p);
+		store.setDraftWorktree(id, 'main');
+		vi.mocked(git).mockImplementationOnce(() => Promise.reject(new Error("fatal: a branch named 'x' already exists")));
+		dispatch(id, { op: 'user_message', content: 'Add dark mode' });
+		await flush();
+		await flush();
+		const s = store.projects.find((x) => x.id === p.id)!.sessions[0]!;
+		expect(s.id).toBe(id);
+		expect(s.draft).toBe(true);
+		expect(s.draftWorktree).toEqual({ base: 'main' });
+		expect(s.chat.pendingFill).toBe('Add dark mode');
+		expect(s.chat.messages.at(-1)).toMatchObject({ kind: 'error' });
+		expect(hostSession).not.toHaveBeenCalled();
+		expect(store.projects.some((x) => x.worktree)).toBe(false);
+	});
+
+	it('keeps a project\'s setup script and a listed fork\'s source', async () => {
+		const store = new SessionStore();
+		await store.restore([{ id: 'p1', name: 'p1', path: '/tmp/p1', setup: 'pnpm install', tabs: [] } as SavedProject]);
+		expect(store.projects[0]!.setup).toBe('pnpm install');
+		expect(store.serialize()[0]!.setup).toBe('pnpm install');
+		const p = store.projects[0]!;
+		const id = store.listDormant(p, { session: 'conv-b', forked_from: { session: 'conv-a', turns: 3 } });
+		expect(p.sessions.find((s) => s.id === id)!.forkedFrom).toEqual({ sid: 'conv-a', title: '', turns: 3 });
 	});
 });

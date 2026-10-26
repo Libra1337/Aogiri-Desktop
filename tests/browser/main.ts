@@ -363,6 +363,10 @@ Object.assign(window, {
           return '';
         }
         case 'worktree_base': return '/Users/me/code/.lynshen-worktrees/lynshen-desktop';
+        // A fork's worktree and 带回结论's summary (?shell&fork).
+        case 'git_checkpoint_capture': return 'c0ffee0000000000000000000000000000000001';
+        case 'git_fork_worktree': return '1111111111111111111111111111111111111111';
+        case 'generate_text': return '这条来自一个分叉：\n- 缓存改成 LRU，容量 64\n- 单元测试已通过';
         // A Claude Code / Codex conversation carried to LynShen (ticket #40).
         case 'continue_on_lynshen_cmd': return {id: 's19a0b1c2d3e4f5a6', title: '对话宽度跟随窗口', cwd: args.cwd, turns: 12};
         default: return null;

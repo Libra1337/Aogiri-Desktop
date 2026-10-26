@@ -160,7 +160,10 @@ const shell = {
 			lead: '在 {project} 用 {backend} 开始新对话',
 			project: '项目',
 			backend: '后端',
-			openFolder: '打开文件夹…'
+			openFolder: '打开文件夹…',
+			where: '在哪里工作',
+			checkout: '当前目录',
+			newWorktree: '新 worktree · 基于 {base}'
 		},
 		welcomeTip: '给 Aogiri 指派一个任务，开始新对话',
 		hintCommand: '命令',
@@ -741,6 +744,9 @@ const shell = {
 			main: '主目录',
 			addDir: '添加目录',
 			removeDir: '移除目录',
+			setup: 'Worktree 初始化脚本',
+			setupHint: '这个项目每新建一个 worktree（并行任务、分叉、在新 worktree 中开始的对话），先在那里的终端里运行这段命令，比如安装依赖、拷贝 .env。可用环境变量 LYNSHEN_PROJECT_ROOT（项目目录）和 LYNSHEN_WORKTREE_PATH（worktree 目录）。留空则不运行。只保存在这台电脑上。',
+			setupPlaceholder: 'pnpm install && cp "$LYNSHEN_PROJECT_ROOT/.env" .',
 			dirKnown: '这个目录已在项目里',
 			agents: 'Agent',
 			noAgents: '这个项目还没有 Agent。',
@@ -1346,7 +1352,10 @@ const shell = {
 			lead: 'Start a conversation in {project} with {backend}',
 			project: 'Project',
 			backend: 'Backend',
-			openFolder: 'Open a folder…'
+			openFolder: 'Open a folder…',
+			where: 'Where to work',
+			checkout: 'Current checkout',
+			newWorktree: 'New worktree · from {base}'
 		},
 		welcomeTip: 'Assign Aogiri a task to start a new conversation',
 		hintCommand: 'Commands',
@@ -1919,6 +1928,9 @@ const shell = {
 			main: 'Main',
 			addDir: 'Add directory',
 			removeDir: 'Remove directory',
+			setup: 'Worktree setup script',
+			setupHint: 'Runs first in a terminal in each new worktree of this project (a parallel task, a fork, a conversation started in a new worktree): install dependencies, copy .env… LYNSHEN_PROJECT_ROOT (the project folder) and LYNSHEN_WORKTREE_PATH (the worktree) are set. Empty: nothing runs. Kept on this computer only.',
+			setupPlaceholder: 'pnpm install && cp "$LYNSHEN_PROJECT_ROOT/.env" .',
 			dirKnown: 'This directory is already in the project',
 			agents: 'Agents',
 			noAgents: 'No agents in this project yet.',
