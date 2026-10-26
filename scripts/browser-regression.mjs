@@ -4498,9 +4498,13 @@ try {
     const notice = page.locator('.notices .notice');
     await expect(notice).toContainText('开发服务器已启动', {timeout: 60000});
     await expect(notice.locator('.detail')).toHaveText('localhost:5173 · 窗口磨砂默认关闭');
-    // It keeps clear of the composer.
-    const [nb, cb] = await Promise.all([notice.boundingBox(), page.locator('.chatpane .bottom').boundingBox()]);
-    assert.ok(nb.y + nb.height <= cb.y + 1, 'the notice sits above the composer');
+    // It keeps clear of the composer, once the stack has risen above it (its
+    // bottom eases up from the corner when the first notice shows).
+    const clearance = async () => {
+      const [nb, cb] = await Promise.all([notice.boundingBox(), page.locator('.chatpane .bottom').boundingBox()]);
+      return cb.y + 1 - (nb.y + nb.height);
+    };
+    await expect.poll(clearance, {message: 'the notice sits above the composer', timeout: 5000}).toBeGreaterThanOrEqual(0);
     await notice.getByRole('button', {name: '打开'}).click();
     await expect(notice).toHaveCount(0);
     await page.evaluate(() => window.__devServers({type: 'dev_servers', servers: []}));
