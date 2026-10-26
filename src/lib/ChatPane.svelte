@@ -61,7 +61,8 @@
 		type ImportSkipKind,
 		type Op
 	} from '$lib/protocol';
-	import { buildModelRows, splitRoute, stripGroupSuffix, toolModels, type ToolModel } from '$lib/composer/modelRows';
+	import { buildModelRows, customProviderRows, splitRoute, stripGroupSuffix, toolModels, type ToolModel } from '$lib/composer/modelRows';
+	import { draftProvider, loadToolProviders, toolProviderConfigs } from '$lib/toolProviders.svelte';
 	import { displayNameOf } from '$lib/models/items';
 	import { gatewayCatalog } from '$lib/models/catalogStore.svelte';
 	import { configModelList } from '$lib/configModels';
@@ -906,6 +907,9 @@
 			return p.items.map((it) => ({ id: it.id, label: it.label, detail: it.detail, active: it.active, command: `/resume ${it.id}`, depth: nil }));
 		if (p.kind === 'checkpoint')
 			return p.items.map((it) => ({ id: it.id, label: it.label, detail: it.detail, active: it.active, command: `/rewind ${it.id}`, depth: nil }));
+		// A custom provider serves the models picked for it in Settings.
+		if (customProvider)
+			return customProviderRows(customProvider, session.draft ? (session.draftPick?.model ?? chat.model) : chat.model);
 		// Model picker rows (pure packing in $lib/composer/modelRows): the active
 		// provider's models from the engine's model_view plus, for lynshen
 		// sessions, the catalog of every other provider with credentials.
@@ -937,6 +941,32 @@
 		const stored = stripGroupSuffix(providersList.find((p) => p.id === chat.provider)?.models.find((m) => m.name === chat.model)?.display_name || '');
 		if (chat.backendId !== 'lynshen' || !chat.model) return stored || undefined;
 		return displayNameOf(chat.provider ?? '', chat.model, stored || stripGroupSuffix(chat.modelLabel || ''), gatewayCatalog.lookup);
+	});
+
+	// Claude Code / Codex: the custom provider the session runs on (its engine
+	// says), or a draft starts on (its pick, else the tool's default). A
+	// daemon without custom providers: none.
+	const customProvider = $derived.by(() => {
+		const tool = chat.backendId;
+		if (tool !== 'claude' && tool !== 'codex') return undefined;
+		if (!session.draft) return chat.toolProvider ?? undefined;
+		if (session.gateway || !engineHas('tool_providers')) return undefined;
+		return draftProvider(tool, session.draftToolProvider);
+	});
+	$effect(() => {
+		const tool = chat.backendId;
+		if ((tool === 'claude' || tool === 'codex') && engineHas('tool_providers'))
+			untrack(() => void loadToolProviders(tool).catch(() => {}));
+	});
+	// A draft on a custom provider shows a model it serves (the daemon starts
+	// it on the provider's default).
+	$effect(() => {
+		const p = customProvider;
+		if (session.draft && p && !p.models.includes(chat.model))
+			untrack(() => {
+				chat.model = p.model;
+				chat.modelLabel = '';
+			});
 	});
 
 	// Claude Code / Codex: the current model and where it can run, for the
@@ -977,7 +1007,29 @@
 		return true;
 	}
 
-	async function pickProvider(m: ToolModel, choice: { local: true } | { group: string }) {
+	async function pickProvider(m: ToolModel, choice: { local: true } | { group: string } | { custom: string }) {
+		if ('custom' in choice) {
+			chat.closePicker();
+			const p = toolProviderConfigs[chat.backendId as 'claude' | 'codex']?.providers.find((x) => x.id === choice.custom);
+			store.setDraftToolProvider(session.id, choice.custom, p?.model);
+			return;
+		}
+		// A draft leaves its custom provider: for the tool's own config, or for
+		// the gateway on a model it serves.
+		if (session.draft && customProvider) {
+			chat.closePicker();
+			if ('local' in choice) {
+				// The provider's model may not be the tool's: the tool's own default.
+				const own = chat.modelCatalog.find((x) => x.active)?.model ?? chat.modelCatalog[0]?.model;
+				store.setDraftToolProvider(session.id, '', own);
+				return;
+			}
+			store.setDraftToolProvider(session.id, '');
+			const served = providersList.find((p) => p.id === 'lynshen')?.models ?? [];
+			await store.applyToolProfile(session.id, 'lynshen', m.lynshen ?? served[0]?.name);
+			store.setSessionGroup(session.id, choice.group);
+			return;
+		}
 		if (toolMode === 'lynshen' && !('local' in choice)) {
 			store.setSessionGroup(session.id, choice.group);
 			return;
@@ -985,6 +1037,8 @@
 		chat.closePicker();
 		if ('local' in choice) {
 			if (toolMode === 'lynshen' && m.local) await switchTool('system', m.local);
+			// A draft names it: not the tool's default custom provider.
+			if (session.draft) store.setDraftToolProvider(session.id, '');
 			return;
 		}
 		// Set once the switch is confirmed; the gateway reads it per request.
@@ -1289,7 +1343,7 @@
 			if (entry?.reasoning === false) chat.efforts = [];
 			else if (entry?.reasoning_efforts?.length) {
 				chat.efforts = entry.reasoning_efforts;
-				if (!chat.efforts.includes(chat.effort)) chat.effort = defaultEffort(chat.efforts);
+				if (!chat.efforts.includes(chat.effort) && chat.effort !== chat.effortDefault) chat.effort = defaultEffort(chat.efforts, chat.effortDefault);
 			}
 			if (effort) chat.effort = effort;
 			session.draftPick = { model: name, effort: chat.effort || undefined };
@@ -2014,7 +2068,13 @@
 		{/if}
 
 		{#if chat.inTerminal}
-			<p class="interm">{t('chat.inTerminal')}</p>
+			<p class="interm">
+				{t('chat.inTerminal')}
+				<!-- Opened on another client: this tile can view it too. -->
+				{#if chat.terminal && engineHas('term_attach')}
+					<Button size="sm" variant="ghost" onclick={() => store.viewTui(session.id)}>{t('chat.viewTerminal')}</Button>
+				{/if}
+			</p>
 		{/if}
 		{#if chat.rateLimit}
 			<UsageLimit
@@ -2097,6 +2157,12 @@
 						local: toolModel.local !== undefined,
 						lynshen: toolModel.lynshen !== undefined,
 						onLynShen: toolMode === 'lynshen',
+						custom: customProvider?.name,
+						customs:
+							session.draft && (chat.backendId === 'claude' || chat.backendId === 'codex')
+								? (toolProviderConfigs[chat.backendId]?.providers ?? []).map((p) => ({ id: p.id, name: p.name, model: p.model, models: p.models.length }))
+								: undefined,
+						customId: customProvider?.id,
 						group: session.group ?? '',
 						groups: store.takesSessionGroup(session),
 						onPick: (choice) => pickProvider(toolModel, choice)
@@ -2107,12 +2173,13 @@
 			repoName={project?.name ?? ''}
 			onBranchChanged={refreshGitBranch}
 			onBackend={(b, acpAgent) => store.switchBackend(session.id, b, acpAgent)}
+			onSessionOption={(id, value) => send({ op: 'set_session_option', id, value })}
 			onContinueOnLynShen={canContinueOnLynShen ? continueOnLynShenHere : undefined}
 			bind:pickerQuery
 		bind:pickerSelIdx={selIdx}
 			onEffort={setEffort}
 			onSwitch={setSwitch}
-			gateway={chat.backendId === 'acp' && chat.acpOpencode ? !!session.gateway : null}
+			gateway={chat.backendId === 'acp' && (chat.acpOpencode || chat.agentGateway || (!!session.acpAgent?.builtin && !chat.engineCaps)) ? !!session.gateway : null}
 			effortDisabled={!!pendingModel || chat.switching}
 			onApproval={setApprovalMode}
 			{styleMenu}

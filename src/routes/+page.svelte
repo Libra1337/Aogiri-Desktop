@@ -4,7 +4,7 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { crossfade } from '$lib/ui/viewTransition';
 	import DropLayer from '$lib/shell/DropLayer.svelte';
-	import { engine } from '$lib/engineVersion.svelte';
+	import { engine, engineHas } from '$lib/engineVersion.svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -133,7 +133,7 @@
 	import Modal from '$lib/ui/Modal.svelte';
 	import BackendIcon from '$lib/BackendIcon.svelte';
 	import { agentDirectory } from '$lib/agents.svelte';
-	import type { Project, WorktreeMeta } from '$lib/types';
+	import type { Project, Session, WorktreeMeta } from '$lib/types';
 	import PlanPanel from '$lib/PlanPanel.svelte';
 	import ProposalPane from '$lib/ProposalPane.svelte';
 	import { planPages, proposalOf, proposalPanel } from '$lib/planPages.svelte';
@@ -629,6 +629,11 @@
 		if (previewed) return fileName(previewed);
 		return (ALL_PANELS as readonly string[]).includes(tab.panel) ? t(`dock.tabs.${tab.panel}`) : tab.panel;
 	}
+	/** The session's engine has a TUI the daemon can run: the native CLIs,
+	 *  and (a daemon with built-in ACP agents) a built-in agent's session. */
+	function tuiCapable(s: Session): boolean {
+		return canHandOffToTui(s.backendId, s.acpAgent, engineHas('acp_presets'));
+	}
 	function tuiReady(sid: string): boolean {
 		const session = sessionMap.get(sid);
 		return !!session &&
@@ -688,7 +693,7 @@
 	$effect(() => {
 		if (prefs.defaultSurface !== 'tui') return;
 		for (const [sid, session] of sessionMap) {
-			if (openedInTui.has(sid) || !session.restored || !canHandOffToTui(session.backendId)) continue;
+			if (openedInTui.has(sid) || !session.restored || !tuiCapable(session)) continue;
 			if (!tuiReady(sid) || !daemon.sessionOf(sid)) continue;
 			openedInTui.add(sid);
 			if (!session.chat.busy && !session.chat.bgTasks.length) store.openInTui(sid);
@@ -1480,6 +1485,13 @@
 					}
 				}
 				flushModeSync(s.chat, s.id);
+				// A backend never listed here: its model list, read once and
+				// quietly, so a new conversation of it can pick a model first.
+				if (s.chat.wantsCatalog) {
+					s.chat.wantsCatalog = false;
+					s.chat.silentModelView++;
+					dispatch(s.id, { op: 'command', input: '/model' });
+				}
 				// Let go of while hidden and starting something: watched again.
 				store.rouse(s);
 				const miss = s.chat.cacheMiss;
@@ -1729,7 +1741,7 @@
 				<button class="tile-action" title={t('dock.tui.backToGui')} aria-label={t('dock.tui.backToGui')} onclick={() => active && tuiPanels[active.id]?.backToGui()}>
 					<ChatCircleTextIcon size={16} />
 				</button>
-			{:else if !showSettings && !showDesk && !showSetup && active && canHandOffToTui(active.backendId)}
+			{:else if !showSettings && !showDesk && !showSetup && active && tuiCapable(active)}
 				<button
 					class="tile-action"
 					disabled={!tuiReady(active.id)}
@@ -1860,7 +1872,7 @@
 										<button class="tile-action" title={t('dock.tui.backToGui')} aria-label={t('dock.tui.backToGui')} onclick={() => tuiPanels[sid]?.backToGui()}>
 											<ChatCircleTextIcon size={13} />
 										</button>
-									{:else if sid && session && canHandOffToTui(session.backendId)}
+									{:else if sid && session && tuiCapable(session)}
 										<button
 											class="tile-action"
 											disabled={!tuiReady(sid)}
@@ -1889,7 +1901,9 @@
 												backend={sess.backendId}
 												cwd={store.projectPathOf(sid) ?? ''}
 												session={daemon.sessionOf(sid)}
+												terminal={sess.chat.terminal}
 												onBackToGui={() => store.returnToGui(sid)}
+												onReattach={() => store.rewatch(sid)}
 												onOpenSettings={() => openSettings('agents')}
 											/>
 											{/if}
@@ -2202,7 +2216,7 @@
 			onHistory={() => activeProject && store.openHistory(activeProject)}
 			onShortcuts={() => (showShortcuts = true)}
 			onFeedback={() => (showFeedback = true)}
-			canOpenTui={!!active && active.surface !== 'tui' && canHandOffToTui(active.backendId) && tuiReady(active.id)}
+			canOpenTui={!!active && active.surface !== 'tui' && tuiCapable(active) && tuiReady(active.id)}
 			onOpenTui={() => active && continueInTui(active.id)}
 		/>
 	{/if}

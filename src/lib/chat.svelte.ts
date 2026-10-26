@@ -1,6 +1,6 @@
-import type { AgentEvent } from './protocol';
+import type { AgentEvent, SessionOption, SessionToolProvider } from './protocol';
 import { loadProfile, profileKey, rememberProfile, type BackendProfile } from '$lib/backendProfile';
-import { isBackendId, type BackendId } from './backends/types';
+import { isBackendId, type BackendCaps, type BackendId } from './backends/types';
 import { caps } from './backends';
 import {
 	EDIT_TOOLS,
@@ -873,6 +873,30 @@ export class ChatState {
 	 *  LynShen gateway switch (`caps()` gives it OpenCode's). Known from the
 	 *  agent picked, else from its registry entry when the session starts. */
 	acpOpencode = $state(false);
+	/** ACP: what the agent supports (`engine_caps`, a daemon with the full
+	 *  ACP client); `caps(chat)` reads it. Null: not reported (an older
+	 *  daemon, or before the agent opened). */
+	engineCaps = $state<Partial<BackendCaps> | null>(null);
+	/** ACP: whether the agent asks before running tools (false: Pi); null
+	 *  when unknown. */
+	agentApprovals = $state<boolean | null>(null);
+	/** ACP: the agent can run on the LynShen gateway. */
+	agentGateway = $state(false);
+	/** ACP: the agent as it names itself (`id`: a built-in agent's, else null). */
+	agentInfo = $state<{ id: string | null; name: string; version: string } | null>(null);
+	/** ACP: the agent's settings besides model and effort (its mode, say). */
+	sessionOptions = $state<SessionOption[]>([]);
+	/** Claude Code / Codex: the custom provider the engine process runs on
+	 *  (`tool_provider`); null on the LynShen gateway or the tool's own config. */
+	toolProvider = $state<SessionToolProvider | null>(null);
+	/** ACP: the effort value that leaves the level to the agent
+	 *  (`default_effort`: OpenCode's `default`, oh-my-pi's `auto`); '' when
+	 *  the agent has none. */
+	effortDefault = $state('');
+	/** The engine reported its model and its backend has no model list kept
+	 *  for drafts: the page asks for one once (`/model`, answered quietly). */
+	wantsCatalog = false;
+	#catalogAsked = false;
 
 	messages = $state<Msg[]>([]);
 	provider = $state('');
@@ -1012,6 +1036,10 @@ export class ChatState {
 	/** The conversation is open in its engine's TUI (on this or another
 	 *  client): its GUI ops wait until the TUI exits. */
 	inTerminal = $state(false);
+	/** The daemon terminal running that TUI (`surface` names it), for any
+	 *  client to view; '' while the conversation is in the GUI (and from a
+	 *  daemon before `term_attach`, which names none). */
+	terminal = $state('');
 	/** An MCP server's sign-in page, to open once (codex mcp_login). */
 	mcpLoginUrl = $state('');
 	/** Subagents by id; `label` names them when the id doesn't (claude's task ids).
@@ -1783,6 +1811,10 @@ export class ChatState {
 		this.modelCatalog = p.catalog ?? [];
 		this.modelCatalogEffort = p.catalogEffort ?? '';
 		this.commands = p.commands ?? [];
+		if (this.backendId === 'acp') {
+			this.engineCaps = p.caps ?? null;
+			this.effortDefault = p.effortDefault ?? '';
+		}
 	}
 
 	/** A model picked for a draft. No engine reports it yet, so the context
@@ -2019,6 +2051,13 @@ export class ChatState {
 				this.modelLabel = str(ev.model_label);
 				this.effort = str(ev.reasoning_effort);
 				this.efforts = arr<string>(ev.reasoning_efforts);
+				this.effortDefault = str(ev.default_effort);
+				// A draft of this backend lists the models a running session
+				// does; the list is kept otherwise only from a menu opened here.
+				if (this.model && !this.#catalogAsked) {
+					this.#catalogAsked = true;
+					this.wantsCatalog = !loadProfile(profileKey(this.backendId, this.acpAgentId)).catalog?.length;
+				}
 				this.inputModalities = Array.isArray(ev.input_modalities) ? arr<string>(ev.input_modalities) : null;
 				this.ultracode = ev.ultracode === true;
 				this.ultracodeAvailable = ev.ultracode_available === true;
@@ -2036,7 +2075,8 @@ export class ChatState {
 					modelLabel: this.modelLabel,
 					effort: this.effort,
 					efforts: this.efforts,
-					contextWindow: this.contextWindow
+					contextWindow: this.contextWindow,
+					...(this.backendId === 'acp' ? { effortDefault: this.effortDefault } : {})
 				});
 				break;
 			case 'user_message': {
@@ -2515,11 +2555,47 @@ export class ChatState {
 			// what the TUI added included.
 			case 'surface':
 				this.inTerminal = ev.surface === 'tui';
+				this.terminal = ev.surface === 'tui' ? str(ev.term) : '';
 				if (ev.surface === 'gui') this.keepNextTranscript = false;
 				break;
 			case 'mcp_login':
 				this.mcpLoginUrl = str(ev.url);
 				break;
+			// ACP (a daemon with the full ACP client): what the agent is and can
+			// do. Sent when it changes, so a startup after it leaves it alone.
+			case 'engine_caps': {
+				const agent = ev.agent as Record<string, unknown> | null | undefined;
+				const reported = ev.caps && typeof ev.caps === 'object' ? (ev.caps as Record<string, unknown>) : null;
+				const known: Partial<BackendCaps> = {};
+				for (const [k, v] of Object.entries(reported ?? {})) if (typeof v === 'boolean') (known as Record<string, boolean>)[k] = v;
+				this.engineCaps = reported ? known : null;
+				// A draft of this agent can pick a model (and more) before it starts.
+				if (reported) this.#remember({ caps: known });
+				this.agentApprovals = typeof ev.approvals === 'boolean' ? ev.approvals : null;
+				this.agentGateway = ev.gateway === true;
+				this.agentInfo = agent
+					? { id: typeof agent.id === 'string' ? agent.id : null, name: str(agent.name), version: str(agent.version) }
+					: null;
+				break;
+			}
+			// ACP: the agent's settings besides model and effort; only selects
+			// and switches render.
+			case 'session_options':
+				this.sessionOptions = arr<SessionOption>(ev.options).filter(
+					(o) => typeof o?.id === 'string' && (o.type === 'boolean' || (o.type === 'select' && Array.isArray(o.choices)))
+				);
+				break;
+			// Claude Code / Codex: the custom provider of this engine process,
+			// kept in watch snapshots; like engine_caps it may come before the
+			// process's startup, and the next process's event replaces it.
+			case 'tool_provider': {
+				const p = ev.provider as Record<string, unknown> | null | undefined;
+				this.toolProvider =
+					p && typeof p === 'object' && str(p.id)
+						? { id: str(p.id), name: str(p.name) || str(p.id), model: str(p.model), models: arr<string>(p.models) }
+						: null;
+				break;
+			}
 			case 'command_list':
 				this.commands = arr<CommandItem>(ev.commands);
 				this.#remember({ commands: this.commands });

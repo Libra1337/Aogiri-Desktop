@@ -7,8 +7,8 @@
 
 	// Claude Code's per-session switches, shown only where the engine offers
 	// them: ultracode (standing Workflow orchestration), fast mode and
-	// thinking summaries. An OpenCode session has one of its own: whether it
-	// runs on the LynShen gateway's models.
+	// thinking summaries. An OpenCode session (and a built-in ACP agent's) has
+	// one of its own: whether it runs on the LynShen gateway's models.
 	// `thinking`: offer the thinking-summaries switch here (the desktop keeps it in settings).
 	// `gateway`: the OpenCode session's gateway switch (null: not offered).
 	let {
@@ -33,7 +33,7 @@
 				desc: t('chat.thinkingDesc'),
 				on: chat.thinkingSummaries
 			},
-			gateway !== null && { name: 'gateway' as const, label: t('chat.gatewayLabel'), desc: t('chat.gatewayDesc'), on: gateway }
+			gateway !== null && { name: 'gateway' as const, label: t('chat.gatewayLabel'), desc: t('chat.gatewayDesc', { agent: chat.acpAgentName || 'OpenCode' }), on: gateway }
 		].filter((r) => !!r)
 	);
 </script>

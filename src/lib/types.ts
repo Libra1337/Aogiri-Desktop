@@ -11,9 +11,10 @@ export interface Session {
 	color?: string;
 	/** Tab icon: builtin id, slug/emoji, or sanitized SVG (persisted). */
 	icon?: TabIcon;
-	/** For 'acp' sessions: the registry id + display name of the launched agent
-	 *  (passed as the allowlisted `agent` spawn option on every (re)spawn), and
-	 *  whether it is OpenCode (approval modes, the LynShen gateway switch). */
+	/** For 'acp' sessions: the launched agent (needed on every (re)spawn): a
+	 *  built-in one the daemon starts by id (`builtin`), or a registry entry
+	 *  by its id and name, and whether it is OpenCode (approval modes, the
+	 *  LynShen gateway switch). */
 	acpAgent?: AcpAgentRef;
 	/** Per-session adapter instance (the lynshen one; not persisted). */
 	adapter: EngineAdapter;
@@ -48,6 +49,9 @@ export interface Session {
 	at?: number;
 	/** Model and effort picked while a draft, applied when it starts. */
 	draftPick?: { model?: string; effort?: string };
+	/** Claude Code / Codex: the custom provider picked while a draft (its id;
+	 *  '': the tool's own login or config). Unset: the tool's default. */
+	draftToolProvider?: string;
 	/** The reply style picked while a draft (LynShen), sent before its first
 	 *  message. */
 	draftStyle?: string;

@@ -21,6 +21,7 @@ import { acpAgentCheck, acpAgentsList, hostSession, recordOpencodeCopy, sendOp, 
 import { caps } from './index';
 import { adapterFor, dispatch } from './router';
 import { setLocale } from '$lib/i18n';
+import { engine } from '$lib/engineVersion.svelte';
 import type { Project } from '$lib/types';
 
 const proj = (id = 'p1'): Project => ({ id, name: id, path: `/tmp/${id}`, sessions: [] });
@@ -235,5 +236,72 @@ describe('SessionStore × backends', () => {
 			expect(recordOpencodeCopy).toHaveBeenCalledWith('ses_orig', 'conv-1');
 		});
 	});
-});
 
+	it('a built-in ACP agent starts by id with its mode and gateway, never a command', async () => {
+		vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		const id = store.addSession(p, undefined, 'acp', { id: 'omp', name: 'oh-my-pi', builtin: true });
+		const s = p.sessions.find((x) => x.id === id)!;
+		// A draft's model and effort go in as start options.
+		s.draftPick = { model: 'lynshen/gpt-6', effort: 'high' };
+		begin(id);
+		await flush();
+		expect(acpAgentsList).not.toHaveBeenCalled();
+		expect(hostSession).toHaveBeenCalledWith(id, p.path, undefined, undefined, false, {
+			engine: 'acp',
+			options: { agent: 'omp', approval_mode: 'read-only', lynshen_gateway: false, model: 'lynshen/gpt-6', effort: 'high' }
+		});
+		// No /model before the conversation opens.
+		expect(vi.mocked(sendLine).mock.calls.some(([, line]) => String(line).includes('/model'))).toBe(false);
+		expect(p.lastAcpAgent).toMatchObject({ id: 'omp', builtin: true });
+		expect(store.serialize()[0]!.tabs?.[0]).toMatchObject({ backend: 'acp', acpAgent: { id: 'omp', builtin: true } });
+		vi.unstubAllGlobals();
+	});
+
+	it('an agent that never asks (Pi) starts in full auto', async () => {
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		const id = store.addSession(p, undefined, 'acp', { id: 'pi', name: 'Pi', builtin: true, noApprovals: true });
+		begin(id);
+		await flush();
+		expect(vi.mocked(hostSession).mock.calls[0][5]).toMatchObject({ engine: 'acp', options: { agent: 'pi', approval_mode: 'full-auto' } });
+		expect(p.sessions[0].chat.followEngineMode).toBe(true);
+	});
+
+	it('the built-in OpenCode keeps OpenCode’s modes and gateway switch', () => {
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		store.addSession(p, undefined, 'acp', { id: 'opencode', name: 'OpenCode', builtin: true });
+		expect(p.sessions[0].chat.acpOpencode).toBe(true);
+		expect(caps(p.sessions[0].chat).approvalModes).toBe(true);
+	});
+
+	it("a new Claude Code conversation starts on the custom provider picked for it", async () => {
+		engine.features = ['tool_providers'];
+		const store = new SessionStore();
+		const p = proj();
+		store.projects.push(p);
+		const id = store.addSession(p, undefined, 'claude');
+		store.setDraftToolProvider(id, 'relay', 'claude-opus-5');
+		const s = p.sessions[0];
+		expect(s.gateway).toBe(false);
+		expect(s.chat.model).toBe('claude-opus-5');
+		begin(id);
+		await flush();
+		expect(vi.mocked(hostSession).mock.calls[0][5]).toMatchObject({
+			engine: 'claude',
+			options: { tool_provider: 'relay', lynshen_gateway: false }
+		});
+		// An older daemon is never sent the field.
+		engine.features = [];
+		const id2 = store.addSession(p, undefined, 'claude');
+		store.setDraftToolProvider(id2, 'relay');
+		begin(id2);
+		await flush();
+		expect(JSON.stringify(vi.mocked(hostSession).mock.calls[1][5])).not.toContain('tool_provider');
+	});
+});

@@ -1,7 +1,9 @@
 <script lang="ts">
 	// A new conversation not started yet, as one sentence: "in <project>
-	// with <backend>" (LynShen, Codex or Claude Code; not a daemon agent),
-	// both words menus. The choices are only recorded until the
+	// with <backend>" (LynShen, Codex, Claude Code, or one of the daemon's
+	// built-in ACP agents: each with what it can do, or why it cannot start
+	// here and how to install it), both words menus. The choices are only
+	// recorded until the
 	// first message starts the engine there (SessionStore.moveDraft /
 	// switchBackend).
 	import { open } from '@tauri-apps/plugin-dialog';
@@ -12,6 +14,7 @@
 	import PopMenu from '$lib/ui/PopMenu.svelte';
 	import BackendIcon from '$lib/BackendIcon.svelte';
 	import { BACKEND_LABELS, NATIVE_BACKEND_IDS, type BackendId } from '$lib/backends';
+	import { builtinAgents, builtinCaps, builtinNote, builtinRef, confirmNoApprovals, loadBuiltinAgents } from '$lib/acpBuiltins.svelte';
 	import type { SessionStore } from '$lib/session.svelte';
 	import type { Session } from '$lib/types';
 
@@ -38,10 +41,34 @@
 		const added = store.userProjects.find((p) => trim(p.path) === trim(path));
 		if (added) store.moveDraft(session.id, added.id);
 	}
-	function pickBackend(key: string) {
+	const ACP = 'acp:';
+	async function pickBackend(key: string) {
 		menu = null;
-		store.switchBackend(session.id, key as BackendId);
+		if (!key.startsWith(ACP)) return store.switchBackend(session.id, key as BackendId);
+		const agent = builtinAgents.list.find((a) => a.id === key.slice(ACP.length));
+		if (!agent || agent.status !== 'ready') return;
+		if (!agent.approvals && !(await confirmNoApprovals(agent.name))) return;
+		await store.switchBackend(session.id, 'acp', builtinRef(agent));
 	}
+	function openBackends() {
+		menu = menu === 'backend' ? null : 'backend';
+		if (menu) void loadBuiltinAgents();
+	}
+	// A built-in agent's row: its capabilities, or why it cannot start and
+	// the command that installs it.
+	const backendItems = $derived([
+		...NATIVE_BACKEND_IDS.map((id) => ({ key: id, label: BACKEND_LABELS[id], checked: id === session.backendId })),
+		...builtinAgents.list.map((a) => ({
+			key: `${ACP}${a.id}`,
+			label: a.name,
+			desc: a.status === 'ready' ? builtinCaps(a).join(' · ') : [builtinNote(a), a.install].filter(Boolean).join(' · '),
+			disabled: a.status !== 'ready',
+			checked: session.backendId === 'acp' && session.acpAgent?.id === a.id,
+			tone: a.status === 'ready' && !a.approvals ? ('warn' as const) : undefined,
+			group: t('settings.acp.builtins')
+		}))
+	]);
+	const backendName = $derived(session.backendId === 'acp' ? (session.acpAgent?.name ?? BACKEND_LABELS.acp) : BACKEND_LABELS[session.backendId]);
 </script>
 
 <p class="lead">
@@ -67,15 +94,15 @@
 			</span>
 		{:else if part === '{backend}'}
 			<span class="anchor">
-				<button class="word" class:on={menu === 'backend'} onclick={() => (menu = menu === 'backend' ? null : 'backend')} aria-haspopup="menu" aria-expanded={menu === 'backend'} aria-label={t('shell.startPicker.backend')}>
-					<BackendIcon backend={session.backendId} size={14} />
-					<span class="wname">{BACKEND_LABELS[session.backendId]}</span>
+				<button class="word" class:on={menu === 'backend'} onclick={openBackends} aria-haspopup="menu" aria-expanded={menu === 'backend'} aria-label={t('shell.startPicker.backend')}>
+					<BackendIcon backend={session.backendId} agent={session.acpAgent?.id} size={14} />
+					<span class="wname">{backendName}</span>
 					<CaretDownIcon size={11} />
 				</button>
 				{#if menu === 'backend'}
 					<PopMenu
 						placement="down-left"
-						items={NATIVE_BACKEND_IDS.map((id) => ({ key: id, label: BACKEND_LABELS[id], checked: id === session.backendId }))}
+						items={backendItems}
 						onSelect={pickBackend}
 						onClose={() => (menu = null)}
 					/>

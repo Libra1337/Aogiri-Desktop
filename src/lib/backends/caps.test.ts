@@ -72,6 +72,29 @@ describe('caps() gating helper', () => {
 		expect(cx.mcpEngineOwned).toBe(true);
 	});
 
+	it('an ACP session takes what its agent reports (engine_caps) over the table', () => {
+		const chat: { backendId: string; acpOpencode?: boolean; engineCaps?: Record<string, unknown> | null } = { backendId: 'acp' };
+		// An older daemon reports nothing: the table.
+		expect(caps(chat)).toBe(CAPS.acp);
+		chat.engineCaps = { interrupt: true, approvalModes: true, modelPicker: true, contextUsage: false, slashCommands: true, transcriptReplay: true, fork: true, teleport: true, resume: 'yes' };
+		const c = caps(chat as never);
+		expect(c.approvalModes).toBe(true);
+		expect(c.modelPicker).toBe(true);
+		expect(c.slashCommands).toBe(true);
+		expect(c.transcriptReplay).toBe(true);
+		expect(c.contextUsage).toBe(false);
+		// Only the reported flags, only as booleans; plan mode stays OpenCode's.
+		expect(c.resume).toBe(false);
+		expect(c.planMode).toBe(false);
+		expect('teleport' in c).toBe(false);
+		expect(CAPS.acp.modelPicker).toBe(false);
+		// OpenCode keeps its plan mode; an agent that never asks (Pi) has no modes.
+		expect(caps({ ...chat, acpOpencode: true } as never).planMode).toBe(true);
+		expect(caps({ backendId: 'acp', engineCaps: { approvalModes: false } } as never).approvalModes).toBe(false);
+		// Another backend ignores engineCaps.
+		expect(caps({ backendId: 'claude', engineCaps: { goals: false } } as never)).toBe(CAPS.claude);
+	});
+
 	it('every backend declares the full flag set', () => {
 		const keys = Object.keys(CAPS.lynshen).sort();
 		for (const id of BACKEND_IDS) {

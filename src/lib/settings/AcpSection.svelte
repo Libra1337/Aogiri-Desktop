@@ -3,7 +3,10 @@
 	// Protocol agents the desktop may launch (id, name, command, args, env).
 	// The registry itself is owned and validated by the Rust side
 	// (acp_registry.rs) — this UI only reads it and submits whole entries.
-	// Presets (OpenCode) not registered yet are offered above the list.
+	// Above it, the daemon's built-in agents (OpenCode, oh-my-pi, Pi;
+	// `acp_presets`): what each can do, whether it is installed, and how to
+	// install it. An older daemon has none: the registry's one-click presets
+	// (OpenCode) are offered instead.
 	import { onMount } from 'svelte';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
@@ -11,6 +14,11 @@
 	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircleIcon';
 	import WarningCircleIcon from 'phosphor-svelte/lib/WarningCircleIcon';
 	import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
+	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
+	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
+	import { builtinAgents, builtinCaps, builtinNote, loadBuiltinAgents, type AcpBuiltin } from '$lib/acpBuiltins.svelte';
+	import { engineHas } from '$lib/engineVersion.svelte';
+	import { copyText } from '$lib/clipboard';
 	import {
 		acpAgentCheck,
 		acpAgentRemove,
@@ -44,7 +52,18 @@
 	// Presets not registered yet, and the one being added.
 	let presets = $state<AcpPreset[]>([]);
 	let addingPreset = $state('');
-	const offered = $derived(presets.filter((p) => !p.registered));
+	// A daemon with built-in agents runs OpenCode itself: no one-click
+	// registration then.
+	const hasBuiltins = $derived(engineHas('acp_presets'));
+	const offered = $derived(hasBuiltins ? [] : presets.filter((p) => !p.registered));
+	let copied = $state('');
+	async function copyInstall(a: AcpBuiltin) {
+		if (!(await copyText(a.install))) return;
+		copied = a.id;
+		setTimeout(() => {
+			if (copied === a.id) copied = '';
+		}, 1500);
+	}
 
 	// Add-agent draft form.
 	let adding = $state(false);
@@ -160,10 +179,65 @@
 			.catch((e) => (draftError = String(e)));
 	}
 
-	onMount(load);
+	onMount(() => {
+		load();
+		void loadBuiltinAgents(true);
+	});
 </script>
 
-<SettingsSection id="acp-agents">
+<SettingsSection id="acp-builtins" title={t('settings.acp.builtins')} description={hasBuiltins ? t('settings.acp.builtinsHint') : undefined}>
+	{#snippet action()}
+		{#if hasBuiltins}
+			<IconButton onclick={() => loadBuiltinAgents(true)} label={t('settings.acp.recheck')} title={t('settings.acp.recheck')}>
+				<ArrowClockwiseIcon size={14} />
+			</IconButton>
+		{/if}
+	{/snippet}
+	{#if !hasBuiltins}
+		<p class="empty">{t('settings.acp.builtinsOld')}</p>
+	{:else}
+		{#if builtinAgents.error}
+			<div class="pad"><Notice>{builtinAgents.error}</Notice></div>
+		{/if}
+		{#if !builtinAgents.loaded}
+			<p class="empty">{t('settings.acp.checking')}</p>
+		{/if}
+		{#each builtinAgents.list as a (a.id)}
+			<div class="arow builtin" data-agent={a.id}>
+				<span class="atile"><BackendIcon backend="acp" agent={a.id} size={16} /></span>
+				<div class="amain">
+					<div class="ahead">
+						<span class="aname">{a.name}</span>
+						{#if a.status === 'ready'}
+							<span class="astate ok"><CheckCircleIcon size={12} /> {a.version || t('settings.acp.found')}</span>
+						{:else if a.status === 'unsupported'}
+							<span class="astate warn"><WarningCircleIcon size={12} /> {builtinNote(a)}</span>
+						{:else}
+							<span class="astate dim">{t('settings.acp.notInstalled')}</span>
+						{/if}
+					</div>
+					<span class="caps">
+						{#each builtinCaps(a) as c (c)}<span class="cap" class:warn={!a.approvals && c === t('settings.acp.capFullAutoOnly')}>{c}</span>{/each}
+					</span>
+					{#if a.status === 'ready' && a.path}
+						<span class="acmd" title={a.path}>{a.path}</span>
+					{/if}
+					{#if a.status !== 'ready' && a.install}
+						<div class="install">
+							<span class="ahint">{t('settings.acp.installWith')}</span>
+							<code class="acmd" title={a.install}>{a.install}</code>
+							<IconButton size="sm" onclick={() => copyInstall(a)} label={t('common.copy')} title={copied === a.id ? t('common.copied') : t('common.copy')}>
+								{#if copied === a.id}<CheckIcon size={13} />{:else}<CopyIcon size={13} />{/if}
+							</IconButton>
+						</div>
+					{/if}
+				</div>
+			</div>
+		{/each}
+	{/if}
+</SettingsSection>
+
+<SettingsSection id="acp-agents" title={hasBuiltins ? t('settings.acp.registered') : undefined}>
 	{#if listError}
 		<div class="pad"><Notice>{listError}</Notice></div>
 	{/if}
@@ -356,6 +430,33 @@
 	.ahint {
 		font-size: var(--fs-2xs);
 		color: var(--dim2);
+	}
+	.caps {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+	.cap {
+		padding: 0 6px;
+		border: 1px solid var(--hairline);
+		border-radius: var(--r-sm);
+		color: var(--dim);
+		font-size: var(--fs-2xs);
+		line-height: 18px;
+	}
+	.cap.warn {
+		border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+		color: var(--warn);
+	}
+	.install {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.install .acmd {
+		flex: 1;
+		min-width: 0;
 	}
 	.acmd {
 		font-size: var(--fs-2xs);
