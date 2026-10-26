@@ -3218,7 +3218,8 @@ fn validate_worktree_args(args: &[String], repo_root: &Path) -> Result<(), Strin
 /// 前端据此拼出任务 worktree 的目标路径（`<容器>/<slug>`）。
 #[tauri::command]
 fn worktree_base(cwd: String) -> Result<String, String> {
-    worktree_base_dir(Path::new(&cwd)).map(|p| p.display().to_string())
+    // Without Windows' `\\?\` prefix: git refuses a worktree path with it.
+    worktree_base_dir(Path::new(&cwd)).map(|p| ui_path(&p))
 }
 
 /// Runs a spawned command to completion with a hard deadline: stdout/stderr are
@@ -3432,7 +3433,11 @@ fn git_checkpoint_capture(
 /// The working tree as a commit (with HEAD as its parent, if any).
 fn checkpoint_commit(cwd: &str) -> Result<String, String> {
     let dir = PathBuf::from(cwd);
-    let idx = std::env::temp_dir().join(format!("lynshen-ckpt-{}.idx", std::process::id()));
+    // Its own index file: captures run at once (two sessions' turns, a fork's
+    // capture beside a turn's) would otherwise write each other's trees.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let idx = std::env::temp_dir().join(format!("lynshen-ckpt-{}-{n}.idx", std::process::id()));
     let _ = std::fs::remove_file(&idx);
     let has_head = git_plumb(&dir, None, &["rev-parse", "--verify", "HEAD"]).is_ok();
     if has_head {
@@ -4682,7 +4687,8 @@ mod tests {
         let cp = super::git_checkpoint_capture(repo.clone(), Some("s-1".into()), Some(1)).unwrap();
         // The source goes on after the fork point; the fork does not see it.
         std::fs::write(dir.join("a.txt"), "v3").unwrap();
-        let container = super::worktree_base_dir(&dir).unwrap();
+        // As the UI gets it (`worktree_base`): no `\\?\` prefix on Windows.
+        let container = PathBuf::from(super::worktree_base(repo.clone()).unwrap());
         let path = container.join("fork-one").to_string_lossy().to_string();
         let base = super::git_fork_worktree(
             repo.clone(),
