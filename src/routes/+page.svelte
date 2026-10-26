@@ -228,6 +228,17 @@
 				action: { label: t('shell.desk.title'), run: () => openDesk(agentId ?? null) }
 			});
 	};
+	// A scheduled run failed, its task was switched off, or a time skipped.
+	agentDirectory.onScheduleEvent = (event) => {
+		if (event.kind === 'skipped') return;
+		const title = t(`shell.schedule.event.${event.kind}`, { name: event.name });
+		if (event.kind === 'stopped') chime('attention');
+		if (!document.hasFocus()) void notify(title, event.detail);
+		else
+			toast[event.kind === 'stopped' ? 'error' : 'info'](`${title} · ${event.detail}`, {
+				action: { label: t('shell.desk.title'), run: () => openDesk(event.agent ?? null) }
+			});
+	};
 	let showSettings = $state(false);
 	let settingsSection = $state<SectionKey>('general');
 	function openSettings(section: SectionKey = 'general') {

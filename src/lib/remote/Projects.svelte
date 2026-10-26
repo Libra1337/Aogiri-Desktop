@@ -150,7 +150,8 @@
 			{#if s.engine && s.engine !== 'lynshen'}
 				<span class="chip"><BackendIcon backend={s.engine as 'claude'} size={12} /></span>
 			{/if}
-			{#if waiting(s)}<span class="tag">{t('shell.awaitShort')}</span>{/if}
+			{#if waiting(s)}<span class="tag">{t('shell.awaitShort')}</span>
+			{:else if s.background && !s.running}<span class="tag bg">{t('shell.schedule.run.background')}</span>{/if}
 		</button>
 		<button
 			class="act hover"
@@ -415,6 +416,10 @@
 		border-radius: var(--r-full);
 		color: var(--dim);
 		font-size: var(--fs-2xs);
+	}
+	.tag.bg {
+		border-color: color-mix(in oklab, var(--accent-bright) 40%, var(--border));
+		color: var(--accent-bright);
 	}
 	.agent-text {
 		flex: 1;

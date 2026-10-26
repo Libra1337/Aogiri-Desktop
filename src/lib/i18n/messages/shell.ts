@@ -922,7 +922,42 @@ const shell = {
 			errTime: '时间格式不对',
 			errDays: '至少选一天',
 			errDate: '日期不对',
-			errPast: '这个时间已经过了'
+			errPast: '这个时间已经过了',
+			errBudget: '花费上限要大于 0',
+
+			worktree: '在独立 worktree 中运行',
+			worktreeHint: '每次新会话都在新的 git worktree 和分支里运行，不改动 Agent 目录里的文件。没有留下改动的 worktree，运行归档后会自动清理。',
+			worktreeNoGit: 'Agent 的目录不在 git 仓库里，不能开启。',
+			budget: '单次花费上限',
+			budgetPlaceholder: '不限',
+			budgetHint: '走 LynShen 网关按积分计，其他按估算美元计，包括这次运行开的子会话。超过后停止这次运行。网关费用同步有延迟，可能略超。',
+			optionsOutdated: '已保存，但这台电脑上的 LynShen CLI 版本较旧，不支持独立 worktree 和花费上限，运行时不会生效。升级后再保存一次。',
+			runs: '运行记录',
+			runsEmpty: '还没有运行过',
+			runsHint: '最近 20 次。点一行打开那次运行的会话。',
+			runMinutes: '{n} 分钟',
+			runFollowedUp: '之后你继续聊过',
+			runWorktree: 'worktree {branch}',
+			failuresInRow: '已连续失败 {n} 次',
+			stoppedAfter: '连续失败 {n} 次，已自动停用',
+			stoppedNotice: '「{name}」连续失败 {n} 次，已自动停用。',
+			stoppedNoticeLast: '最后一次：{error}',
+			reenable: '重新开启',
+			reenabled: '已重新开启「{name}」',
+			running: '「{name}」正在运行',
+			run: {
+				preparing: '准备 worktree',
+				running: '运行中',
+				waiting: '等待审批',
+				background: '后台任务运行中',
+				done: '完成',
+				failed: '失败'
+			},
+			event: {
+				failed: '定时任务「{name}」失败',
+				stopped: '定时任务「{name}」已自动停用',
+				skipped: '定时任务「{name}」这次跳过了'
+			}
 		},
 		agents: {
 			title: 'Agent',
@@ -2072,7 +2107,42 @@ const shell = {
 			errTime: 'Invalid time',
 			errDays: 'Pick at least one day',
 			errDate: 'Invalid date',
-			errPast: 'That time has passed'
+			errPast: 'That time has passed',
+			errBudget: 'The cost limit must be above 0',
+
+			worktree: 'Run in its own worktree',
+			worktreeHint: 'Each new session runs in a new git worktree and branch, leaving the agent\'s folder untouched. A worktree with nothing left in it is removed once its run is archived.',
+			worktreeNoGit: 'The agent\'s folder is not in a git repository.',
+			budget: 'Cost limit per run',
+			budgetPlaceholder: 'No limit',
+			budgetHint: 'Points through the LynShen gateway, estimated US dollars otherwise, including the sessions the run starts. A run past it is stopped. Gateway costs arrive with a delay, so a run may go slightly over.',
+			optionsOutdated: 'Saved, but the LynShen CLI on this computer is too old for worktrees and cost limits; they will not apply. Save again after updating.',
+			runs: 'Runs',
+			runsEmpty: 'No runs yet',
+			runsHint: 'The last 20. Click a row to open that run\'s session.',
+			runMinutes: '{n} min',
+			runFollowedUp: 'you continued it',
+			runWorktree: 'worktree {branch}',
+			failuresInRow: '{n} failures in a row',
+			stoppedAfter: 'Switched off after {n} failures in a row',
+			stoppedNotice: '"{name}" failed {n} times in a row and was switched off.',
+			stoppedNoticeLast: 'Last: {error}',
+			reenable: 'Turn on again',
+			reenabled: 'Turned "{name}" on again',
+			running: '"{name}" is running',
+			run: {
+				preparing: 'Preparing worktree',
+				running: 'Running',
+				waiting: 'Waiting for approval',
+				background: 'Background tasks running',
+				done: 'Done',
+				failed: 'Failed'
+			},
+			event: {
+				failed: 'Scheduled task "{name}" failed',
+				stopped: 'Scheduled task "{name}" was switched off',
+				skipped: 'Scheduled task "{name}" skipped a run'
+			}
 		},
 		agents: {
 			title: 'Agents',

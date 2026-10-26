@@ -8,8 +8,8 @@
 	import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheckIcon';
 	import FileTextIcon from 'phosphor-svelte/lib/FileTextIcon';
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotchIcon';
-	import ClockIcon from 'phosphor-svelte/lib/ClockIcon';
 	import Notice from '$lib/ui/Notice.svelte';
+	import ScheduleList from './ScheduleList.svelte';
 	import DeskClosed from '$lib/DeskClosed.svelte';
 	import { useAgents } from '$lib/agentScope';
 	import { t } from '$lib/i18n';
@@ -20,7 +20,8 @@
 		status = false,
 		queue = true,
 		onOpen,
-		onOpenAgent
+		onOpenAgent,
+		onOpenSession
 	}: {
 		/** The item shown in the pane, highlighted. */
 		current?: string;
@@ -30,17 +31,14 @@
 		queue?: boolean;
 		onOpen: (key: string) => void;
 		onOpenAgent: (agent: string) => void;
+		/** A run's session, from the 定时任务 list. */
+		onOpenSession?: (session: string) => void;
 	} = $props();
 
 	const agentDirectory = useAgents();
 	const pending = $derived(agentDirectory.questions.length + agentDirectory.actions.length);
 	const working = $derived(agentDirectory.agents.filter((a) => a.busy));
-	const upcoming = $derived(
-		agentDirectory.schedules
-			.filter((s) => s.enabled && s.next_run_at)
-			.sort((a, b) => a.next_run_at! - b.next_run_at!)
-			.slice(0, 3)
-	);
+
 </script>
 
 <div class="desk">
@@ -87,18 +85,10 @@
 				<p class="empty">{t('shell.desk.nobodyWorking')}</p>
 			{/each}
 		</section>
-		{#if upcoming.length}
+		{#if agentDirectory.schedules.length}
 			<section>
-				<div class="head"><span>{t('shell.schedule.upcoming')}</span></div>
-				{#each upcoming as s (s.id)}
-					<div class="row static">
-						<ClockIcon size={16} />
-						<span class="text">
-							<span class="title">{s.name}</span>
-							<span class="meta">{agentDirectory.agentName(s.agent)} · {when(s.next_run_at! * 1000)}</span>
-						</span>
-					</div>
-				{/each}
+				<div class="head"><span>{t('shell.schedule.title')}</span></div>
+				<ScheduleList onOpenSession={(s) => onOpenSession?.(s)} />
 			</section>
 		{/if}
 	{/if}
@@ -169,13 +159,10 @@
 			transform var(--t-fast) var(--ease-out);
 		animation: fade var(--t-med) var(--ease-out);
 	}
-	.row.static {
-		cursor: default;
-	}
-	.row:not(.static):hover {
+	.row:hover {
 		background: var(--surface);
 	}
-	.row:not(.static):active {
+	.row:active {
 		transform: scale(0.985);
 	}
 	.row.on {

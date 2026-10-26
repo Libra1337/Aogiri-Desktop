@@ -216,7 +216,7 @@
 	</section>
 
 	<div class="rest" bind:this={runningEl}>
-		<DeskList {current} status queue={false} onOpen={onOpenDesk} {onOpenAgent} />
+		<DeskList {current} status queue={false} onOpen={onOpenDesk} {onOpenAgent} {onOpenSession} />
 		{#if conn.dispatches.list.length}
 			<h2 class="sub">{t('shell.remote.bench.dispatches')}</h2>
 			<DispatchList composing={false} onNew={onNewDispatch} onOpen={(d) => onOpenDispatch(d.id)} />
