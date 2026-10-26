@@ -29,6 +29,9 @@ export interface SavedHost extends RelayHost {
 	/** Paired with a key of its own (relay/deviceKey.ts); absent: with the
 	 *  older key every computer shared, kept until paired again. */
 	own_key?: boolean;
+	/** Let in through the LynShen account (a connect request, relay v2):
+	 *  forgotten here when this browser signs out. */
+	account?: boolean;
 }
 
 export interface PairLink {
@@ -89,7 +92,9 @@ export function loadHosts(): SavedHost[] {
 			relay: h.relay,
 			name: typeof h.name === 'string' ? h.name : '',
 			seq: Number.isInteger(h.seq) && h.seq! > 0 ? h.seq! : i + 1,
-			added_at: Number(h.added_at) || 0
+			added_at: Number(h.added_at) || 0,
+			...(h.own_key ? { own_key: true } : {}),
+			...(h.account ? { account: true } : {})
 		}));
 	}
 	const legacy = read<RelayHost>(LEGACY_HOST_KEY);
@@ -113,14 +118,17 @@ export function nextSeq(hosts: Pick<SavedHost, 'seq'>[]): number {
 }
 
 /** Adds a newly paired computer; pairing one already saved again updates its
- *  key and relay and keeps its name. Returns the saved entry. */
-export function addHost(host: RelayHost): SavedHost {
+ *  key and relay and keeps its name. Returns the saved entry. `account`: let
+ *  in through the account (a connect request), not with a pairing code. */
+export function addHost(host: RelayHost, account = false): SavedHost {
 	const hosts = loadHosts();
 	const known = hosts.find((h) => h.host_id === host.host_id);
-	// A new pairing uses this computer's own key from now on.
+	// A new pairing uses this computer's own key from now on. A pairing code
+	// makes it a device of the computer for good (v1 too).
 	const saved: SavedHost = known
-		? { ...known, host_static_pub: host.host_static_pub, relay: host.relay, own_key: true }
-		: { ...host, name: '', seq: nextSeq(hosts), added_at: Date.now(), own_key: true };
+		? { ...known, host_static_pub: host.host_static_pub, relay: host.relay, own_key: true, ...(account && known.account ? {} : { account: undefined }) }
+		: { ...host, name: '', seq: nextSeq(hosts), added_at: Date.now(), own_key: true, ...(account ? { account: true } : {}) };
+	if (!saved.account) delete saved.account;
 	write(
 		HOSTS_KEY,
 		known ? hosts.map((h) => (h.host_id === host.host_id ? saved : h)) : [...hosts, saved]

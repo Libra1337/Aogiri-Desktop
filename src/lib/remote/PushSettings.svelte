@@ -12,6 +12,7 @@
 	import { t } from '$lib/i18n';
 	import { DEFAULT_RULES, disablePush, enablePush, loadRules, pushOn, pushSupported, saveRules, type PushRules } from './push';
 	import type { HostConnection } from './connection.svelte';
+	import { remoteAccount } from './account.svelte';
 
 	let {
 		conn,
@@ -53,8 +54,11 @@
 	async function toggle(next: boolean) {
 		busy = true;
 		try {
-			if (next) await enablePush(conns.map((c) => c.daemon));
-			else await disablePush(conns.map((c) => c.daemon));
+			// With the account (every computer of it notifies this browser) and
+			// with each connected computer (the daemon skips the duplicate).
+			const daemons = conns.map((c) => c.daemon);
+			if (next) await enablePush(daemons, remoteAccount);
+			else await disablePush(daemons, remoteAccount);
 			on = pushOn();
 		} catch (e) {
 			on = pushOn();

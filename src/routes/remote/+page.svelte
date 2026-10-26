@@ -25,7 +25,10 @@
 	import DeviceMobileIcon from 'phosphor-svelte/lib/DeviceMobileIcon';
 	import DownloadSimpleIcon from 'phosphor-svelte/lib/DownloadSimpleIcon';
 	import BellIcon from 'phosphor-svelte/lib/BellIcon';
-	import { enablePush, pushOn, pushSupported, openTarget, type OpenTarget } from '$lib/remote/push';
+	import { enablePush, pushEndpoint, pushOn, pushSupported, openTarget, reregister, type OpenTarget } from '$lib/remote/push';
+	import AccountComputers from '$lib/remote/AccountComputers.svelte';
+	import { accountAvailable, accountRelay, keepPendingPair, pairLinkProblem, remoteAccount, takePendingPair, type Computer } from '$lib/remote/account.svelte';
+	import type { AccountLink } from '$lib/remote/connection.svelte';
 	import type { ShowRequest } from '$lib/remote/HostView.svelte';
 	import { forgetLists, forgetSessions } from '$lib/remote/cache';
 	import { forgetOnComputer } from '$lib/remote/device';
@@ -113,6 +116,8 @@
 	let mounted = $state(false);
 	/** The relay PWA, as opposed to a page served by a daemon on the LAN. */
 	let relayOrigin = $state(false);
+	/** The LynShen account can sign in here (the relay's own page). */
+	let accountOn = $state(false);
 	/** The way back to the web app's chat (on the relay PWA, where the build
 	 *  has the web chat: APP_CAPS.webChat). */
 	const chatLink = $derived(relayOrigin && APP_CAPS.webChat);
@@ -193,7 +198,7 @@
 						? 'lan'
 						: conns.length
 							? 'app'
-							: relayOrigin
+							: relayOrigin || accountOn
 								? 'scan'
 								: 'lan'
 	);
@@ -201,6 +206,108 @@
 		if (view === 'scan') loadScanner();
 		else if (view === 'app') loadScreens();
 	});
+
+	// The LynShen account (relay v2): on the relay's own page. Its computers
+	// connect through v2; a pairing link opened while signed out waits for
+	// the sign-in (`held`), then is checked against the account's key for
+	// that computer. A computer outside the account pairs over v1 as before.
+	let held = $state<PairLink | null>(null);
+
+	/** The v2 route to `host` when it is a computer of the signed-in account
+	 *  with the key this page knows; undefined otherwise (v1). */
+	function accountLink(host: RelayHost, request = false): AccountLink | undefined {
+		if (!remoteAccount.signedIn) return undefined;
+		const computer = remoteAccount.get(host.host_id);
+		if (!computer || computer.static_pub !== host.host_static_pub) return undefined;
+		const saved = hosts.find((h) => h.host_id === host.host_id);
+		return {
+			token: () => remoteAccount.relayToken(),
+			request,
+			// Paired over v1 with a code: v1 again when the computer is on v1.
+			v1: !!saved && !saved.account,
+			onAdmitted: () => {
+				if (hosts.some((h) => h.host_id === host.host_id)) return;
+				addHost(host, true);
+				hosts = loadHosts();
+			}
+		};
+	}
+
+	/** A computer of the account from the list: shown when this page has it,
+	 *  else connected (a request the computer's user answers, unless this
+	 *  browser was let in before). */
+	function openComputer(computer: Computer) {
+		adding = false;
+		const conn = conns.find((c) => c.id === computer.host_id);
+		if (conn && !conn.relayError?.fatal) return select(computer.host_id);
+		const saved = hosts.find((h) => h.host_id === computer.host_id && h.host_static_pub === computer.static_pub);
+		connect(saved ?? { host_id: computer.host_id, host_static_pub: computer.static_pub, relay: accountRelay() }, undefined, !saved);
+		select(computer.host_id);
+	}
+
+	/** Signed in (here, or the list came): the account's computers that were
+	 *  paired over v1 move to v2 (the daemon binds them to the account on
+	 *  this first v2 connection), and a held pairing link goes on. */
+	async function onAccount() {
+		if (!remoteAccount.signedIn) {
+			// Signed out (or the key was refused): the computers the account
+			// let in go; the ones paired with a code stay, on v1.
+			for (const conn of conns.filter((c) => c.account)) {
+				const host = hosts.find((h) => h.host_id === conn.id);
+				if (host?.account) void forget(conn, false);
+				else if (host) connect(host);
+			}
+			return;
+		}
+		await remoteAccount.refresh().catch(() => {});
+		for (const conn of conns) {
+			const host = hosts.find((h) => h.host_id === conn.id);
+			if (conn.kind === 'relay' && !conn.account && host && accountLink(host)) connect(host);
+		}
+		const link = held ?? (() => {
+			const kept = takePendingPair();
+			return kept ? parsePairLink(kept) : null;
+		})();
+		held = null;
+		if (link) void acceptPairLink(link);
+		void reregister(remoteAccount).catch(() => {});
+	}
+
+	async function signOutAccount() {
+		switchMenu = false;
+		if (!confirm(t('shell.remote.account.signOutConfirm'))) return;
+		await remoteAccount.signOut(await pushEndpoint().catch(() => undefined));
+	}
+
+	/** A pairing link (scanned, pasted or opened): signed out on the
+	 *  account's page, it waits for the sign-in; signed in, a computer of the
+	 *  account must have the key the link names. */
+	async function acceptPairLink(link: PairLink) {
+		if (accountOn && !remoteAccount.signedIn) {
+			held = link;
+			keepPendingPair(`${location.origin}/remote#pair=${link.host.host_id}.${link.host.host_static_pub}.${link.code}`);
+			adding = true;
+			return;
+		}
+		if (remoteAccount.signedIn) {
+			if (!remoteAccount.loaded) await remoteAccount.refresh().catch(() => {});
+			const problem = pairLinkProblem(link, remoteAccount.computers);
+			if (problem) {
+				linkError = t(problem);
+				adding = true;
+				return;
+			}
+		}
+		addPaired(link);
+	}
+
+	/** Pairs the held link without the account (a computer on an older CLI). */
+	function pairWithoutAccount() {
+		const link = held;
+		held = null;
+		keepPendingPair(null);
+		if (link) addPaired(link);
+	}
 
 	// Pairing from inside the app: the in-app scanner or a pasted link.
 	let scanning = $state(false);
@@ -219,13 +326,13 @@
 		}
 		linkError = '';
 		pasted = '';
-		addPaired(link);
+		void acceptPairLink(link);
 	}
 	function continueInBrowser() {
 		installGuide = false;
 		const link = pendingLink;
 		pendingLink = null;
-		if (link) addPaired(link);
+		if (link) void acceptPairLink(link);
 	}
 	function startAdding() {
 		switchMenu = false;
@@ -235,17 +342,19 @@
 	}
 
 	/** Connects to a paired computer; `pair` goes along until its daemon
-	 *  accepts this device once. A computer already connected is replaced. */
-	function connect(host: RelayHost, pair?: string) {
+	 *  accepts this device once, `request` asks the computer's user (relay
+	 *  v2). A computer already connected is replaced. */
+	function connect(host: RelayHost, pair?: string, request = false) {
 		const old = conns.find((c) => c.id === host.host_id);
 		old?.stop();
-		const conn = HostConnection.relay(host, pair);
+		const conn = HostConnection.relay(host, pair, accountLink(host, request));
 		conns = old ? conns.map((c) => (c === old ? conn : c)) : [...conns, conn];
 		conn.start();
 	}
 
 	/** Adds (or, paired again, updates) a computer and shows it. */
 	function addPaired(link: PairLink) {
+		adding = false;
 		addHost(link.host);
 		hosts = loadHosts();
 		connect(link.host, link.code);
@@ -272,7 +381,8 @@
 	function nameOf(conn: HostConnection): string {
 		if (conn.kind === 'lan') return t('shell.remote.lanComputer', { host: location.host });
 		const host = hosts.find((h) => h.host_id === conn.id);
-		return host?.name || t('shell.remote.computerN', { n: host?.seq ?? 1 });
+		// A name given here, else the account's name for it.
+		return host?.name || remoteAccount.get(conn.id)?.name || t('shell.remote.computerN', { n: host?.seq ?? 1 });
 	}
 
 	onMount(() => {
@@ -295,6 +405,7 @@
 			history.replaceState(null, '', location.pathname);
 		}
 		relayOrigin = location.hostname === 'app.lynshen.org';
+		accountOn = accountAvailable();
 		const install = !!link && isIos() && !isStandalone();
 		hosts = loadHosts();
 		// The linked computer connects with its code below.
@@ -302,8 +413,12 @@
 		const saved = remoteToken();
 		if (saved) startLan(saved);
 		activeId = loadActive();
+		if (accountOn) {
+			remoteAccount.onChange = () => void onAccount();
+			if (remoteAccount.signedIn) void onAccount();
+		}
 		if (install) pendingLink = link;
-		else if (link) addPaired(link);
+		else if (link) void acceptPairLink(link);
 		else if (fromQr) {
 			lanPairing = true;
 			code = fromQr;
@@ -391,6 +506,15 @@
 	function rename(conn: HostConnection) {
 		switchMenu = false;
 		const host = hosts.find((h) => h.host_id === conn.id);
+		// A computer of the account is renamed for every device of it.
+		if (conn.account && remoteAccount.get(conn.id)) {
+			const next = prompt(t('shell.remote.account.renamePrompt'), nameOf(conn));
+			if (next === null || !next.trim()) return;
+			if (host?.name) renameHost(conn.id, '');
+			hosts = loadHosts();
+			remoteAccount.rename(conn.id, next).catch((e) => toast.error(e instanceof Error ? e.message : String(e)));
+			return;
+		}
 		const next = prompt(t('shell.remote.renameComputerPrompt'), host?.name || nameOf(conn));
 		if (next === null) return;
 		renameHost(conn.id, next);
@@ -521,7 +645,7 @@
 					<div class="sep"></div>
 					<button class="pop-row" role="menuitem" onclick={startAdding}>
 						<span class="pop-ico"><PlusIcon size={18} /></span>
-						<span class="pop-txt"><span class="pop-label">{t('shell.remote.addComputer')}</span></span>
+						<span class="pop-txt"><span class="pop-label">{accountOn ? t('shell.remote.account.menu') : t('shell.remote.addComputer')}</span></span>
 					</button>
 					{#if active.kind === 'relay'}
 						<button class="pop-row" role="menuitem" onclick={() => rename(active)}>
@@ -552,6 +676,12 @@
 						<span class="pop-ico"><ChatTeardropTextIcon size={18} /></span>
 						<span class="pop-txt"><span class="pop-label">{t('shell.feedback.menu')}</span></span>
 					</button>
+					{#if accountOn && remoteAccount.signedIn}
+						<button class="pop-row" role="menuitem" onclick={signOutAccount}>
+							<span class="pop-ico"><SignOutIcon size={18} /></span>
+							<span class="pop-txt"><span class="pop-label">{t('shell.remote.account.signOut')}</span></span>
+						</button>
+					{/if}
 					<button class="pop-row" role="menuitem" onclick={openLicenses}>
 						<span class="pop-ico"><ScrollIcon size={18} /></span>
 						<span class="pop-txt"><span class="pop-label">{t('shell.remote.licenses')}</span></span>
@@ -616,6 +746,24 @@
 			<div class="actions">
 				<Button variant="ghost" onclick={continueInBrowser}>{installGuide && !pendingLink ? t('shell.remote.installClose') : t('shell.remote.installSkip')}</Button>
 			</div>
+		</div>
+	{:else if view === 'scan' && accountOn}
+		<!-- The account's computers first; a pairing code is the fallback. -->
+		<div class="pair">
+			{@render backToApp()}
+			<span class="hero"><DesktopIcon size={28} /></span>
+			<h1>{t('shell.remote.account.title')}</h1>
+			{#if held}
+				<div class="held">
+					<Notice tone="info">{t('shell.remote.account.heldLink')}</Notice>
+					<Button size="sm" variant="ghost" onclick={pairWithoutAccount}>{t('shell.remote.account.pairWithout')}</Button>
+				</div>
+			{/if}
+			<AccountComputers connected={conns.filter((c) => c.kind === 'relay').map((c) => c.id)} onConnect={openComputer} onRemoved={(id) => { const c = conns.find((x) => x.id === id); if (c) void forget(c, false); }} />
+			<p class="or">{t('shell.remote.account.orPairing')}</p>
+			{@render linkEntry()}
+			{#if chatLink && !conns.length}<a class="licenses" href="/chat">{t('shell.remote.backToChat')}</a>{/if}
+			<a class="licenses" href={LICENSES_URL} target="_blank" rel="noopener">{t('shell.remote.licenses')}</a>
 		</div>
 	{:else if view === 'scan'}
 		<div class="pair">
@@ -724,6 +872,22 @@
 		font-family: var(--font-sans);
 		font-size: var(--fs-xl);
 		font-weight: 600;
+	}
+	.held {
+		align-self: stretch;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		margin-top: 12px;
+		text-align: left;
+	}
+	.or {
+		align-self: stretch;
+		margin: 14px 0 6px !important;
+		font-size: var(--fs-xs) !important;
+		color: var(--dim2) !important;
+		text-align: left;
 	}
 	/* Pairing screens: one centered column across the page. */
 	.licenses {

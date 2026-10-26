@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FrameReader, generateKeyPair, sealFrame, type Transport } from './noise';
 import { respond } from './responder.testing';
-import { RelaySocket, checkCode, type RelayError } from './socket';
+import { RelaySocket, checkCode, closeCodeError, refusalError, relayVersion, type RelayError } from './socket';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -16,7 +16,10 @@ class FakeWs {
 	onerror: (() => void) | null = null;
 	onclose: ((event: { code: number; reason: string }) => void) | null = null;
 	closed = false;
-	constructor(readonly url: string) {
+	constructor(
+		readonly url: string,
+		readonly protocols?: string[]
+	) {
 		FakeWs.last = this;
 	}
 	send(data: Uint8Array) {
@@ -36,7 +39,11 @@ class FakeWs {
 /** Lets the socket's queued key work run. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function setup(pair?: string, reply: object | ((h: Uint8Array) => object) = { ok: true, device: 'd1', name: 'iPhone' }) {
+function setup(
+	pair?: string,
+	reply: object | ((h: Uint8Array) => object) = { ok: true, device: 'd1', name: 'iPhone' },
+	v2: { token?: string; request?: boolean; onWaiting?: (check: string) => void } = {}
+) {
 	const host = generateKeyPair();
 	const device = generateKeyPair();
 	const errors: RelayError[] = [];
@@ -50,7 +57,8 @@ function setup(pair?: string, reply: object | ((h: Uint8Array) => object) = { ok
 		pair,
 		onAccepted: accepted,
 		onRelayError: (e) => errors.push(e),
-		WebSocketImpl: FakeWs as unknown as typeof WebSocket
+		WebSocketImpl: FakeWs as unknown as typeof WebSocket,
+		...v2
 	});
 	const ws = FakeWs.last;
 	let hello: unknown;
@@ -186,5 +194,61 @@ describe('RelaySocket', () => {
 			expect(errors[0].kind).toBe(kind);
 			expect(onerror).toHaveBeenCalledOnce();
 		}
+	});
+
+	it('v2: the token rides in the subprotocols of /relay/v2/connect, never in the URL', async () => {
+		const { ws, handshake, hello } = setup(undefined, undefined, { token: 'lrt1.claims.sig' });
+		expect(ws.url).toBe(`wss://relay.test/relay/v2/connect?host=${'H'.repeat(22)}`);
+		expect(ws.protocols).toEqual(['lynshen-relay', 'lynshen-bearer.lrt1.claims.sig']);
+		await handshake();
+		expect(hello()).toEqual({ name: 'iPhone' });
+	});
+
+	it('v2: a connect request says so in msg 1 and shows the check code the daemon computes', async () => {
+		let daemonCheck = '';
+		const waiting: string[] = [];
+		const { socket, handshake, hello, accepted } = setup(
+			undefined,
+			(h) => {
+				daemonCheck = checkCode(h);
+				return { ok: true, device: 'd2', name: 'iPhone' };
+			},
+			{ token: 't', request: true, onWaiting: (check) => waiting.push(check) }
+		);
+		await handshake();
+		expect(hello()).toEqual({ name: 'iPhone', request: true });
+		expect(waiting).toEqual([daemonCheck]);
+		expect(socket.readyState).toBe(1);
+		expect(accepted).toHaveBeenCalledOnce();
+	});
+
+	it('v2: a refused request names why', async () => {
+		for (const [error, kind] of [
+			['denied', 'denied'],
+			['expired', 'expired'],
+			['no_desktop', 'no-desktop'],
+			['busy', 'requests-busy'],
+			['wrong account', 'not-yours'],
+			['not paired', 'revoked']
+		] as const) {
+			const { handshake, errors } = setup(undefined, { ok: false, error }, { token: 't', request: true });
+			await handshake();
+			expect(errors[0].kind).toBe(kind);
+			expect(errors[0].fatal).toBe(true);
+		}
+	});
+
+	it('reads the v2 close codes', () => {
+		expect(closeCodeError(4403, 'not your computer').kind).toBe('not-yours');
+		expect(closeCodeError(4403, 'revoked').kind).toBe('revoked');
+		expect(closeCodeError(4503, '').kind).toBe('restarting');
+		expect(closeCodeError(4503, '').fatal).toBe(false);
+		expect(refusalError(undefined, true).kind).toBe('pair-invalid');
+	});
+
+	it('maps the relay base between versions', () => {
+		expect(relayVersion('wss://app.lynshen.org/relay/v1', 2)).toBe('wss://app.lynshen.org/relay/v2');
+		expect(relayVersion('wss://app.lynshen.org/relay/v2/', 1)).toBe('wss://app.lynshen.org/relay/v1');
+		expect(relayVersion('ws://127.0.0.1:9/relay', 2)).toBe('ws://127.0.0.1:9/relay/v2');
 	});
 });

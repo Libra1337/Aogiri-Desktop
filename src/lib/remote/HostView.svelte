@@ -223,7 +223,16 @@
 	}
 
 	/** Past pairing and connected once: the lists and pages are showing. */
-	const ready = $derived(conn.everConnected && !conn.relayError?.fatal);
+	const ready = $derived(conn.everConnected && !conn.relayError?.fatal && !conn.waiting);
+	// The seconds left of the computer's 120 s to answer a connect request.
+	let clock = $state(Date.now());
+	$effect(() => {
+		if (!conn.waiting) return;
+		clock = Date.now();
+		const timer = setInterval(() => (clock = Date.now()), 1000);
+		return () => clearInterval(timer);
+	});
+	const requestLeft = $derived(Math.max(0, Math.ceil((conn.waitingSince + 120_000 - clock) / 1000)));
 
 	/** What the page on top shows, highlighted in its tab's list. */
 	const top = $derived(stack.at(-1));
@@ -292,7 +301,35 @@
 <svelte:window onpopstate={onPopState} />
 
 <div class="host" class:wide {hidden}>
-	{#if conn.relayError?.fatal}
+	{#if conn.waiting}
+		<!-- A connect request (relay v2): the computer's Aogiri shows the same
+		     code with 允许 / 拒绝 for up to 120 s. -->
+		<div class="pair">
+			<div class="corner">{@render switcher()}</div>
+			<span class="hero"><DesktopIcon size={28} /></span>
+			<h1>{t('shell.remote.account.requestTitle', { name })}</h1>
+			{#if conn.checkCode}
+				<p class="check" aria-label={t('shell.remote.pairCheck.checkLabel', { code: conn.checkCode })}>
+					{conn.checkCode.slice(0, 3)}<span class="gap"></span>{conn.checkCode.slice(3)}
+				</p>
+			{/if}
+			<p>{t('shell.remote.account.requestHint')}</p>
+			<p class="status"><CircleNotchIcon size={14} class="spin" /> {t('shell.remote.account.requestLeft', { s: String(requestLeft) })}</p>
+			<div class="actions"><Button variant="ghost" size="sm" onclick={() => onForget(false)}>{t('shell.remote.account.cancelRequest')}</Button></div>
+		</div>
+	{:else if conn.account && conn.relayError?.fatal && conn.relayError.kind !== 'pair-invalid'}
+		<!-- A computer of the account refused, or nobody answered: ask again. -->
+		<div class="pair">
+			<div class="corner">{@render switcher()}</div>
+			<span class="hero warn"><DesktopIcon size={28} /></span>
+			<h1>{name}</h1>
+			<p>{t(conn.state.text)}</p>
+			<div class="actions">
+				<Button variant="primary" onclick={() => conn.askAgain()}>{t('shell.remote.account.askAgain')}</Button>
+				<Button variant="ghost" onclick={onAdd}><QrCodeIcon size={16} /> {t('shell.remote.account.usePairing')}</Button>
+			</div>
+		</div>
+	{:else if conn.relayError?.fatal}
 		<div class="pair">
 			<div class="corner">{@render switcher()}</div>
 			<span class="hero warn"><QrCodeIcon size={28} /></span>

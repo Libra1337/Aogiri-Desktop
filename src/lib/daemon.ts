@@ -57,7 +57,11 @@ const DAEMON_EVENTS = new Set([
 	'requirements',
 	'device_scopes_changed',
 	// Web servers sessions started (LynShen CLI 0.7.9+, devServers.svelte.ts).
-	'dev_servers'
+	'dev_servers',
+	// A phone or browser of the account asks to connect (relay v2, local
+	// clients only; connectRequests.svelte.ts).
+	'connect_request',
+	'connect_request_closed'
 ]);
 /** Frames for one terminal's viewers (`onTerm`), unless one answers a
  *  request (`term_attached` does, when sent with an id). */
