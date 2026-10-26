@@ -657,6 +657,11 @@
 			{/if}
 			<!-- Background tasks its turn left going: a still mark after the title, no sweep. -->
 			{#if status?.kind === 'background'}<span class="bg-mark"><SessionMark {status} compact /></span>{/if}
+			<!-- A fork names where it came from (B09, D15). -->
+			{#if s.forkedFrom}
+				{@const from = shownTitle(s.forkedFrom.title || (projects.flatMap((x) => x.sessions).find((x) => x.chat.sessionId === s.forkedFrom!.sid)?.chat.title ?? ''))}
+				<span class="fork-mark" title={t('chat.fork.from', { title: from })} aria-label={t('chat.fork.from', { title: from })}><GitForkIcon size={12} /></span>
+			{/if}
 			{#if s.pinned && !s.archived}<span class="pin-mark" title={t('shell.pin')}><PushPinIcon size={12} weight="fill" /></span>{/if}
 			<!-- Another conversation's message waits for this one to be free. -->
 			{#if waiting}<span class="queued-mark" title={waiting} aria-label={waiting}><EnvelopeSimpleIcon size={12} /></span>{/if}
@@ -1551,7 +1556,8 @@
 	.project.drop-after::after {
 		bottom: -1px;
 	}
-	.pin-mark {
+	.pin-mark,
+	.fork-mark {
 		display: inline-flex;
 		color: var(--dim2);
 		flex-shrink: 0;

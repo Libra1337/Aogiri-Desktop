@@ -20,6 +20,8 @@ export interface BackendProfile {
 	caps?: Partial<BackendCaps>;
 	/** An ACP agent's effort that leaves the level to it (`default_effort`). */
 	effortDefault?: string;
+	/** When the daemon last probed the engine for it (engineProbe.ts), ms. */
+	probedAt?: number;
 }
 
 const KEY = 'lynshen-backend-profiles';

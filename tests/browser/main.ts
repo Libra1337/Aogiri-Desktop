@@ -319,8 +319,10 @@ Object.assign(window, {
         case 'create_chat_dir': return `${args.root}/${args.name}`;
         // 审阅 (the editor) on a Markdown file (tickets #44, #53).
         // A source file a Read row opens (?shell&editor): 200 numbered lines.
-        case 'read_text': return String(args.path).endsWith('.md') ? '# 交接说明\n\n- 第一条\n- 第二条\n\n一段很长的说明文字，'.padEnd(400, '长') + '\n\n```ts\nconst x = 1;\n```\n' : String(args.path).endsWith('/cache.ts') ? Array.from({length: 200}, (_, i) => `export const line${i + 1} = ${i + 1};`).join('\n') + '\n' : '';
+        case 'read_text': return String(args.path).endsWith('.md') ? '# 交接说明\n\n- 第一条\n- 第二条\n\n一段很长的说明文字，'.padEnd(400, '长') + '\n\n```ts\nconst x = 1;\n```\n' : String(args.path).endsWith('/cache.ts') ? Array.from({length: 200}, (_, i) => i === 10 ? 'export const extra = 11;' : `export const line${i + 1} = ${i + 1};`).join('\n') + '\n' : '';
         case 'stat_text': return {mtime_ms: 1, size: 10};
+        // The file at git HEAD (?repo): cache.ts before any turn changed it.
+        case 'git_head_text': if (!params0.has('repo')) throw 'not a repository'; return String(args.path).endsWith('/cache.ts') ? Array.from({length: 199}, (_, i) => `export const v${i + 1} = ${i + 1};`).join('\n') + '\n' : '';
         case 'plugin:opener|reveal_item_in_dir': return null;
         // A file a reply names (?shell&files): the files the fixture project
         // has, under the first root that has them; anything else is missing.
@@ -346,6 +348,29 @@ Object.assign(window, {
           {id: 'xcode', name: 'Xcode', icon: null}
         ] : [];
         case 'open_in_editor': return null;
+        // ?repo: the project is a git repository (the title bar's project
+        // menu, a fork's or a new conversation's worktree): branch feat/fork,
+        // 2 commits ahead of its upstream and 1 behind, 2 files changed
+        // (+12 −3). `window.__git` the commands run. Without it git answers
+        // nothing, which reads as no repository.
+        case 'git': {
+          if (!params0.has('repo')) return null;
+          const a: string[] = args.args;
+          ((window as any).__git ??= []).push(a.join(' '));
+          const key = a.join(' ');
+          if (key === 'branch --show-current') return 'feat/fork\n';
+          if (key === 'status -sb') return '## feat/fork...origin/feat/fork [ahead 2, behind 1]\n M src/lib/cache.ts\n?? notes.md\n';
+          if (key.startsWith('diff HEAD --numstat')) return '12\t3\tsrc/lib/cache.ts\n';
+          if (key === 'status --porcelain=v1') return ' M src/lib/cache.ts\n?? notes.md\n';
+          if (key.startsWith('branch --format')) return 'main\nfeat/fork\nfix/scroll\n';
+          if (key === 'worktree list --porcelain') return 'worktree /Users/me/code/lynshen-desktop\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/feat/fork\n\n';
+          return '';
+        }
+        case 'worktree_base': return '/Users/me/code/.lynshen-worktrees/lynshen-desktop';
+        // A fork's worktree and 带回结论's summary (?shell&fork).
+        case 'git_checkpoint_capture': return 'c0ffee0000000000000000000000000000000001';
+        case 'git_fork_worktree': return '1111111111111111111111111111111111111111';
+        case 'generate_text': return '这条来自一个分叉：\n- 缓存改成 LRU，容量 64\n- 单元测试已通过';
         // A Claude Code / Codex conversation carried to LynShen (ticket #40).
         case 'continue_on_lynshen_cmd': return {id: 's19a0b1c2d3e4f5a6', title: '对话宽度跟随窗口', cwd: args.cwd, turns: 12};
         default: return null;

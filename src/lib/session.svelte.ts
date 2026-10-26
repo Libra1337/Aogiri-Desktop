@@ -1,5 +1,8 @@
-import { AUTO_CONTINUE, ChatState, UNTITLED } from './chat.svelte';
-import { acpAgentsList, closeSession, recordOpencodeCopy, createChatDir, daemon, hostSession, listDir, sessionMeta, sessionHistory, defaultWorkspaceDir, writeConfig, git, type AcpAgent, type FsEntry, type HistoryItem } from './protocol';
+import { AUTO_CONTINUE, ChatState, UNTITLED, shownTitle } from './chat.svelte';
+import { acpAgentsList, closeSession, recordOpencodeCopy, createChatDir, daemon, hostSession, listDir, sessionMeta, sessionHistory, defaultWorkspaceDir, writeConfig, git, worktreeBase, type AcpAgent, type FsEntry, type HistoryItem } from './protocol';
+import { forkedMessages, sessionWorktreeNames } from './forks';
+import { engineHas } from './engineVersion.svelte';
+import { probeEngine } from './engineProbe';
 import { chatFolderName } from './chatFolder';
 import { savedEmpty } from './savedEmpty';
 import { DaemonError, type EngineSpec } from './daemon';
@@ -54,6 +57,8 @@ export interface SavedProject extends SavedTabChrome {
 		model?: string;
 		/** Last activity, ms (see `lastActive`). */
 		at?: number;
+		/** Session.forkedFrom. */
+		forkedFrom?: { sid: string; title: string; turns: number };
 	} & SavedTabChrome)[];
 	/** 并行任务 worktree 项目的元数据（isWorktree/mainRepoPath/branch/baseBranch/slug）。 */
 	worktree?: WorktreeMeta;
@@ -69,6 +74,8 @@ export interface SavedProject extends SavedTabChrome {
 	newFolder?: boolean;
 	/** 附加目录（见 Project.dirs）。 */
 	dirs?: string[];
+	/** Project.setup. */
+	setup?: string;
 }
 
 /** A start that failed because the daemon is not there (see daemon.ts), as
@@ -88,6 +95,17 @@ const base = (p: string) => p.replace(/\/+$/, '').split('/').pop() || p;
 /** A Unix, drive-letter or UNC absolute path (the daemon takes no other). */
 const isAbsolute = (p: string) => /^(\/|[A-Za-z]:[\\/]|\\\\)/.test(p);
 const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, '') === b.replace(/[\\/]+$/, '');
+
+/** A listed session's `forked_from` (daemon list, B08) as Session.forkedFrom;
+ *  the source's title from the open session, if any. */
+export function forkedFromList(
+	rec: { session?: string | null; turns?: number | null } | null | undefined,
+	titleOf: (sid: string) => string | undefined = () => undefined
+): Session['forkedFrom'] {
+	const sid = typeof rec?.session === 'string' ? rec.session : '';
+	if (!sid || !isValidResumeSessionId(sid)) return undefined;
+	return { sid, title: titleOf(sid) ?? '', turns: typeof rec?.turns === 'number' && rec.turns > 0 ? rec.turns : 0 };
+}
 
 /** A new conversation with nothing in it yet: no message (only notices
  *  such as a command's output), no goal, and no name (the daemon names a
@@ -306,6 +324,7 @@ export class SessionStore {
 							...(extraOpts?.model ? { model: extraOpts.model } : {}),
 							...(typeof extraOpts?.tool_provider === 'string' ? { tool_provider: extraOpts.tool_provider } : {}),
 							...(extraOpts?.resume_session_at ? { resume_at: extraOpts.resume_session_at } : {}),
+							...(extraOpts?.fork_from ? { fork_from: extraOpts.fork_from, ...(extraOpts.fork_turns ? { fork_turns: extraOpts.fork_turns } : {}) } : {}),
 							// A restarted engine keeps the session's settings.
 							...(s.chat.ultracode ? { ultracode: true } : {}),
 							...(s.chat.fast ? { fast: true } : {}),
@@ -323,6 +342,7 @@ export class SessionStore {
 								...(typeof extraOpts?.tool_provider === 'string' ? { tool_provider: extraOpts.tool_provider } : {}),
 								// A restarted engine keeps the session's switches.
 								...(s.chat.fast ? { fast: true } : {}),
+								...(extraOpts?.fork_from ? { fork_from: extraOpts.fork_from, fork_turns: extraOpts.fork_turns } : {}),
 								...(!prefs.thinkingSummaries ? { thinking: false } : {})
 							}
 						})
@@ -363,7 +383,13 @@ export class SessionStore {
 									}
 								};
 							})
-						: Promise.resolve(undefined);
+						: // LynShen's own engine takes no options, except a fork's.
+							extraOpts?.fork_from
+							? Promise.resolve({
+									engine: 'lynshen',
+									options: { fork_from: extraOpts.fork_from, fork_turns: extraOpts.fork_turns, ...(extraOpts.fork_cwd ? { fork_cwd: extraOpts.fork_cwd } : {}) }
+								})
+							: Promise.resolve(undefined);
 		return engine
 			.then((spec) =>
 				hostSession(s.id, cwd ?? '', resume ?? (s.chat.sessionId || undefined), agent, chat, spec).then(() => {
@@ -505,6 +531,15 @@ export class SessionStore {
 		s.chat.engineState = 'ready';
 		s.chat.seedFromProfile();
 		markDraft(s.id, () => this.#startDraft(s.id));
+		// Claude Code / Codex: its menus from what the engine offers now, when
+		// that was not known lately (engineProbe.ts); the draft takes the
+		// answer while it is still a draft of that backend.
+		const { id, chat } = s;
+		void probeEngine(s.backendId).then((changed) => {
+			const now = this.allSessions.find((x) => x.id === id);
+			// A model the user picked meanwhile stays.
+			if (changed && now?.draft && now.chat === chat && chat.backendId === now.backendId && !now.draftPick) chat.seedFromProfile();
+		});
 	}
 
 	/** The project's new conversation with nothing sent yet (`isBlank`), the
@@ -559,6 +594,12 @@ export class SessionStore {
 				: provider !== undefined && !s.gateway && engineHas('tool_providers')
 					? { tool_provider: provider }
 					: undefined;
+		const want = s.draftWorktree;
+		s.draftWorktree = undefined;
+		if (want) {
+			void this.#startInWorktree(s, project, want.base, applyPick, startOpts);
+			return;
+		}
 		(project.newFolder ? this.#chatFolder(project, s.id) : Promise.resolve())
 			.then(() => this.#spawn(s, project.path, applyPick, startOpts))
 			.then(() => {
@@ -566,6 +607,123 @@ export class SessionStore {
 				if (s.chat.title !== UNTITLED) this.#share(s, { title: s.chat.title });
 			})
 			.catch((e) => this.#engineFailed(s.chat, e));
+	}
+
+	/** A worktree is ready (the page runs the project's setup script in it,
+	 *  in a terminal there). `from`: the project it was made from. */
+	static onWorktree: ((worktree: Project, from: Project) => void) | null = null;
+
+	/** A draft that chose a new worktree, as its first message goes: the
+	 *  worktree is made from local branch `base` (named from that message),
+	 *  opened as a project of its own (a parallel task's), and the draft
+	 *  moves there and starts in it. When it cannot be made, the draft stays
+	 *  where it was, its message back in the composer. */
+	async #startInWorktree(s: Session, project: Project, base: string, after: () => void, startOpts?: Record<string, unknown>) {
+		const first = peekHeldOps(s.id).find((op) => op.op === 'user_message');
+		const text = typeof first?.content === 'string' ? first.content : '';
+		const note: Extract<Session['chat']['messages'][number], { kind: 'system' }> = { kind: 'system', text: t('chat.worktree.creating') };
+		s.chat.messages.push(note);
+		const { slug, branch } = sessionWorktreeNames(text);
+		try {
+			const container = await worktreeBase(project.path);
+			const path = `${container}${container.includes('\\') ? '\\' : '/'}${slug}`;
+			await git(['worktree', 'add', path, '-b', branch, base], project.path);
+			const tree = this.#worktreeProject(path, { isWorktree: true, mainRepoPath: project.path, branch, baseBranch: base, slug }, project);
+			// The draft goes over, its held message with it.
+			project.sessions = project.sessions.filter((x) => x !== s);
+			tree.sessions.unshift(s);
+			const live = tree.sessions[0]!;
+			live.chat.messages = live.chat.messages.map((m) => (m === note ? { kind: 'system', text: t('chat.worktree.created', { name: slug, branch, base }) } : m));
+			tree.lastBackend = live.backendId;
+			this.activeId = live.id;
+			SessionStore.onWorktree?.(tree, project);
+			this.#spawn(live, tree.path, after, startOpts)
+				.then(() => {
+					if (live.chat.title !== UNTITLED) this.#share(live, { title: live.chat.title });
+				})
+				.catch((e) => this.#engineFailed(live.chat, e));
+		} catch (e) {
+			// The message goes back to the composer, not to an engine.
+			dropHeldOps(s.id);
+			s.chat.messages = s.chat.messages.filter((m) => m !== note && !(m.kind === 'user' && m.text === text));
+			s.chat.messages.push({ kind: 'error', text: t('chat.worktree.failed', { msg: String(e) }) });
+			s.draftWorktree = { base };
+			this.#makeDraft(s);
+			if (text) s.chat.pendingFill = text;
+		}
+	}
+
+	/** A worktree of `from`'s repository as a project of its own, beside it
+	 *  in the list (a parallel task's, ParallelTasks / TaskDialog); the one
+	 *  already open for `path`, if any. Its setup script is `from`'s. */
+	#worktreeProject(path: string, meta: WorktreeMeta, from: Project): Project {
+		const known = this.userProjects.find((p) => samePath(p.path, path));
+		if (known) return known;
+		const p: Project = { id: this.uid(), name: base(path), path, sessions: [], worktree: meta };
+		if (from.color) p.color = from.color;
+		const at = this.projects.indexOf(from);
+		this.projects.splice(at < 0 ? this.projects.length : at + 1, 0, p);
+		return this.projects.find((x) => x.id === p.id)!;
+	}
+
+	/** A draft goes on in a new worktree from local branch `base` (made with
+	 *  its first message), or (null) where it is. */
+	setDraftWorktree(id: string, base: string | null) {
+		const s = this.allSessions.find((x) => x.id === id);
+		if (!s?.draft) return;
+		s.draftWorktree = base ? { base } : undefined;
+	}
+
+	/** The daemon can fork this session's conversation (its hello names
+	 *  `fork`, and the engine keeps one: LynShen, Claude Code, Codex). */
+	canFork(id: string): boolean {
+		const s = this.allSessions.find((x) => x.id === id);
+		return !!s && !s.draft && !!s.chat.sessionId && s.backendId !== 'acp' && engineHas('fork');
+	}
+
+	/** A new session that goes on from session `id`'s first `keep` user
+	 *  turns, beside it in its project, or in `worktree` (made for it,
+	 *  already checked out): a project of its own beside the original's. The
+	 *  original stays as it is. The daemon forks the conversation
+	 *  (`fork_from`, B08): Claude Code resumes it at the turn's last reply as
+	 *  a new one, Codex forks the thread, LynShen copies the turns (from the
+	 *  original's folder, `fork_cwd`). Until the engine replays it, the new
+	 *  session shows the turns copied from this one. */
+	forkSession(id: string, keep: number, worktree?: { path: string; meta: WorktreeMeta }): string | undefined {
+		const src = this.allSessions.find((x) => x.id === id);
+		const project = this.projects.find((p) => p.sessions.some((x) => x.id === id));
+		const from = src?.chat.sessionId;
+		if (!src || !project || !from || !this.canFork(id) || keep < 1) return;
+		const home = worktree ? this.#worktreeProject(worktree.path, worktree.meta, project) : project;
+		const s = this.#newSession(src.backendId);
+		s.forkedFrom = { sid: from, title: src.chat.title, turns: keep };
+		if (src.gateway !== undefined) s.gateway = src.gateway;
+		if (src.group) s.group = src.group;
+		if (src.model) s.model = src.model;
+		s.chat.approvalMode = src.chat.approvalMode;
+		s.chat.title = t('chat.fork.forkTitle', { title: shownTitle(src.chat.title) });
+		// Its engine goes on from this conversation: no other backend.
+		s.restored = true;
+		s.chat.messages = $state.snapshot(forkedMessages(src.chat.messages, keep)) as typeof src.chat.messages;
+		// Right after the original, or first in its worktree's project.
+		if (home === project) project.sessions.splice(project.sessions.indexOf(src) + 1, 0, s);
+		else home.sessions.unshift(s);
+		const live = home.sessions.find((x) => x.id === s.id)!;
+		home.lastBackend = live.backendId;
+		this.activeId = live.id;
+		// LynShen keeps sessions by folder: a fork elsewhere reads the
+		// original from its folder (`fork_cwd`).
+		const fork = { fork_from: from, fork_turns: keep, ...(worktree && src.backendId === 'lynshen' ? { fork_cwd: this.projectPathOf(id) ?? project.path } : {}) };
+		this.#spawn(live, home.path, undefined, { ...this.#keepModel(src), ...fork })
+			.then(() => this.#share(live, { title: live.chat.title }))
+			.catch((e) => this.#engineFailed(live.chat, e));
+		if (worktree) SessionStore.onWorktree?.(home, project);
+		return s.id;
+	}
+
+	/** The open session whose conversation is `sid`. */
+	bySid(sid: string): Session | undefined {
+		return this.allSessions.find((s) => s.chat.sessionId === sid);
 	}
 
 	/**
@@ -744,12 +902,16 @@ export class SessionStore {
 			gateway?: boolean;
 			/** ACP: the registry agent that runs it. */
 			acp_agent?: AcpAgentRef | null;
+			/** A fork: the conversation it came from (B08). */
+			forked_from?: { session?: string | null; turns?: number | null } | null;
 		},
 		reuseId?: string,
 		atStart = false
 	): string {
 		const backend = normalizeBackendId(rec.engine);
 		const s = this.#newSession(backend, backend === 'acp' ? (rec.acp_agent ?? undefined) : undefined, reuseId);
+		const fork = forkedFromList(rec.forked_from, (sid) => this.bySid(sid)?.chat.title);
+		if (fork) s.forkedFrom = fork;
 		if (rec.gateway) s.gateway = true;
 		s.dormant = true;
 		s.restored = true;
@@ -1626,6 +1788,7 @@ export class SessionStore {
 			...(p.home ? { home: true } : {}),
 			...(p.newFolder ? { newFolder: true } : {}),
 			...(p.dirs?.length ? { dirs: p.dirs } : {}),
+			...(p.setup ? { setup: p.setup } : {}),
 			...(p.lastBackend && p.lastBackend !== 'lynshen' ? { lastBackend: p.lastBackend } : {}),
 			...(p.lastBackend === 'acp' && p.lastAcpAgent ? { lastAcpAgent: p.lastAcpAgent } : {}),
 			...(p.color ? { color: p.color } : {}),
@@ -1645,6 +1808,7 @@ export class SessionStore {
 					...(s.archived ? { archived: true } : {}),
 					...(s.pinned ? { pinned: true } : {}),
 					...(lastActive(s) ? { at: lastActive(s) } : {}),
+					...(s.forkedFrom ? { forkedFrom: s.forkedFrom } : {}),
 					...(s.color ? { color: s.color } : {}),
 					...(s.icon ? { icon: s.icon } : {}),
 				}))
@@ -1723,6 +1887,9 @@ export class SessionStore {
 				: this.#draftSaved(proj, t.id!, t.title, backend, !!t.archived, chrome, acpAgent);
 			const restored = proj.sessions.find((s) => s.id === id)!;
 			if (t.pinned === true) restored.pinned = true;
+			const fork = t.forkedFrom;
+			if (fork && typeof fork.sid === 'string' && isValidResumeSessionId(fork.sid))
+				restored.forkedFrom = { sid: fork.sid, title: typeof fork.title === 'string' ? fork.title : '', turns: Math.max(0, Number(fork.turns) || 0) };
 			if (typeof t.at === 'number' && t.at > 0) restored.at = t.at;
 		}
 	}
@@ -1760,6 +1927,7 @@ export class SessionStore {
 				if (p.home === true) proj.home = true;
 				if (p.newFolder === true) proj.newFolder = true;
 				this.setProjectDirs(proj, p.dirs);
+				if (typeof p.setup === 'string' && p.setup.trim()) proj.setup = p.setup;
 				this.setProjectChrome(proj, p);
 				if (p.lastBackend) proj.lastBackend = normalizeBackendId(p.lastBackend);
 				if (

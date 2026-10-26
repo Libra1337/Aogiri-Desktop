@@ -82,6 +82,8 @@ from before sends none, and the app keeps its old behaviour:
 |---------|---------|------------|
 | `queue` | the queue tray's rows (`composer/queue.ts`): `steer`, `interrupt`, `unqueue` (with `discard`) and `queue_move`, each with the row's `index` and `text`, on every engine (an ACP agent has no 插入: its rows stop the turn and send); ⌘↵ / ⌘⇧↵; Claude Code's `fixed` rows | the single 插入 (`steer`, first message) where `caps.steer`, and 撤回 where `caps.unqueue` on 0.4.27 or later |
 | `files` | `user_message.files` (attachments other than images; a video as a file), echoed as `files` on `user_message`, `unqueued`, `fill_input` and the transcript | the files listed after the text (`attachments.ts`), a video as keyframes |
+| `fork` | 从这里分叉 under a finished turn's reply (`forks.ts`, `ForkDialog`): `session_create` with `options.fork_from` and `fork_turns` (LynShen also `fork_cwd`, the original's folder, when the fork works in a worktree); the list's `forked_from` names a fork's source | no fork button (an ACP agent has none either) |
+| `engine_probe` | a Claude Code or Codex draft takes its model menu and slash commands from `engine_probe` when its profile is older than 6 hours (`engineProbe.ts`) | the profile from the backend's last session |
 
 A `steer` takes the message in once a running tool ends; it never cuts the tool.
 

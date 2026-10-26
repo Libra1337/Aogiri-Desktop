@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { paneOut } from '$lib/ui/motion';
 	// One project's page, over the canvas (the sidebar stays): its
-	// directories (the main one and extra ones the user adds), its
+	// directories (the main one and extra ones the user adds), the script
+	// its new worktrees run first (a repository only), its
 	// requirements (the workbench's list, this project's only; one opens in
 	// place) and the agents that belong to it.
 	import XIcon from 'phosphor-svelte/lib/XIcon';
@@ -26,6 +27,7 @@
 		currentStep,
 		onClose,
 		onDirs,
+		onSetup,
 		onStartRequirement,
 		onOpenSession,
 		onOpenAgent,
@@ -37,12 +39,20 @@
 		onClose: () => void;
 		/** The extra directories changed. */
 		onDirs: (dirs: string[]) => void;
+		/** The worktree setup script changed ('' none); absent: not offered
+		 *  (no repository, or a worktree's own project). */
+		onSetup?: (script: string) => void;
 		onStartRequirement: (r: Requirement, how: StartHow) => void;
 		onOpenSession: (session: string) => void;
 		onOpenAgent: (agent: string) => void;
 	} = $props();
 
 	const reqs = useRequirements();
+	// svelte-ignore state_referenced_locally
+	let setup = $state(project.setup ?? '');
+	function saveSetup() {
+		if (setup.trim() !== (project.setup ?? '')) onSetup?.(setup.trim());
+	}
 	const dirs = $derived(project.dirs ?? []);
 	const norm = (p: string) => p.replace(/[\\/]+$/, '');
 	let requirementId = $state<string | null>(null);
@@ -101,6 +111,14 @@
 				</div>
 				<Button size="sm" onclick={addDir}><PlusIcon size={13} />{t('shell.projectPage.addDir')}</Button>
 			</section>
+
+			{#if onSetup}
+				<section>
+					<h3>{t('shell.projectPage.setup')}</h3>
+					<p class="hint">{t('shell.projectPage.setupHint')}</p>
+					<textarea class="script" rows="3" spellcheck="false" aria-label={t('shell.projectPage.setup')} placeholder={t('shell.projectPage.setupPlaceholder')} bind:value={setup} onblur={saveSetup}></textarea>
+				</section>
+			{/if}
 
 			<section>
 				<h3>{t('shell.requirement.title')}</h3>
@@ -214,6 +232,29 @@
 		margin: 0 0 10px;
 		font-size: var(--fs-xs);
 		color: var(--dim);
+	}
+	/* The worktree setup script: a mono field in the directories' frame. */
+	.script {
+		display: block;
+		width: 100%;
+		min-height: 72px;
+		padding: 10px 12px;
+		border: 1px solid var(--border);
+		border-radius: var(--r-lg);
+		background: var(--panel);
+		color: var(--text);
+		font-family: var(--font-mono);
+		font-size: var(--fs-sm);
+		line-height: 1.5;
+		resize: vertical;
+		outline: none;
+		transition: border-color var(--t-fast) var(--ease-base);
+	}
+	.script:focus {
+		border-color: var(--border-strong);
+	}
+	.script::placeholder {
+		color: var(--dim2);
 	}
 	.dirs {
 		display: flex;

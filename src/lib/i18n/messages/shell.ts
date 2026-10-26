@@ -160,7 +160,10 @@ const shell = {
 			lead: '在 {project} 用 {backend} 开始新对话',
 			project: '项目',
 			backend: '后端',
-			openFolder: '打开文件夹…'
+			openFolder: '打开文件夹…',
+			where: '在哪里工作',
+			checkout: '当前目录',
+			newWorktree: '新 worktree · 基于 {base}'
 		},
 		welcomeTip: '给 Aogiri 指派一个任务，开始新对话',
 		hintCommand: '命令',
@@ -187,6 +190,7 @@ const shell = {
 		updateShort: '可更新',
 		newChat: '新对话',
 		home: {
+			place: '在哪里开始',
 			title: '主页',
 			chats: '对话',
 			noChats: '还没有对话',
@@ -217,6 +221,19 @@ const shell = {
 		approveFile: '允许修改文件',
 		askQuestion: '请选择',
 		approvalPlace: '第 {n}/{m} 个',
+		// The title bar's project menu (shell/ProjectMenu.svelte).
+		projectMenu: {
+			title: '项目',
+			commit: '提交…',
+			files: '{n} 个文件',
+			push: '推送 {n} 个提交',
+			publish: '发布分支',
+			pull: '拉取 {n} 个提交',
+			pushed: '已推送',
+			pulled: '已拉取',
+			changes: '改动',
+			clean: '无改动'
+		},
 		// A plan's usage limit above the composer (UsageLimit.svelte): {who} the
 		// backend (Claude Code, Codex), {which} the limit.
 		limit: {
@@ -727,6 +744,9 @@ const shell = {
 			main: '主目录',
 			addDir: '添加目录',
 			removeDir: '移除目录',
+			setup: 'Worktree 初始化脚本',
+			setupHint: '这个项目每新建一个 worktree（并行任务、分叉、在新 worktree 中开始的对话），先在那里的终端里运行这段命令，比如安装依赖、拷贝 .env。可用环境变量 LYNSHEN_PROJECT_ROOT（项目目录）和 LYNSHEN_WORKTREE_PATH（worktree 目录）。留空则不运行。只保存在这台电脑上。',
+			setupPlaceholder: 'pnpm install && cp "$LYNSHEN_PROJECT_ROOT/.env" .',
 			dirKnown: '这个目录已在项目里',
 			agents: 'Agent',
 			noAgents: '这个项目还没有 Agent。',
@@ -1074,6 +1094,14 @@ const shell = {
 		paletteSearch: '搜索命令或操作…',
 		paletteEmpty: '没有匹配的命令',
 		paletteFoot: '↑↓ 选择 · Enter 执行 · Esc 关闭',
+		// A new conversation's project, asked first (ProjectPickDialog.svelte).
+		projectPick: {
+			label: '新对话的项目',
+			search: '搜索项目…',
+			none: '不属于项目',
+			noneHint: '在自己的文件夹里开始，不放进任何项目',
+			foot: '↑↓ 选择 · Enter 打开 · {keys} 直接选 · Esc 关闭'
+		},
 		cmd: {
 			tuiHint: '在引擎自己的终端界面中继续，退出后回到这里',
 			tuiKw: 'tui cli 终端 命令行 terminal',
@@ -1324,7 +1352,10 @@ const shell = {
 			lead: 'Start a conversation in {project} with {backend}',
 			project: 'Project',
 			backend: 'Backend',
-			openFolder: 'Open a folder…'
+			openFolder: 'Open a folder…',
+			where: 'Where to work',
+			checkout: 'Current checkout',
+			newWorktree: 'New worktree · from {base}'
 		},
 		welcomeTip: 'Assign Aogiri a task to start a new conversation',
 		hintCommand: 'Commands',
@@ -1350,6 +1381,7 @@ const shell = {
 		updateShort: 'Update',
 		newChat: 'New chat',
 		home: {
+			place: 'Where it starts',
 			title: 'Home',
 			chats: 'Chats',
 			noChats: 'No chats yet',
@@ -1380,6 +1412,18 @@ const shell = {
 		approveFile: 'Allow file changes',
 		askQuestion: 'Choose an option',
 		approvalPlace: '{n} of {m}',
+		projectMenu: {
+			title: 'Project',
+			commit: 'Commit…',
+			files: '{n} files',
+			push: 'Push {n} commits',
+			publish: 'Publish branch',
+			pull: 'Pull {n} commits',
+			pushed: 'Pushed',
+			pulled: 'Pulled',
+			changes: 'Changes',
+			clean: 'No changes'
+		},
 		limit: {
 			window: {
 				five_hour: '5-hour limit',
@@ -1884,6 +1928,9 @@ const shell = {
 			main: 'Main',
 			addDir: 'Add directory',
 			removeDir: 'Remove directory',
+			setup: 'Worktree setup script',
+			setupHint: 'Runs first in a terminal in each new worktree of this project (a parallel task, a fork, a conversation started in a new worktree): install dependencies, copy .env… LYNSHEN_PROJECT_ROOT (the project folder) and LYNSHEN_WORKTREE_PATH (the worktree) are set. Empty: nothing runs. Kept on this computer only.',
+			setupPlaceholder: 'pnpm install && cp "$LYNSHEN_PROJECT_ROOT/.env" .',
 			dirKnown: 'This directory is already in the project',
 			agents: 'Agents',
 			noAgents: 'No agents in this project yet.',
@@ -2226,6 +2273,13 @@ const shell = {
 		paletteSearch: 'Search commands or actions…',
 		paletteEmpty: 'No matching commands',
 		paletteFoot: '↑↓ Navigate · Enter Run · Esc Close',
+		projectPick: {
+			label: 'Project for the new conversation',
+			search: 'Search projects…',
+			none: 'No project',
+			noneHint: 'Starts in a folder of its own, in no project',
+			foot: '↑↓ Navigate · Enter Open · {keys} Pick · Esc Close'
+		},
 		cmd: {
 			tuiHint: 'Continue in the engine’s own terminal UI; quit it to come back',
 			tuiKw: 'tui cli terminal command line',

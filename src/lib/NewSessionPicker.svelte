@@ -2,14 +2,20 @@
 	// A new conversation not started yet, as one sentence: "in <project>
 	// with <backend>" (LynShen, Codex, Claude Code, or one of the daemon's
 	// built-in ACP agents: each with what it can do, or why it cannot start
-	// here and how to install it), both words menus. The choices are only
-	// recorded until the
-	// first message starts the engine there (SessionStore.moveDraft /
-	// switchBackend).
+	// here and how to install it), both words menus. In a git repository a
+	// third menu says where in it: its checkout, or a new worktree from a
+	// branch, made with the first message and opened as a project of its own
+	// (B09, D15). The choices are only recorded until the first message
+	// starts the engine there (SessionStore.moveDraft / switchBackend /
+	// setDraftWorktree).
 	import { open } from '@tauri-apps/plugin-dialog';
 	import FolderIcon from 'phosphor-svelte/lib/FolderIcon';
 	import FolderPlusIcon from 'phosphor-svelte/lib/FolderPlusIcon';
 	import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
+	import GitBranchIcon from 'phosphor-svelte/lib/GitBranchIcon';
+	import MonitorIcon from 'phosphor-svelte/lib/MonitorIcon';
+	import { git } from '$lib/protocol';
+	import { parseBranches } from '$lib/gitops';
 	import { t } from '$lib/i18n';
 	import PopMenu from '$lib/ui/PopMenu.svelte';
 	import BackendIcon from '$lib/BackendIcon.svelte';
@@ -21,7 +27,7 @@
 	let { store, session }: { store: SessionStore; session: Session } = $props();
 
 	const OPEN_FOLDER = '\u0000open';
-	let menu = $state<'project' | 'backend' | null>(null);
+	let menu = $state<'project' | 'backend' | 'where' | null>(null);
 	const projects = $derived(store.shownProjects.filter((p) => !p.chats && !p.stale));
 	const current = $derived(store.projects.find((p) => p.sessions.some((s) => s.id === session.id)));
 	// The home directory as ~, as a terminal shows it.
@@ -40,6 +46,40 @@
 		const trim = (x: string) => x.replace(/[\\/]+$/, '');
 		const added = store.userProjects.find((p) => trim(p.path) === trim(path));
 		if (added) store.moveDraft(session.id, added.id);
+	}
+	// Where in the repository: read once the project is known (a folder that
+	// is no repository, a chat or a worktree project has no third menu).
+	let repo = $state<{ path: string; current: string; branches: string[] } | null>(null);
+	$effect(() => {
+		const path = current && !current.worktree && !current.home && !current.chats ? current.path : '';
+		repo = null;
+		if (!path) return;
+		let gone = false;
+		Promise.all([git(['branch', '--show-current'], path), git(['branch', '--format=%(refname:short)'], path)])
+			.then(([now, list]) => {
+				const branches = parseBranches(String(list ?? ''));
+				if (!gone && branches.length) repo = { path, current: String(now ?? '').trim(), branches };
+			})
+			.catch(() => {});
+		return () => (gone = true);
+	});
+	const NEW = '\u0000new:';
+	const whereLabel = $derived(session.draftWorktree ? t('shell.startPicker.newWorktree', { base: session.draftWorktree.base }) : t('shell.startPicker.checkout'));
+	const whereItems = $derived(
+		repo
+			? [
+					{ key: '', label: t('shell.startPicker.checkout'), desc: repo.current || undefined, icon: MonitorIcon, checked: !session.draftWorktree },
+					// The current branch first, then the others.
+					...[repo.current, ...repo.branches.filter((b) => b !== repo!.current)]
+						.filter(Boolean)
+						.slice(0, 8)
+						.map((b) => ({ key: NEW + b, label: t('shell.startPicker.newWorktree', { base: b }), icon: GitBranchIcon, checked: session.draftWorktree?.base === b }))
+				]
+			: []
+	);
+	function pickWhere(key: string) {
+		menu = null;
+		store.setDraftWorktree(session.id, key.startsWith(NEW) ? key.slice(NEW.length) : null);
 	}
 	const ACP = 'acp:';
 	async function pickBackend(key: string) {
@@ -110,6 +150,18 @@
 			</span>
 		{:else}{part}{/if}
 	{/each}
+	{#if repo}
+		<span class="anchor">
+			<button class="word" class:on={menu === 'where'} onclick={() => (menu = menu === 'where' ? null : 'where')} aria-haspopup="menu" aria-expanded={menu === 'where'} aria-label={t('shell.startPicker.where')} title={t('shell.startPicker.where')}>
+				{#if session.draftWorktree}<GitBranchIcon size={14} />{:else}<MonitorIcon size={14} />{/if}
+				<span class="wname">{whereLabel}</span>
+				<CaretDownIcon size={11} />
+			</button>
+			{#if menu === 'where'}
+				<PopMenu placement="down-left" items={whereItems} title={t('shell.startPicker.where')} onSelect={pickWhere} onClose={() => (menu = null)} />
+			{/if}
+		</span>
+	{/if}
 </p>
 
 <style>
