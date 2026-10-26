@@ -276,7 +276,8 @@ pub fn resolve_acp_program(command: &str) -> PathBuf {
 }
 
 /// Dev fallback for the native engine only: the freshly-built binary from the
-/// sibling `LynShen-CLI` checkout (mirrors the pre-multi-backend behavior).
+/// sibling `Aogiri-CLI` checkout (or one cloned before the repo rename as
+/// `LynShen-CLI`; mirrors the pre-multi-backend behavior).
 fn lynshen_dev_candidates() -> Vec<PathBuf> {
     let exe = if cfg!(windows) {
         "lynshen.exe"
@@ -285,6 +286,8 @@ fn lynshen_dev_candidates() -> Vec<PathBuf> {
     };
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")); // <repo>/src-tauri
     [
+        format!("../../Aogiri-CLI/target/debug/{exe}"),
+        format!("../../Aogiri-CLI/target/release/{exe}"),
         format!("../../LynShen-CLI/target/debug/{exe}"),
         format!("../../LynShen-CLI/target/release/{exe}"),
         format!("../../target/debug/{exe}"),

@@ -147,7 +147,7 @@ jobs:
       - name: Check out the pinned CLI engine
         uses: actions/checkout@v4
         with:
-          repository: Libra1337/LynShen-CLI
+          repository: Libra1337/Aogiri-CLI
           ref: ${{ env.CLI_REF }}
           token: ${{ secrets.LYNSHEN_CLI_TOKEN || github.token }}
           path: .release-cli

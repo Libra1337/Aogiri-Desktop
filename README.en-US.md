@@ -8,8 +8,8 @@
 
   <p>
     <a href="https://www.lynshen.org/download">Download</a> ·
-    <a href="https://github.com/Libra1337/LynShen_Agent/releases">All releases</a> ·
-    <a href="https://github.com/Libra1337/LynShen_Agent/issues">Report an issue</a>
+    <a href="https://github.com/Libra1337/Aogiri-Desktop/releases">All releases</a> ·
+    <a href="https://github.com/Libra1337/Aogiri-Desktop/issues">Report an issue</a>
   </p>
 
   <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
@@ -90,19 +90,19 @@ Your phone and computer can be on different networks. Connection contents are en
 
 ## Troubleshooting
 
-See the [installation guide](docs/install.md) for system security prompts, Linux dependencies, and permissions. For other problems, use Settings → General → Report Issue or open a [GitHub issue](https://github.com/Libra1337/LynShen_Agent/issues). Include your operating system, app version, agent, and error details; do not paste API keys or access tokens.
+See the [installation guide](docs/install.md) for system security prompts, Linux dependencies, and permissions. For other problems, use Settings → General → Report Issue or open a [GitHub issue](https://github.com/Libra1337/Aogiri-Desktop/issues). Include your operating system, app version, agent, and error details; do not paste API keys or access tokens.
 
 ## Run from source
 
-This repository contains the desktop app. Agent engines and the background service are in [LynShen-CLI](https://github.com/Libra1337/LynShen-CLI). Development requires Node.js 22, pnpm, stable Rust, and the [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/).
+This repository contains the desktop app. Agent engines and the background service are in [Aogiri CLI](https://github.com/Libra1337/Aogiri-CLI). Development requires Node.js 22, pnpm, stable Rust, and the [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/).
 
 Place both repositories in the same parent directory, build the CLI, and start the desktop app:
 
 ```sh
-git clone --recurse-submodules https://github.com/Libra1337/LynShen-CLI.git
-(cd LynShen-CLI && cargo build)
-git clone https://github.com/Libra1337/LynShen_Agent.git
-cd LynShen_Agent
+git clone --recurse-submodules https://github.com/Libra1337/Aogiri-CLI.git
+(cd Aogiri-CLI && cargo build)
+git clone https://github.com/Libra1337/Aogiri-Desktop.git
+cd Aogiri-Desktop
 pnpm install
 pnpm tauri dev
 ```
