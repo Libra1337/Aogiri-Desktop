@@ -208,8 +208,15 @@
 	}
 
 	onMount(() => {
-		void refresh();
-		void loadRelay();
+		// The page can be the first to need the daemon (opened from search,
+		// or before any conversation): connect, then read.
+		daemon
+			.connect()
+			.catch(() => {})
+			.then(() => {
+				void refresh();
+				void loadRelay();
+			});
 		// The relay connects in the background; keep the status line current,
 		// and a phone that paired (and waits to be confirmed) shows up.
 		statusPoll = setInterval(() => {

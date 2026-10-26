@@ -9,10 +9,13 @@
 	import Modal from '$lib/ui/Modal.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { clientKind, connectRequests, secondsLeft } from '$lib/connectRequests.svelte';
+	import { clientKind, connectRequests, secondsLeft, type ConnectRequests } from '$lib/connectRequests.svelte';
 	import { t } from '$lib/i18n';
 
-	const request = $derived(connectRequests.open[0]);
+	/** The app's requests (another daemon's in tests). */
+	let { requests = connectRequests }: { requests?: ConnectRequests } = $props();
+
+	const request = $derived(requests.open[0]);
 	const kind = $derived(clientKind(request?.client));
 	let now = $state(Date.now());
 	const tick = setInterval(() => (now = Date.now()), 1000);
@@ -26,7 +29,7 @@
 	function decide(allow: boolean) {
 		if (!request || deciding) return;
 		deciding = true;
-		connectRequests
+		requests
 			.decide(request.id, allow)
 			.catch((e) => toast.error(e instanceof Error ? e.message : String(e)))
 			.finally(() => setTimeout(() => (deciding = false), 400));

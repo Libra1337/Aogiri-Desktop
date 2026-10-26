@@ -39,8 +39,11 @@
 		if (!remoteAccount.signedIn || document.visibilityState === 'hidden') return;
 		remoteAccount.refresh().catch(() => {});
 	}
+	// Signed in (now, or the page opened signed in): the list at once.
+	$effect(() => {
+		if (remoteAccount.signedIn) refresh();
+	});
 	onMount(() => {
-		refresh();
 		timer = setInterval(refresh, REFRESH_MS);
 		// A sign-in started before a reload.
 		void remoteAccount.resume();

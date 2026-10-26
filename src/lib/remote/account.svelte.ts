@@ -141,7 +141,8 @@ export class RemoteAccount {
 	error = $state('');
 	/** Signed in, signed out, or the key was refused. */
 	onChange: (() => void) | null = null;
-	#key = '';
+	// Reactive: the list refreshes the moment a sign-in lands.
+	#key = $state('');
 	#poll: ReturnType<typeof setTimeout> | null = null;
 	#fetch: Fetch;
 	#sleep: (ms: number) => Promise<void>;

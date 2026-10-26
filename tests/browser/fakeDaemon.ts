@@ -65,6 +65,16 @@ export const daemonState = {
 	 *  paired iPhone may do. */
 	pendingPhone: false,
 	phoneScopes: [] as string[],
+	/** 远程访问's daemon (?relay=): `v2` signed in to the account, the relay
+	 *  on v2, a phone and a browser of the account paired; `signedout` a v2
+	 *  daemon signed out (v1); '' a daemon before account remote access. */
+	relay: '' as '' | 'v2' | 'signedout',
+	relayOn: false,
+	/** Open connect requests (connect_requests), and the answers sent. */
+	connectRequests: [] as Frame[],
+	decided: [] as Frame[],
+	/** Sends a daemon-wide frame to the app (set once a socket opens). */
+	emit: (_frame: Frame) => {},
 	/** The scheduled tasks (schedule_list / schedule_save). */
 	schedules: [] as Frame[],
 	/** The built-in ACP agents (acp_presets): OpenCode installed, oh-my-pi
@@ -336,14 +346,30 @@ function connectorReply(op: Frame): Frame | null {
 			return {
 				type: 'devices',
 				devices: [
-					{ id: 'dev-phone', name: 'iPhone', paired_at: Date.UTC(2026, 9, 12), kind: 'device', last_seen: null, scopes: s.phoneScopes },
+					{ id: 'dev-phone', name: 'iPhone', paired_at: Date.UTC(2026, 9, 12), kind: 'device', last_seen: null, scopes: s.phoneScopes, ...(s.relay === 'v2' ? { client: 'aogiri-phone' } : {}) },
+					...(s.relay === 'v2' ? [{ id: 'dev-web', name: 'Aogiri Web · Safari · iOS', paired_at: Date.UTC(2026, 9, 26), kind: 'device', last_seen: null, scopes: [], client: 'lynshen-web' }] : []),
 					// ?pending: a phone that just paired and waits to be confirmed.
 					...(s.pendingPhone ? [{ id: 'dev-new', name: 'Pixel', paired_at: Date.now(), kind: 'device', last_seen: null, scopes: [], pending: true, check: '482913' }] : []),
 					...s.connectors.flatMap((c) => c.bindings.map((b: Frame) => ({ id: b.device, name: b.name, paired_at: b.paired_at, kind: 'chat', platform: 'telegram', connector: c.id, last_seen: b.last_seen })))
 				]
 			};
 		case 'relay_status':
-			return { type: 'relay_status', enabled: false, connected: false, host: null, url: 'wss://app.lynshen.org/relay/v1' };
+		case 'relay_set':
+			if (op.op === 'relay_set') s.relayOn = op.enabled === true;
+			if (s.relay === 'v2') return { type: 'relay_status', enabled: s.relayOn, connected: s.relayOn, host: 'H'.repeat(22), url: 'wss://app.lynshen.org/relay/v1', signed_in: true, refused: false, mode: s.relayOn ? 'v2' : 'off', user: 'u-chad' };
+			if (s.relay === 'signedout') return { type: 'relay_status', enabled: s.relayOn, connected: s.relayOn, host: 'H'.repeat(22), url: 'wss://app.lynshen.org/relay/v1', signed_in: false, refused: false, mode: s.relayOn ? 'v1' : 'off', user: null };
+			return { type: 'relay_status', enabled: s.relayOn, connected: s.relayOn, host: s.relayOn ? 'H'.repeat(22) : null, url: 'wss://app.lynshen.org/relay/v1' };
+		case 'pair_link':
+			return { type: 'pair_link', code: 'K7QXA2B9', expires_at: Date.now() + 5 * 60_000, link: `https://app.lynshen.org/remote#pair=${'H'.repeat(22)}.${'S'.repeat(43)}.K7QXA2B9` };
+		case 'connect_requests':
+			if (!s.relay) return { type: 'error', message: 'unknown op connect_requests' };
+			return { type: 'connect_requests', requests: s.connectRequests };
+		case 'connect_decide': {
+			s.decided.push({ request: op.request, allow: op.allow });
+			s.connectRequests = s.connectRequests.filter((r) => r.request !== op.request);
+			setTimeout(() => s.emit({ type: 'connect_request_closed', request: op.request, outcome: op.allow ? 'allowed' : 'denied' }), 20);
+			return { type: 'connect_decided', request: op.request };
+		}
 		case 'device_confirm':
 			s.pendingPhone = false;
 			return { type: 'device_confirmed', device: op.device };
@@ -433,7 +459,7 @@ function toolProviderReply(op: Frame): Frame {
 function reply(op: Frame): Frame | null {
 	const s = daemonState;
 	if (String(op.op).startsWith('android_use_')) return androidReply(op);
-	if (String(op.op).startsWith('connector_') || ['device_revoke', 'device_list', 'relay_status', 'device_confirm', 'device_scopes', 'pair_cancel', 'pair_start'].includes(op.op)) return connectorReply(op);
+	if (String(op.op).startsWith('connector_') || ['device_revoke', 'device_list', 'relay_status', 'relay_set', 'pair_link', 'connect_requests', 'connect_decide', 'device_confirm', 'device_scopes', 'pair_cancel', 'pair_start'].includes(op.op)) return connectorReply(op);
 	const list = () => (op.backend === 'claude' ? s.claude : s.list);
 	if (s.old && String(op.op).startsWith('skill') && op.op !== 'skills_catalog' && op.op !== 'skill_install')
 		return { type: 'error', message: `${op.op} requires session` };
@@ -574,6 +600,7 @@ export function installFakeDaemon() {
 			const hello = { type: 'hello', protocol: 2, version: 'test', ...(features !== null ? { features: features.split(',').filter(Boolean) } : {}) };
 			setTimeout(() => this.onmessage?.({ data: JSON.stringify(hello) }));
 			termEmit = (frame) => this.onmessage?.({ data: JSON.stringify(frame) });
+			daemonState.emit = (frame) => this.onmessage?.({ data: JSON.stringify(frame) });
 		}
 		send(text: string) {
 			const op = JSON.parse(text) as Frame;
