@@ -137,6 +137,7 @@ export const ROWS: SearchRow[] = [
 	{ section: 'agents', id: 'shell-command', titleKey: 'settings.shells.command', descKey: 'settings.shells.commandHint' },
 	{ section: 'agents', id: 'terminal-shell', titleKey: 'settings.shells.terminal', descKey: 'settings.shells.terminalHint' },
 	{ section: 'agents', id: 'backend-list', titleKey: 'settings.section.agents' },
+	{ section: 'agents', id: 'providers-claude', titleKey: 'settings.toolProviders.title' },
 	{ section: 'agents', id: 'dependencies', titleKey: 'setup.deps.title' },
 	{ section: 'sandbox', id: 'sandbox-mode', titleKey: 'settings.sandbox.modeTitle', descKey: 'settings.sandbox.modeHint.workspace-write' },
 	{ section: 'sandbox', id: 'sandbox-network', titleKey: 'settings.sandbox.network', descKey: 'settings.sandbox.networkHint' },
