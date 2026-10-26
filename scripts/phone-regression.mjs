@@ -429,6 +429,9 @@ try {
 					}, Q);
 				await page.goto(`${base}?remoteHost&open=s-docs&features=queue,files`);
 				await expect(page.locator('.session .title')).toHaveText('翻译文档', { timeout: 30000 });
+				// The snapshot of the watch first: the page drops a session's frames
+				// until its session_open is answered, so frames sent before are lost.
+				await expect(page.locator('.row.user')).toHaveCount(1);
 				await queue();
 				const tray = page.locator('.session .composer .qtray');
 				const row = (i) => tray.locator('.qrow[data-qrow]').nth(i);
@@ -464,6 +467,7 @@ try {
 				await expect.poll(async () => (await qops()).filter((o) => o.op === 'user_message').at(-1)).toEqual({ op: 'user_message', content: '就这条', files: ['/Users/me/code/docs/README.md'] });
 				await page.goto(`${base}?remoteHost&open=s-docs`);
 				await expect(page.locator('.session .title')).toHaveText('翻译文档', { timeout: 30000 });
+				await expect(page.locator('.row.user')).toHaveCount(1);
 				await queue();
 				await expect(tray.locator('.qrow[data-qrow]')).toHaveCount(3);
 				await expect(tray.locator('.qrow button')).toHaveCount(3);
