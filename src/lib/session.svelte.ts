@@ -14,7 +14,6 @@ import { buildBackendOpts, defaultBackendFor } from './backends/settings';
 import { agentEnv, isOpencodeAgent } from './backends/acp-agents';
 import { checkOpencode, gatewayByDefault, opencodeAgent } from './backends/opencode';
 import { toEngineMode } from './approval';
-import { engineHas } from './engineVersion.svelte';
 import { getLocale, t } from '$lib/i18n';
 import { prefs } from './prefs.svelte';
 import { workMode } from './requirements.svelte';
