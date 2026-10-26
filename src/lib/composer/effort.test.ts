@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { setLocale } from '$lib/i18n';
 import { defaultEffort, effortLabel, stepStop, stopAt } from './effort';
 
 describe('effort helpers', () => {
@@ -8,12 +9,20 @@ describe('effort helpers', () => {
 		expect(defaultEffort(['low', 'medium', 'high'])).toBe('medium');
 		expect(defaultEffort(['low', 'high'])).toBe('low');
 		expect(defaultEffort([])).toBe('');
+		// An ACP agent's unset value: none of the tiers.
+		expect(defaultEffort(['low', 'medium', 'high', 'max'], 'default')).toBe('default');
+		expect(defaultEffort(['minimal', 'low', 'high'], 'auto')).toBe('auto');
 	});
 
 	it('labels efforts', () => {
 		expect(effortLabel('high')).toBe('High');
 		expect(effortLabel('xhigh')).toBe('XHigh');
+		setLocale('en');
 		expect(effortLabel('default')).toBe('Default');
+		expect(effortLabel('auto')).toBe('Auto');
+		setLocale('zh');
+		expect(effortLabel('default')).toBe('默认');
+		expect(effortLabel('auto')).toBe('自动');
 		expect(effortLabel('')).toBe('');
 	});
 

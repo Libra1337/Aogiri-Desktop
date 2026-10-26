@@ -73,4 +73,12 @@ describe('turnFolds', () => {
 		const [fold] = turnFolds([user('go'), tool('bash'), empty, reply('done', stats(3))], shows, false);
 		expect(fold!.members).toHaveLength(1);
 	});
+
+	it('leaves a turn the reader stopped open, and keeps the steps after the reply out of the fold', () => {
+		const stoppedTurn = [user('go'), tool('bash'), reply('half', stats(900)), { kind: 'system', text: '', flow: { type: 'interrupted' } } as Msg];
+		expect(turnFolds(stoppedTurn, all, false)).toEqual([]);
+		const done = { kind: 'system', text: 'npm run dev 已完成', flow: { type: 'task' } } as Msg;
+		const [fold] = turnFolds([user('go'), tool('bash'), reply('done', stats(900)), done], all, false);
+		expect(fold!.members).toEqual([stoppedTurn[1]]);
+	});
 });

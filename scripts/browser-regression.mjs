@@ -2311,25 +2311,35 @@ try {
   assert.deepEqual([await fill('body'), await fill('.sidebar'), await fill('.composer')], ['rgb(246, 245, 242)', 'rgb(240, 239, 235)', 'rgb(251, 250, 248)']);
   await light.close();
   // The work status line: one sign, the step in words (a verb and what it
-  // acts on), how long it has taken, and › to the running call. A command
-  // keeps its name after lynshen's updates replace "started: <command>"; a
-  // run of calls opens, and a card the reader folded opens again.
+  // acts on), how long it has taken, › to the running call, and the whole
+  // turn's time at its end (B07 D07). A command keeps its name after
+  // lynshen's updates replace "started: <command>"; a run of calls opens,
+  // and a card the reader folded opens again. A running call is folded,
+  // the running light over its words (D02).
   const work = await browser.newPage();
   work.on('pageerror', e => errors.push(e.message));
   const statusLine = () => work.evaluate(() => {
     const el = document.querySelector('.ind');
-    return el && {text: el.textContent.replace(/\s+/g, ' ').trim(), signs: el.querySelectorAll('.sign').length, spin: getComputedStyle(el.querySelector('.sign')).animationName, more: !!el.querySelector('.more')};
+    if (!el) return null;
+    const turn = el.querySelector('.turn');
+    const step = [...el.childNodes].filter((n) => n !== turn).map((n) => n.textContent).join(' ');
+    return {text: step.replace(/\s+/g, ' ').trim(), turn: turn?.textContent.trim() ?? null, signs: el.querySelectorAll('.sign').length, spin: getComputedStyle(el.querySelector('.sign')).animationName, more: !!el.querySelector('.more')};
   });
   await work.goto(base + '?shell&work=group');
   await expect(work.locator('.ind')).toBeVisible({timeout:30000});
   const workLine = await statusLine();
   assert.match(workLine.text, /^正在运行 pnpm vitest run src\/lib\/cache\.test\.ts · \d+s$/);
+  assert.match(workLine.turn, /^\d+s$/);
   assert.deepEqual([workLine.signs, workLine.spin, workLine.more], [1, 'spin', true]);
   await expect(work.locator('.tgroup.open')).toHaveCount(0);
+  // The run's line: its count, latest call, a light while a call runs.
+  await expect(work.locator('.tgroup .veil')).toHaveCount(1);
   await work.locator('.ind .more').click();
   await expect(work.locator('.tgroup.open')).toHaveCount(1);
   const runningCard = work.locator('.tool').last();
   await expect(runningCard.locator('.collapse.open')).toHaveCount(1);
+  await expect(runningCard.locator('.head .veil')).toHaveCount(1);
+  await expect(runningCard.locator('.head .took')).toHaveText(/^\d+\.\ds$/);
   await runningCard.locator('.head').click();
   await expect(runningCard.locator('.collapse')).toHaveCount(0);
   await work.locator('.ind .more').click();
@@ -3847,20 +3857,28 @@ try {
     await expect(menu).toHaveCount(0);
     assert.equal(await fp.evaluate(() => window.__calls.filter((c) => c.command === 'read_text' || c.command === 'open_in_editor').length), 0);
     await fp.keyboard.press('Escape');
-    // The title bar: the editor button and its caret.
-    const button = fp.getByRole('button', {name: '在 VS Code 中打开'});
+    // The title bar's project menu (B09 D16; not a repository here): the
+    // folder, then the editor and its caret.
+    const button = fp.locator('.titlebar').getByRole('button', {name: '项目', exact: true});
     await expect(button).toBeVisible();
     const box = await button.boundingBox();
     assert.equal(Math.round(box.height), 28);
-    await fp.getByRole('button', {name: '选择编辑器'}).click();
-    const pick = fp.locator('.oie .pm');
+    await expect(button).toContainText('lynshen-desktop');
+    await button.click();
+    const pm = fp.locator('.anchor > .menu');
+    await expect(pm.getByRole('menuitem', {name: '在 VS Code 中打开'})).toBeVisible();
+    await pm.getByRole('button', {name: '选择编辑器'}).click();
+    const pick = pm.locator('.sub');
     await expect(pick.locator('.pop-label')).toHaveText(['VS Code', 'Zed', 'Xcode']);
     await expect(pick.getByRole('menuitemradio', {name: 'VS Code'})).toHaveAttribute('aria-checked', 'true');
     await fp.evaluate(() => (window.__calls.length = 0));
     await pick.getByRole('menuitemradio', {name: 'Zed'}).click();
     assert.deepEqual(await fp.evaluate(() => window.__calls.find((c) => c.command === 'open_in_editor')?.args), {id: 'zed', path: '/Users/me/code/lynshen-desktop', line: null, col: null, root: null});
     // Zed is the one a click opens now, here and in the file menu.
-    await expect(fp.getByRole('button', {name: '在 Zed 中打开'})).toBeVisible();
+    await button.click();
+    await expect(pm.getByRole('menuitem', {name: '在 Zed 中打开'})).toBeVisible();
+    await expect(pm.locator('.sep')).toHaveCount(0);
+    await fp.keyboard.press('Escape');
     await link('src/lib/ChatPane.svelte').click({button: 'right'});
     await expect(menu.getByRole('menuitem', {name: '在 Zed 中打开'})).toBeVisible();
     await fp.keyboard.press('Escape');
@@ -3870,7 +3888,9 @@ try {
     await expect(link('docs/old-width.md')).toHaveClass(/dead/);
     await link('src/lib/chatWidth.ts').click({button: 'right'});
     await expect(menu.getByRole('menuitem')).toHaveText(['打开', '添加为附件', '复制绝对路径', '复制相对路径', '复制文件名', reveal]);
-    await expect(fp.locator('.oie')).toHaveCount(0);
+    await fp.keyboard.press('Escape');
+    await fp.locator('.titlebar').getByRole('button', {name: '项目', exact: true}).click();
+    await expect(fp.locator('.anchor > .menu .pop-row')).toHaveCount(1);
     await fp.close();
   }
   // Output speed (?shell): a turn whose output streamed for 2 s in two
@@ -4407,6 +4427,425 @@ try {
     await shot(page, 'desk-drop-anywhere');
     await page.close();
   }
+  // B07: a run of edits says what changed, its counts rolling while an edit
+  // streams; a finished turn ends with its deliverables (an image and a
+  // video shown), a proposed task (创建 → the task dialog filled in, saved
+  // with the proposal as its origin → 已创建; 不用了 on a daemon without
+  // origin) and the conversation it started; dividers where the reader
+  // stopped and the model changed; a dev server's corner notice and its
+  // 打开; Settings → 应用工具 on a new and an old daemon.
+  {
+    const SHOTS = process.env.B07_SHOTS;
+    const shot = async (p, name) => { if (SHOTS) await p.screenshot({path: `${SHOTS}/${name}.png`}); };
+    const page = await browser.newPage({viewport: {width: 1280, height: 860}});
+    page.setDefaultTimeout(30000);
+    page.on('pageerror', (e) => errors.push(e.message));
+
+    await page.goto(base + '?shell&work=edits');
+    const run = page.locator('.tgroup').last();
+    await expect(run).toBeVisible({timeout: 60000});
+    await expect(run.locator('.tg-count')).toHaveText('已编辑 3 个文件');
+    await expect(run.locator('.tg-names')).toHaveText('cache.ts, session.svelte.ts, cache.test.ts');
+    await expect(run.locator('.dstat')).toHaveText('+52−7');
+    await page.evaluate(() => window.__grow(48));
+    await expect(run.locator('.dstat')).toHaveText('+88−7');
+    await run.click();
+    // The thinking that led to each call, folded, in order.
+    await expect(page.locator('.tg-list > *')).toHaveCount(5);
+    await expect(page.locator('.tg-list .reason')).toHaveCount(2);
+    await shot(page, 'b07-edits-run');
+
+    await page.goto(base + '?shell&deliver');
+    await expect(page.locator('.deliver .card')).toHaveCount(3, {timeout: 60000});
+    await expect(page.locator('.deliver img')).toHaveCount(1);
+    await expect(page.locator('.deliver video')).toHaveCount(1);
+    // No tool rows for the app tools.
+    await expect(page.locator('.tool .verb', {hasText: '展示了交付物'})).toHaveCount(0);
+    await expect(page.locator('.children .row')).toContainText('把报告翻成英文');
+    await expect(page.locator('.children .state')).toHaveText('已回复');
+    await page.locator('.proposal').getByRole('button', {name: '创建'}).click();
+    await expect(page.getByRole('textbox', {name: '名称'})).toHaveValue('更新月活报告');
+    await page.getByRole('dialog').getByRole('button', {name: '保存'}).click();
+    await expect(page.locator('.proposal')).toContainText('已创建');
+    const saved = await page.evaluate(() => window.__ops.filter((o) => o.op === 'schedule_save').map((o) => o.schedule));
+    assert.deepEqual(saved.map((x) => [x.agent, x.origin, x.repeat, x.time]), [['ops', 'prop-q3', 'weekdays', '09:00']]);
+    await page.locator('.proposal').scrollIntoViewIfNeeded();
+    await shot(page, 'b07-turn-end');
+    // This device keeps the choice (a daemon whose tasks carry no origin).
+    await page.goto(base + '?shell&deliver=old');
+    await expect(page.locator('.proposal')).toContainText('已创建', {timeout: 60000});
+    await page.evaluate(() => localStorage.removeItem('lynshen-proposals'));
+    await page.goto(base + '?shell&deliver=old');
+    await expect(page.locator('.proposal')).toBeVisible({timeout: 60000});
+    await page.locator('.proposal').getByRole('button', {name: '不用了'}).click();
+    await expect(page.locator('.proposal')).toContainText('未采用');
+
+    await page.goto(base + '?shell&work=group');
+    await expect(page.locator('.ind .turn')).toBeVisible({timeout: 60000});
+    await page.evaluate(() => {
+      const c = window.__shellChat;
+      c.stopAsked = true;
+      c.handle({type: 'status', message: 'interrupted'});
+      c.handle({type: 'status', message: 'ready'});
+      c.handle({type: 'model_status', model: 'gpt-5.5', state: 'idle'});
+      c.handle({type: 'model_status', model: 'claude-opus-5-5', model_label: 'Opus 5.5', state: 'idle'});
+    });
+    await expect(page.locator('.flow')).toHaveText(['你停止了这一轮', '已换成 Opus 5.5']);
+    await expect(page.locator('.ind')).toHaveCount(0);
+    await shot(page, 'b07-dividers');
+
+    await page.goto(base + '?shell&devserver');
+    const notice = page.locator('.notices .notice');
+    await expect(notice).toContainText('开发服务器已启动', {timeout: 60000});
+    await expect(notice.locator('.detail')).toHaveText('localhost:5173 · 窗口磨砂默认关闭');
+    // It keeps clear of the composer.
+    const [nb, cb] = await Promise.all([notice.boundingBox(), page.locator('.chatpane .bottom').boundingBox()]);
+    assert.ok(nb.y + nb.height <= cb.y + 1, 'the notice sits above the composer');
+    await notice.getByRole('button', {name: '打开'}).click();
+    await expect(notice).toHaveCount(0);
+    await page.evaluate(() => window.__devServers({type: 'dev_servers', servers: []}));
+
+    for (const old of [false, true]) {
+      await page.goto(base + '?shell&settings=apptools' + (old ? '&oldEngine' : ''));
+      await expect(page.locator('#set-team-messages')).toBeVisible({timeout: 60000});
+      await expect(page.locator('#set-app-tools-present')).toHaveCount(old ? 0 : 1);
+      if (!old) {
+        await page.locator('#set-app-tools-schedule [role=switch]').click();
+        await expect.poll(() => page.evaluate(() => window.__ops.filter((o) => o.op === 'app_tools_set').map((o) => o.propose_schedule))).toEqual([false]);
+      }
+    }
+    await page.close();
+  }
+  // B09: a new conversation asks for its project first (⌘N, ⌘1–9, the home
+  // page's start box), an empty one centres its composer (D12); forks after
+  // a turn, beside the original or in a new worktree (made from the turn's
+  // checkpoint, opened as a project, named in the navigator), the fork's
+  // strip and 带回结论, a new conversation started in a new worktree (D15);
+  // the title bar's project menu (D16); a file a turn changed opens with that
+  // turn's changes, 对比 · 本轮 / HEAD (D20).
+  {
+    const SHOTS = process.env.B09_SHOTS;
+    const shot = async (p, name) => { if (SHOTS) await p.screenshot({path: `${SHOTS}/${name}.png`}); };
+    {
+    const page = await browser.newPage({viewport: {width: 1280, height: 860}});
+    page.setDefaultTimeout(30000);
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(base + '?shell&pick');
+    await expect(page.locator('.composer')).toBeVisible({timeout: 60000});
+    await page.keyboard.press('ControlOrMeta+n');
+    const dialog = page.getByRole('dialog', {name: '新对话的项目'});
+    await expect(dialog.locator('.row .label')).toHaveText(['lynshen-desktop', 'LynShen-CLI', '不属于项目', '打开文件夹…']);
+    await expect(dialog.locator('.row.sel .label')).toHaveText('lynshen-desktop');
+    await expect(dialog.locator('.row .keys')).toHaveText((await page.evaluate(() => /Macintosh|Mac OS X/.test(navigator.userAgent))) ? ['⌘1', '⌘2'] : ['Ctrl+1', 'Ctrl+2']);
+    await page.waitForTimeout(300);
+    await shot(page, 'd12-project-pick');
+    await page.keyboard.press('ControlOrMeta+2');
+    await expect(dialog).toHaveCount(0);
+    await page.keyboard.press('ControlOrMeta+n');
+    await page.keyboard.type('cli');
+    await expect(dialog.locator('.row .label')).toHaveText(['LynShen-CLI', '不属于项目', '打开文件夹…']);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    assert.deepEqual(await page.evaluate(() => window.__opened), ['pick:LynShen-CLI', 'pick:']);
+    // The home page: where a conversation starts.
+    await page.goto(base + '?shell&home');
+    await page.locator('.home-page textarea').fill('看一下构建');
+    await page.locator('.place').click();
+    await page.locator('.pm').getByRole('menuitemradio', {name: 'LynShen-CLI'}).or(page.locator('.pm').getByRole('menuitem', {name: 'LynShen-CLI'})).first().click();
+    await expect(page.locator('.place .pname')).toHaveText('LynShen-CLI');
+    await page.waitForTimeout(300);
+    await shot(page, 'd12-home-place');
+    await page.keyboard.press('Enter');
+    assert.deepEqual(await page.evaluate(() => window.__opened), ['start:LynShen-CLI:看一下构建']);
+    // An empty conversation: the composer in the middle of the pane.
+    await page.goto(base + '?shell&empty');
+    await expect(page.locator('.welcome.fresh')).toBeVisible({timeout: 60000});
+    const [pane, comp] = await Promise.all([page.locator('.chatpane').boundingBox(), page.locator('.composer').boundingBox()]);
+    assert.ok(Math.abs(comp.y - (pane.y + pane.height / 2)) < pane.height * 0.12, `composer top ${comp.y} vs middle ${pane.y + pane.height / 2}`);
+    await shot(page, 'd12-empty-centred');
+    await page.close();
+    }
+    {
+    const page = await browser.newPage({viewport: {width: 1280, height: 860}});
+    page.setDefaultTimeout(30000);
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(base + '?shell&repo&editors');
+    const button = page.locator('.titlebar').getByRole('button', {name: '项目', exact: true});
+    await expect(button).toContainText('feat/fork', {timeout: 60000});
+    await expect(button.locator('.dstat')).toHaveText('+12−3');
+    await button.click();
+    const pm = page.locator('.anchor > .menu');
+    await expect(pm.locator('.pop-label')).toHaveText(['lynshen-desktop', '在 VS Code 中打开', 'feat/fork', '提交…', '推送 2 个提交', '拉取 1 个提交', '改动']);
+    await expect(pm.locator('.pop-hint').first()).toHaveText('↑2 ↓1');
+    await page.waitForTimeout(300);
+    await shot(page, 'd16-project-menu');
+    await pm.getByRole('menuitem', {name: 'feat/fork'}).click();
+    await expect(page.locator('.bm.down .pop-label')).toHaveText(['main', 'feat/fork', 'fix/scroll', '新建并切换到分支…']);
+    await page.waitForTimeout(300);
+    await shot(page, 'd16-branch');
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => (window.__git.length = 0));
+    await pm.getByRole('menuitem', {name: '拉取 1 个提交'}).click();
+    await expect.poll(() => page.evaluate(() => window.__git.includes('pull --ff-only'))).toBe(true);
+    await pm.getByRole('menuitem', {name: '提交…'}).click();
+    assert.deepEqual(await page.evaluate(() => window.__opened), ['git']);
+    await page.close();
+    }
+    {
+    const page = await browser.newPage({viewport: {width: 1280, height: 860}});
+    page.setDefaultTimeout(30000);
+    page.on('pageerror', (e) => errors.push(e.message));
+    // A daemon without `fork`: no fork button.
+    await page.goto(base + '?shell&fork');
+    await expect(page.locator('.answer .foot').last()).toBeVisible({timeout: 60000});
+    await page.waitForTimeout(400);
+    await expect(page.locator('.tfork')).toHaveCount(0);
+    // With it: after each finished turn.
+    await page.goto(base + '?shell&fork&repo&features=fork');
+    await expect(page.locator('.tfork')).toHaveCount(2, {timeout: 60000});
+    await page.locator('.mwrap').filter({has: page.locator('.tfork')}).first().hover();
+    await page.locator('.tfork').first().click();
+    const dialog = page.getByRole('dialog', {name: '从这一轮分叉'});
+    await expect(dialog).toContainText('新对话带着前 1 轮继续');
+    await expect(dialog.locator('.choice .name')).toHaveText(['原目录', '新 worktree']);
+    await expect(dialog.locator('.choice').nth(1)).toContainText('新建分支 fork/');
+    await dialog.locator('.choice').nth(1).click();
+    await page.waitForTimeout(300);
+    await shot(page, 'd15-fork-dialog');
+    await page.evaluate(() => (window.__calls.length = 0));
+    await dialog.getByRole('button', {name: '分叉'}).click();
+    await expect(dialog).toHaveCount(0);
+    const call = await page.evaluate(() => window.__calls.find((c) => c.command === 'git_fork_worktree')?.args);
+    assert.equal(call.repo, '/Users/me/code/lynshen-desktop');
+    assert.match(call.path, /^\/Users\/me\/code\/\.lynshen-worktrees\/lynshen-desktop\/fork-[a-z0-9-]+$/);
+    assert.match(call.branch, /^fork\/[a-z0-9-]+$/);
+    assert.equal(call.turn, 1);
+    // The fork is a project of its own beside the original, its row marked.
+    const tree = await page.evaluate(() => { const s = window.__shellStore; const p = s.projects.find((x) => x.worktree); return {name: p.name, branch: p.worktree.branch, sessions: p.sessions.map((x) => [x.forkedFrom, x.chat.title])}; });
+    assert.equal(tree.branch, call.branch);
+    assert.deepEqual(tree.sessions, [[{sid: 'conv-main', title: '窗口磨砂默认关闭', turns: 1}, '窗口磨砂默认关闭（分叉）']]);
+    await expect(page.locator('.sidebar .fork-mark').first()).toHaveAttribute('title', '分叉自「窗口磨砂默认关闭」');
+    const created = await page.evaluate(() => window.__ops.filter((o) => o.op === 'session_create').map((o) => [o.cwd, o.engine, o.options]));
+    assert.deepEqual(created, [[call.path, 'lynshen', {fork_from: 'conv-main', fork_turns: 1, fork_cwd: '/Users/me/code/lynshen-desktop'}]]);
+    await shot(page, 'd15-forked-list');
+    // 原目录: beside the original, no worktree.
+    await page.locator('.tfork').last().click();
+    await page.getByRole('dialog', {name: '从这一轮分叉'}).getByRole('button', {name: '分叉'}).click();
+    const beside = await page.evaluate(() => window.__ops.filter((o) => o.op === 'session_create').at(-1));
+    assert.deepEqual([beside.cwd, beside.options], ['/Users/me/code/lynshen-desktop', {fork_from: 'conv-main', fork_turns: 2}]);
+    // The fork's strip, and 带回结论 into the original's composer.
+    await page.goto(base + '?shell&forked');
+    const bar = page.locator('.forkbar');
+    await expect(bar).toContainText('分叉自「浅色主题调色」', {timeout: 60000});
+    await shot(page, 'd15-fork-strip');
+    await bar.getByRole('button', {name: '带回结论'}).click();
+    await expect.poll(() => page.evaluate(() => { const s = window.__shellStore; return s.allSessions.find((x) => x.chat.sessionId === 'conv-src').chat.pendingFill; })).toContain('这条来自一个分叉');
+    const asked = await page.evaluate(() => window.__calls.find((c) => c.command === 'generate_text')?.args);
+    assert.match(asked.prompt, /^User: 好，就按这个做。/);
+    assert.equal(await page.evaluate(() => window.__shellStore.active.chat.sessionId), 'conv-src');
+    // A new conversation in a repository says where it works: 当前目录, or a new worktree.
+    await page.goto(base + '?shell&empty&repo');
+    const where = page.getByRole('button', {name: '在哪里工作'});
+    await expect(where).toHaveText(/当前目录/, {timeout: 60000});
+    await where.click();
+    await expect(page.locator('.pm .pop-label')).toHaveText(['当前目录', '新 worktree · 基于 feat/fork', '新 worktree · 基于 main', '新 worktree · 基于 fix/scroll']);
+    await page.locator('.pm .pop-row').nth(2).click();
+    await expect(where).toHaveText(/新 worktree · 基于 main/);
+    await page.waitForTimeout(300);
+    await where.click();
+    await page.waitForTimeout(300);
+    await shot(page, 'd15-new-in-worktree');
+    await page.keyboard.press('Escape');
+    assert.deepEqual(await page.evaluate(() => window.__shellStore.active.draftWorktree), {base: 'main'});
+    await page.close();
+    }
+    {
+    const page = await browser.newPage({viewport: {width: 1400, height: 860}});
+    page.setDefaultTimeout(30000);
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(base + '?shell&openfile&turnedit&repo');
+    const pill = page.locator('.answer .change').last();
+    await expect(pill).toBeVisible({timeout: 60000});
+    await pill.click();
+    await page.locator('.changed .cfile', {hasText: 'cache.ts'}).click();
+    const ed = page.locator('.ed-pane');
+    await expect(ed.locator('.cmp-opt')).toHaveText(['本轮', 'HEAD']);
+    await expect(ed.locator('.cmp-opt.on')).toHaveText('本轮');
+    // The turn's changes: the line it replaced stays above the new one.
+    await expect(ed.locator('.cm-deletedChunk').first()).toHaveText('export const five = 5;');
+    await expect(ed.locator('.cm-changedLine').first()).toContainText('export const line5 = 5;');
+    await expect(ed.locator('.cm-changedLine')).toHaveCount(2);
+    await page.waitForTimeout(300);
+    await shot(page, 'd20-turn-changes');
+    // HEAD: every line differs.
+    await ed.locator('.cmp-opt', {hasText: 'HEAD'}).click();
+    await expect(ed.locator('.cmp-opt.on')).toHaveText('HEAD');
+    await expect(ed.locator('.cm-deletedChunk').first()).toContainText('export const v1 = 1;');
+    // Neither: the plain file with the HEAD dots.
+    await ed.locator('.cmp-opt.on').click();
+    await expect(ed.locator('.cmp-opt.on')).toHaveCount(0);
+    await expect(ed.locator('.cm-deletedChunk')).toHaveCount(0);
+    await expect(ed.locator('.cm-diff-dot').first()).toBeVisible();
+    // An edit that no longer matches: compared with HEAD, and a notice says so.
+    await page.goto(base + '?shell&openfile&turnedit=lost&repo');
+    await page.locator('.answer .change').last().click();
+    await page.locator('.changed .cfile', {hasText: 'cache.ts'}).click();
+    await expect(page.locator('.ed-pane .cmp-opt')).toHaveText(['HEAD']);
+    await expect(page.locator('.ed-pane .cmp-opt.on')).toHaveText('HEAD');
+    await expect(page.locator('.toast')).toContainText('推算不出这一轮开始前的内容');
+    await page.close();
+    }
+  }
+  // B11: Claude Code / Codex custom providers in Settings (add with a masked
+  // key and 测试连接, the privacy copy, default, delete), and on a daemon
+  // without them a note; the built-in ACP agents in Settings, the start
+  // picker and the model menu (capabilities, install, Pi asking first); an
+  // ACP session's settings and unset effort; a conversation in its TUI on
+  // another client viewed here, closing the view only detaching.
+  {
+    const SHOTS = process.env.B11_SHOTS;
+    const shot = async (p, name, loc) => { if (SHOTS) await (loc ?? p).screenshot({path: `${SHOTS}/${name}.png`}); };
+    const page = await browser.newPage({viewport: {width: 1280, height: 860}});
+    page.setDefaultTimeout(30000);
+    page.on('pageerror', (e) => errors.push(e.message));
+    const B11 = 'features=queue,files,tool_providers,acp_presets,term_attach';
+    const dops = () => page.evaluate(() => window.__ops.map((o) => JSON.parse(JSON.stringify({...o, id: undefined}))));
+
+    // D34: add a provider to Claude Code.
+    await page.goto(base + `?shell&settings=agents&${B11}`);
+    const claude = page.locator('#set-providers-claude');
+    await expect(claude).toContainText('不经过 LynShen 账号', {timeout: 60000});
+    await expect(claude).toContainText('不计入 LynShen 的用量和计费');
+    await claude.getByRole('button', {name: '添加提供商'}).click();
+    const dialog = page.getByRole('dialog', {name: '添加提供商 · Claude Code'});
+    await expect(dialog).toContainText('接口格式：Anthropic Messages');
+    const fields = dialog.locator('input');
+    await fields.nth(0).fill('https://relay.example.com/v1');
+    // A wrong key: the test says why.
+    await fields.nth(1).fill('sk-bad');
+    await dialog.getByRole('button', {name: '测试连接'}).click();
+    await expect(dialog).toContainText('连接失败：https://relay.example.com/v1/models: 401 Unauthorized');
+    await fields.nth(1).fill('sk-good');
+    assert.equal(await fields.nth(1).getAttribute('type'), 'password');
+    await dialog.getByRole('button', {name: '测试连接'}).click();
+    await expect(dialog).toContainText('连接成功，列出 3 个模型');
+    await expect(dialog).toContainText('另有 2 个模型不是 Anthropic Messages 格式');
+    await dialog.getByRole('option', {name: /claude-opus-5/}).click();
+    await dialog.getByRole('option', {name: /claude-sonnet-5/}).click();
+    await fields.nth(2).fill('Relay');
+    await shot(page, 'd34-provider-editor', dialog);
+    await dialog.getByRole('button', {name: '保存'}).click();
+    await expect(dialog).toHaveCount(0);
+    const saved = (await dops()).filter((o) => o.op === 'tool_provider_save').map((o) => o.provider);
+    assert.deepEqual(saved, [{id: 'relay', name: 'Relay', format: 'anthropic', base_url: 'https://relay.example.com/v1', key: 'sk-good', models: ['claude-opus-5', 'claude-sonnet-5'], model: 'claude-opus-5'}]);
+    // The row: no key, only that one is saved.
+    await expect(claude.locator('.prow')).toContainText('relay.example.com · 2 个模型 · claude-opus-5 · ••••••••');
+    assert.ok(!(await claude.innerText()).includes('sk-good'), 'the key is never shown');
+    await claude.locator('.defrow .trigger').click();
+    await claude.locator('.defrow .opt', {hasText: 'Relay'}).click();
+    await expect.poll(async () => (await dops()).filter((o) => o.op === 'tool_provider_select').map((o) => o.provider_id)).toEqual(['relay']);
+    await expect(claude.locator('.ptag')).toHaveText('新对话默认');
+    await shot(page, 'd34-providers', claude);
+    // Edit keeps the key unless one is typed.
+    await claude.locator('.pmain').click();
+    const edit = page.getByRole('dialog', {name: '编辑「Relay」'});
+    await expect(edit.locator('input').nth(1)).toHaveAttribute('placeholder', '已保存；留空则保留');
+    await edit.getByRole('button', {name: '取消'}).click();
+    await expect(edit).toHaveCount(0);
+    // Delete asks first.
+    await claude.getByRole('button', {name: '删除'}).click();
+    const ask = page.getByRole('dialog', {name: '删除提供商「Relay」？'});
+    await expect(ask).toContainText('保存的密钥会一起删除');
+    await ask.getByRole('button', {name: '删除'}).click();
+    await expect(claude.locator('.prow')).toHaveCount(0);
+    // An older daemon: a note, nothing asked.
+    await page.goto(base + '?shell&settings=agents&features=queue,files');
+    await expect(page.locator('#set-providers-claude')).toContainText('版本较旧', {timeout: 60000});
+    assert.equal((await dops()).filter((o) => String(o.op).startsWith('tool_provider')).length, 0);
+
+    // D37: Settings → 外部智能体 lists the built-in agents.
+    await page.goto(base + `?shell&settings=acp&${B11}`);
+    const builtins = page.locator('#set-acp-builtins');
+    await expect(builtins.locator('.arow')).toHaveCount(3, {timeout: 60000});
+    await expect(builtins.locator('[data-agent=opencode]')).toContainText('1.19.2');
+    await expect(builtins.locator('[data-agent=opencode] .cap')).toHaveText(['运行工具前询问', '可用 LynShen 网关', '有 TUI']);
+    await expect(builtins.locator('[data-agent=omp]')).toContainText('未安装');
+    await expect(builtins.locator('[data-agent=omp] code')).toHaveText('bun install -g @oh-my-pi/pi-coding-agent');
+    await expect(builtins.locator('[data-agent=pi] .cap.warn')).toHaveText('无审批，只能全自动');
+    // The registry's one-click OpenCode is not offered: the daemon runs it.
+    await expect(page.locator('.arow.preset')).toHaveCount(0);
+    await shot(page, 'd37-settings-builtins', builtins);
+    // An older daemon: a note, and the one-click OpenCode as before.
+    await page.goto(base + '?shell&settings=acp&features=queue,files');
+    await expect(page.locator('#set-acp-builtins')).toContainText('版本较旧', {timeout: 60000});
+    assert.equal((await dops()).filter((o) => o.op === 'acp_presets').length, 0);
+
+    // D37: the start picker lists them; Pi asks first.
+    await page.goto(base + `?shell&draft&${B11}`);
+    await page.getByRole('button', {name: '后端'}).click({timeout: 60000});
+    const menu = page.getByRole('menu');
+    await expect(menu.getByRole('menuitemradio', {name: /OpenCode/})).toBeEnabled();
+    await expect(menu.getByRole('menuitemradio', {name: /oh-my-pi/})).toBeDisabled();
+    await expect(menu.getByRole('menuitemradio', {name: /oh-my-pi/})).toContainText('bun install -g @oh-my-pi/pi-coding-agent');
+    await shot(page, 'd37-start-picker');
+    await menu.getByRole('menuitemradio', {name: /^Pi/}).click();
+    const piAsk = page.getByRole('dialog', {name: '用 Pi 开始这个对话？'});
+    await expect(piAsk).toContainText('只能在全自动模式下使用');
+    await piAsk.getByRole('button', {name: '用全自动开始'}).click();
+    await expect(page.getByRole('button', {name: '后端'})).toContainText('Pi');
+    assert.equal(await page.evaluate(() => JSON.stringify(window.__shellStore.allSessions.find((x) => x.id === window.__shellSession).acpAgent)), JSON.stringify({id: 'pi', name: 'Pi', builtin: true, noApprovals: true}));
+    await expect(page.locator('.fbtn.noappr')).toHaveCount(0); // known once the agent reports it
+
+    // D28 + D37: an ACP session's own settings and its unset effort.
+    await page.goto(base + `?shell&acp=omp&${B11}`);
+    await page.locator('.fbtn.model').click({timeout: 60000});
+    const mm = page.locator('.pop.mm');
+    await expect(mm.locator('.options .olabel')).toHaveText(['模式', 'Show thinking']);
+    await expect(mm.locator('.options .seg button')).toHaveText(['默认', '计划']);
+    await mm.locator('.options .seg button', {hasText: '计划'}).click();
+    await expect.poll(() => page.evaluate(() => window.__sent.filter((o) => o.op === 'set_session_option'))).toEqual([{op: 'set_session_option', id: 'mode', value: 'plan'}]);
+    await shot(page, 'd37-acp-model-menu');
+    await page.keyboard.press('Escape');
+    await page.locator('.mm-backdrop').click({force: true}).catch(() => {});
+    await page.locator('.fbtn.effort').click();
+    await expect(page.locator('.pop.eff .evalue')).toHaveText('自动');
+    await expect(page.locator('.pop.eff .thumb')).toHaveCount(0);
+    await shot(page, 'd28-acp-effort');
+    // Pi: 无审批 beside the model button.
+    await page.goto(base + `?shell&acp=pi&${B11}`);
+    await expect(page.locator('.fbtn.noappr')).toHaveText('无审批', {timeout: 60000});
+
+    // D36: the conversation is in its TUI on another client: view it here;
+    // typing reaches it; leaving the view only detaches.
+    await page.goto(base + `?shell&tui&${B11}`);
+    // 查看 TUI, once the page watches the session.
+    const view = page.locator('.interm').getByRole('button', {name: '查看 TUI'});
+    await expect(view).toBeVisible({timeout: 60000});
+    await expect.poll(async () => {
+      if (await view.count()) await view.click();
+      return page.locator('.tui-wrap').count();
+    }).toBe(1);
+    const tui = page.locator('.tui-wrap');
+    await expect(tui.locator('.xterm')).toBeVisible({timeout: 30000});
+    await expect.poll(async () => (await dops()).some((o) => o.op === 'term_attach' && o.term === 't-7')).toBe(true);
+    let ops = await dops();
+    assert.ok(!ops.some((o) => o.op === 'session_tui'), 'never started another');
+    await tui.locator('.xterm').click();
+    await page.keyboard.type('hi');
+    await expect.poll(async () => (await dops()).filter((o) => o.op === 'term_input').map((o) => atob(o.data)).join('')).toBe('hi');
+    await page.waitForTimeout(300);
+    await shot(page, 'd36-tui-viewed');
+    await page.evaluate(() => { const s = window.__shellStore.allSessions.find((x) => x.id === window.__shellSession); s.surface = 'gui'; });
+    await expect(tui).toHaveCount(0);
+    ops = await dops();
+    assert.ok(ops.some((o) => o.op === 'term_detach' && o.term === 't-7'), 'closing the view detaches');
+    assert.ok(!ops.some((o) => o.op === 'term_close'), 'and never ends the TUI');
+    // An older daemon names no terminal: the line, and nothing to view.
+    await page.goto(base + '?shell&tui&features=queue,files');
+    await expect(page.locator('.interm')).toContainText('此对话正在 TUI 中进行', {timeout: 60000});
+    await expect(page.locator('.interm button')).toHaveCount(0);
+    await page.close();
+  }
   // B12 (upstream port): the workbench's 定时任务 page on a daemon with
   // `schedule_runs` (?scheduleBoard): each task's latest run (后台任务运行中),
   // its worktree and cost-limit tags, the run records (status, time, length,
@@ -4495,5 +4934,5 @@ try {
     await old.close();
   }
   assert.deepEqual(errors, []);
-  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel, the queue tray (into the turn after the running tool, stop and send, take back with its file, delete, reorder by key and drag, ⌘↵ and ⌘⇧↵, Claude Code\'s fixed rows, an old daemon\'s single 插入), files and videos sent as attachments (and listed in the text for an old daemon), a Read row opening its file at its line, an unfinished turn and 继续, files dragged over the window, scheduled tasks (run records opening their sessions, 后台任务运行中, a task switched off after failures with 重新开启, the worktree switch and cost limit, an older daemon without them).');
+  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel, the queue tray (into the turn after the running tool, stop and send, take back with its file, delete, reorder by key and drag, ⌘↵ and ⌘⇧↵, Claude Code\'s fixed rows, an old daemon\'s single 插入), files and videos sent as attachments (and listed in the text for an old daemon), a Read row opening its file at its line, an unfinished turn and 继续, files dragged over the window, a run of edits with rolling counts, a turn\'s deliverables, proposed task and started conversation, course dividers and the turn clock, a dev server\'s corner notice, Settings → 应用工具, a new conversation\'s project asked first (⌘N, ⌘1–9, the home page) and the centred empty composer, the title bar\'s project menu, forks (beside the original and in a worktree, an old daemon without, the navigator\'s mark, the fork\'s strip and 带回结论) and a draft\'s 新 worktree, a turn\'s changes in the editor (对比 · 本轮 / HEAD, the fallback to HEAD), Claude Code and Codex custom providers (key masked, 测试连接, default, delete, an old daemon), the built-in ACP agents (Settings, the start picker, Pi asking first, an old daemon), an ACP session\'s settings and unset effort, a TUI open on another client viewed and only detached, scheduled tasks (run records opening their sessions, 后台任务运行中, a task switched off after failures with 重新开启, the worktree switch and cost limit, an older daemon without them).');
 } finally { await browser.close(); await server.close(); }

@@ -1,6 +1,6 @@
-import type { AgentEvent } from './protocol';
+import type { AgentEvent, SessionOption, SessionToolProvider } from './protocol';
 import { loadProfile, profileKey, rememberProfile, type BackendProfile } from '$lib/backendProfile';
-import { isBackendId, type BackendId } from './backends/types';
+import { isBackendId, type BackendCaps, type BackendId } from './backends/types';
 import { caps } from './backends';
 import {
 	EDIT_TOOLS,
@@ -116,6 +116,13 @@ export interface CallTiming {
 	since: number;
 }
 
+/** A step of the conversation's course the reader should see where it
+ *  happened: a turn the reader stopped, the engine restarting or the app
+ *  reconnecting to the daemon, another model or provider, a turn picked up
+ *  again, background work done, a deferred action. (Compaction has its own
+ *  card, CompactionCard.svelte.) */
+export type Flow = { type: 'interrupted' | 'restart' | 'reconnect' | 'switch' | 'fallback' | 'retry' | 'task' | 'action' };
+
 export type Msg =
 	/** `files`: what it sent besides images, as attachments the engine echoes
 	 *  (`files`), not listed in the text (a daemon before them gets the list
@@ -174,14 +181,19 @@ export type Msg =
 			 *  same output fills it in again. */
 			released?: string;
 			/** When the call started here (live calls only): the work status
-			 *  line counts the step from it. */
+			 *  line counts the step from it, and its row shows how long it ran. */
 			startedAt?: number;
+			/** When its output came (or the turn ended without it). */
+			endedAt?: number;
 			/** What the call acts on, as the engine named it while it ran:
 			 *  lynshen's first update for a command, `started: <command>`,
 			 *  which its later updates (the output so far) replace. */
 			target?: string;
 	  }
-	| { kind: 'system'; text: string }
+	/** A note. With `flow` it marks a step of the conversation's own course
+	 *  where it happened (a divider in the transcript, FlowMarker.svelte);
+	 *  without, engine chatter for the notices strip (statusLog). */
+	| { kind: 'system'; text: string; flow?: Flow }
 	| { kind: 'error'; text: string }
 	/** The engine went away during the turn (it exited, or the connection to
 	 *  the daemon dropped): the turn ended here, unfinished (ChatState.cutShort). */
@@ -642,21 +654,23 @@ function replayMessages(items: Record<string, unknown>[]): Msg[] {
 
 function replayMessage(it: Record<string, unknown>): Msg | null {
 	const role = str(it.role);
-	if (role === 'user' && str(it.content) === AUTO_CONTINUE) return { kind: 'system', text: t('chat.autoRetry.resumed') };
+	if (role === 'user' && str(it.content) === AUTO_CONTINUE) return { kind: 'system', text: t('chat.autoRetry.resumed'), flow: { type: 'retry' } };
 	if (role === 'user') {
 		const images = arr<string>(it.images).filter((p) => typeof p === 'string');
 		const files = arr<string>(it.files).filter((p) => typeof p === 'string');
 		return { kind: 'user', text: str(it.content), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) };
 	}
 	if (role === 'assistant') return { kind: 'assistant', text: str(it.content) };
+	// A replayed call has no times; it failed when the replay says so
+	// (`is_error`), and it is linked to its other events by `call_id`.
 	if (role === 'tool')
 		return {
 			kind: 'tool',
-			callId: '',
+			callId: str(it.call_id),
 			name: str(it.name),
 			output: boundedOutput(str(it.output), str(it.name)),
 			running: false,
-			isError: false
+			isError: it.is_error === true
 		};
 	if (role === 'branch') return { kind: 'system', text: `branch: ${str(it.label)}` };
 	if (role === 'compaction') return { kind: 'compaction', state: 'done', before: 0, written: 0, since: 0, summary: str(it.summary) };
@@ -859,6 +873,30 @@ export class ChatState {
 	 *  LynShen gateway switch (`caps()` gives it OpenCode's). Known from the
 	 *  agent picked, else from its registry entry when the session starts. */
 	acpOpencode = $state(false);
+	/** ACP: what the agent supports (`engine_caps`, a daemon with the full
+	 *  ACP client); `caps(chat)` reads it. Null: not reported (an older
+	 *  daemon, or before the agent opened). */
+	engineCaps = $state<Partial<BackendCaps> | null>(null);
+	/** ACP: whether the agent asks before running tools (false: Pi); null
+	 *  when unknown. */
+	agentApprovals = $state<boolean | null>(null);
+	/** ACP: the agent can run on the LynShen gateway. */
+	agentGateway = $state(false);
+	/** ACP: the agent as it names itself (`id`: a built-in agent's, else null). */
+	agentInfo = $state<{ id: string | null; name: string; version: string } | null>(null);
+	/** ACP: the agent's settings besides model and effort (its mode, say). */
+	sessionOptions = $state<SessionOption[]>([]);
+	/** Claude Code / Codex: the custom provider the engine process runs on
+	 *  (`tool_provider`); null on the LynShen gateway or the tool's own config. */
+	toolProvider = $state<SessionToolProvider | null>(null);
+	/** ACP: the effort value that leaves the level to the agent
+	 *  (`default_effort`: OpenCode's `default`, oh-my-pi's `auto`); '' when
+	 *  the agent has none. */
+	effortDefault = $state('');
+	/** The engine reported its model and its backend has no model list kept
+	 *  for drafts: the page asks for one once (`/model`, answered quietly). */
+	wantsCatalog = false;
+	#catalogAsked = false;
 
 	messages = $state<Msg[]>([]);
 	provider = $state('');
@@ -998,6 +1036,10 @@ export class ChatState {
 	/** The conversation is open in its engine's TUI (on this or another
 	 *  client): its GUI ops wait until the TUI exits. */
 	inTerminal = $state(false);
+	/** The daemon terminal running that TUI (`surface` names it), for any
+	 *  client to view; '' while the conversation is in the GUI (and from a
+	 *  daemon before `term_attach`, which names none). */
+	terminal = $state('');
 	/** An MCP server's sign-in page, to open once (codex mcp_login). */
 	mcpLoginUrl = $state('');
 	/** Subagents by id; `label` names them when the id doesn't (claude's task ids).
@@ -1040,6 +1082,11 @@ export class ChatState {
 	agentRunsSeen = $state(false);
 	/** When the current (or last) turn started and ended, ms (0: not this run). */
 	turnStartedAt = $state(0);
+	/** When the running turn began; 0 between turns (the status line's turn
+	 *  clock). A field of its own, not derived from `busy` in the view: a
+	 *  derived of this long-lived state read only inside the status line
+	 *  kept a whole closed pane alive (desk-perf, 30 turns: 29k nodes). */
+	turnRunningSince = $state(0);
 	turnEndedAt = $state(0);
 	/** When the plan last changed, ms. */
 	planAt = $state(0);
@@ -1351,9 +1398,22 @@ export class ChatState {
 		if (at >= 0) this.messages.splice(at, 1);
 	}
 
+	/** The model the engine last reported (model_status). */
+	#reportedModel = '';
+
+	/** The reader asked to stop the running turn (ChatPane's stop, 中断并
+	 *  发送): where it ends, a divider says so. */
+	stopAsked = false;
+
 	/** Stamp the turn's total elapsed onto its last assistant message. */
 	#endTurn() {
 		this.activeAt = Date.now();
+		// A turn the reader stopped says so where it stopped, once.
+		const stopped = this.stopAsked;
+		this.stopAsked = false;
+		const tail = this.messages[this.messages.length - 1];
+		if (stopped && this.#turnStart !== null && !(tail?.kind === 'system' && tail.flow?.type === 'interrupted'))
+			this.messages.push({ kind: 'system', text: '', flow: { type: 'interrupted' } });
 		// A compaction cut short (stopped, the engine gone) is not left spinning.
 		const compaction = this.#compaction();
 		if (compaction) {
@@ -1361,6 +1421,7 @@ export class ChatState {
 			compaction.error = t('chat.compaction.stopped');
 		}
 		if (this.#turnStart !== null) this.turnEndedAt = this.activeAt;
+		this.turnRunningSince = 0;
 		this.#collapseReasoning();
 		if (this.#sending?.state !== 'failed') this.#setSend(null);
 		this.call = null;
@@ -1483,6 +1544,7 @@ export class ChatState {
 		if (this.#turnStart !== null) return;
 		this.#turnStart = Date.now();
 		this.turnStartedAt = this.#turnStart;
+		this.turnRunningSince = this.#turnStart;
 		// The agents a finished turn ran leave with it (their team entries,
 		// and worktrees still to merge, stay). A background agent that ended
 		// between turns stays for this one: its result is what this turn
@@ -1561,7 +1623,7 @@ export class ChatState {
 
 	get statusLog(): string[] {
 		const out: string[] = [];
-		for (const m of this.messages) if (m.kind === 'system') out.push(m.text);
+		for (const m of this.messages) if (m.kind === 'system' && !m.flow) out.push(m.text);
 		return out;
 	}
 
@@ -1698,6 +1760,7 @@ export class ChatState {
 			if (m.kind === 'tool' && m.running && !(m.subagent && this.#agentRunning(m.subagent))) {
 				m.running = false;
 				m.cut = true;
+				m.endedAt ??= Date.now();
 			}
 		}
 	}
@@ -1715,7 +1778,11 @@ export class ChatState {
 
 	/** A subagent ended: its calls still spinning are done too. */
 	#finishAgentTools(label: string) {
-		for (const m of this.messages) if (m.kind === 'tool' && m.running && m.subagent === label) m.running = false;
+		for (const m of this.messages)
+			if (m.kind === 'tool' && m.running && m.subagent === label) {
+				m.running = false;
+				m.endedAt ??= Date.now();
+			}
 	}
 
 	#tool(callId: string): Extract<Msg, { kind: 'tool' }> | undefined {
@@ -1744,6 +1811,10 @@ export class ChatState {
 		this.modelCatalog = p.catalog ?? [];
 		this.modelCatalogEffort = p.catalogEffort ?? '';
 		this.commands = p.commands ?? [];
+		if (this.backendId === 'acp') {
+			this.engineCaps = p.caps ?? null;
+			this.effortDefault = p.effortDefault ?? '';
+		}
 	}
 
 	/** A model picked for a draft. No engine reports it yet, so the context
@@ -1966,11 +2037,27 @@ export class ChatState {
 			}
 			case 'model_status':
 				if (str(ev.model) !== this.model) this.#cacheWatch.reset();
+				// Another model in the same engine (/model, a pick in the menu):
+				// a divider where the conversation goes on with it. The first
+				// report, and a switch that restarts the engine (its own note),
+				// make none.
+				const tail = this.messages[this.messages.length - 1];
+				const noted = tail?.kind === 'system' && tail.flow?.type === 'switch';
+				if (str(ev.model) && this.#reportedModel && str(ev.model) !== this.#reportedModel && !this.switching && !noted && this.messages.some((m) => m.kind === 'user'))
+					this.messages.push({ kind: 'system', text: t('chat.flow.model', { model: str(ev.model_label) || str(ev.model) }), flow: { type: 'switch' } });
+				if (str(ev.model)) this.#reportedModel = str(ev.model);
 				this.provider = str(ev.provider);
 				this.model = str(ev.model);
 				this.modelLabel = str(ev.model_label);
 				this.effort = str(ev.reasoning_effort);
 				this.efforts = arr<string>(ev.reasoning_efforts);
+				this.effortDefault = str(ev.default_effort);
+				// A draft of this backend lists the models a running session
+				// does; the list is kept otherwise only from a menu opened here.
+				if (this.model && !this.#catalogAsked) {
+					this.#catalogAsked = true;
+					this.wantsCatalog = !loadProfile(profileKey(this.backendId, this.acpAgentId)).catalog?.length;
+				}
 				this.inputModalities = Array.isArray(ev.input_modalities) ? arr<string>(ev.input_modalities) : null;
 				this.ultracode = ev.ultracode === true;
 				this.ultracodeAvailable = ev.ultracode_available === true;
@@ -1988,7 +2075,8 @@ export class ChatState {
 					modelLabel: this.modelLabel,
 					effort: this.effort,
 					efforts: this.efforts,
-					contextWindow: this.contextWindow
+					contextWindow: this.contextWindow,
+					...(this.backendId === 'acp' ? { effortDefault: this.effortDefault } : {})
 				});
 				break;
 			case 'user_message': {
@@ -2122,7 +2210,7 @@ export class ChatState {
 				const t = this.#tool(str(ev.call_id));
 				if (t) {
 					t.output = boundedOutput(str(ev.output), t.name);
-					if (SUBAGENT_CALLS.has(t.name) || t.name === 'send_to_session') t.args = t.output;
+					if (SUBAGENT_CALLS.has(t.name) || t.name === 'send_to_session' || t.name === 'start_session') t.args = t.output;
 					const started = /^started: (.+)/.exec(t.output)?.[1]?.trim();
 					if (started && !t.target) t.target = started;
 				}
@@ -2141,6 +2229,7 @@ export class ChatState {
 					t.output = boundedOutput(str(ev.output), t.name);
 					t.running = false;
 					t.isError = ev.is_error === true;
+					t.endedAt = Date.now();
 					// Its output came after all: the engine kept it.
 					if (t.cut) delete t.cut;
 				}
@@ -2466,11 +2555,47 @@ export class ChatState {
 			// what the TUI added included.
 			case 'surface':
 				this.inTerminal = ev.surface === 'tui';
+				this.terminal = ev.surface === 'tui' ? str(ev.term) : '';
 				if (ev.surface === 'gui') this.keepNextTranscript = false;
 				break;
 			case 'mcp_login':
 				this.mcpLoginUrl = str(ev.url);
 				break;
+			// ACP (a daemon with the full ACP client): what the agent is and can
+			// do. Sent when it changes, so a startup after it leaves it alone.
+			case 'engine_caps': {
+				const agent = ev.agent as Record<string, unknown> | null | undefined;
+				const reported = ev.caps && typeof ev.caps === 'object' ? (ev.caps as Record<string, unknown>) : null;
+				const known: Partial<BackendCaps> = {};
+				for (const [k, v] of Object.entries(reported ?? {})) if (typeof v === 'boolean') (known as Record<string, boolean>)[k] = v;
+				this.engineCaps = reported ? known : null;
+				// A draft of this agent can pick a model (and more) before it starts.
+				if (reported) this.#remember({ caps: known });
+				this.agentApprovals = typeof ev.approvals === 'boolean' ? ev.approvals : null;
+				this.agentGateway = ev.gateway === true;
+				this.agentInfo = agent
+					? { id: typeof agent.id === 'string' ? agent.id : null, name: str(agent.name), version: str(agent.version) }
+					: null;
+				break;
+			}
+			// ACP: the agent's settings besides model and effort; only selects
+			// and switches render.
+			case 'session_options':
+				this.sessionOptions = arr<SessionOption>(ev.options).filter(
+					(o) => typeof o?.id === 'string' && (o.type === 'boolean' || (o.type === 'select' && Array.isArray(o.choices)))
+				);
+				break;
+			// Claude Code / Codex: the custom provider of this engine process,
+			// kept in watch snapshots; like engine_caps it may come before the
+			// process's startup, and the next process's event replaces it.
+			case 'tool_provider': {
+				const p = ev.provider as Record<string, unknown> | null | undefined;
+				this.toolProvider =
+					p && typeof p === 'object' && str(p.id)
+						? { id: str(p.id), name: str(p.name) || str(p.id), model: str(p.model), models: arr<string>(p.models) }
+						: null;
+				break;
+			}
 			case 'command_list':
 				this.commands = arr<CommandItem>(ev.commands);
 				this.#remember({ commands: this.commands });
@@ -2653,6 +2778,7 @@ export class ChatState {
 			case 'task_done':
 				this.messages.push({
 					kind: 'system',
+					flow: { type: 'task' },
 					text: t('chat.taskDone', {
 						kind: taskKindLabel(str(ev.kind)),
 						status: t(`chat.taskStatus.${['completed', 'failed', 'stopped'].includes(str(ev.status)) ? str(ev.status) : 'completed'}`),
@@ -2681,6 +2807,7 @@ export class ChatState {
 			case 'model_fallback':
 				this.messages.push({
 					kind: 'system',
+					flow: { type: 'fallback' },
 					text: t('chat.modelFallback', { from: str(ev.from), to: str(ev.to), reason: fallbackReason(str(ev.reason)) })
 				});
 				break;
@@ -2872,6 +2999,7 @@ export class ChatState {
 				const why = str(ev.justification).trim();
 				this.messages.push({
 					kind: 'system',
+					flow: { type: 'action' },
 					text: why
 						? t('chat.actionDeferredWhy', { name: str(ev.name), summary: str(ev.summary), why })
 						: t('chat.actionDeferred', { name: str(ev.name), summary: str(ev.summary) })
@@ -2881,6 +3009,7 @@ export class ChatState {
 			case 'action_decided':
 				this.messages.push({
 					kind: 'system',
+					flow: { type: 'action' },
 					text: t(ev.decision === 'allow' ? 'chat.actionAllowed' : 'chat.actionDenied', {
 						id: str(ev.id)
 					})

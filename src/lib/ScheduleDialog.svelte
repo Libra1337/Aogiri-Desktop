@@ -19,11 +19,22 @@
 	let {
 		agent,
 		schedule,
+		preset,
+		agents,
+		onSaved,
 		onClose
 	}: {
+		/** Whose task it is ('' : picked here from `agents`). */
 		agent: string;
 		/** The task to edit; omitted for a new one. */
 		schedule?: Schedule;
+		/** A new task's fields filled in beforehand (an agent's proposal). */
+		preset?: Partial<ScheduleDraft>;
+		/** The agents a new task may belong to: a picker shows when there is a
+		 *  choice (a task proposed in a conversation, which no agent owns). */
+		agents?: { id: string; name: string }[];
+		/** The task was saved. */
+		onSaved?: (saved: Schedule) => void;
 		onClose: () => void;
 	} = $props();
 	const agentDirectory = useAgents();
@@ -38,18 +49,20 @@
 		schedule
 			? toDraft(schedule)
 			: {
-					agent,
-					name: '',
-					prompt: '',
-					enabled: true,
-					repeat: 'daily',
-					time: '09:00',
-					days: [1],
-					date: '',
-					new_session: true,
-					...(runOptions ? { worktree: false, budget: '' } : {})
-				}
+				agent: agent || agents?.[0]?.id || '',
+				name: '',
+				prompt: '',
+				enabled: true,
+				repeat: 'daily',
+				time: '09:00',
+				days: [1],
+				date: '',
+				new_session: true,
+				...(runOptions ? { worktree: false, budget: '' } : {}),
+				...preset
+			}
 	);
+	const agentOpts = $derived((agents ?? []).map((a) => ({ value: a.id, label: a.name })));
 	// Every run is a new session, told what the last run concluded.
 	let draft = $state<ScheduleDraft>({
 		...initial,
@@ -93,6 +106,7 @@
 			if ((next.worktree || next.budget?.trim()) && saved.worktree === undefined) {
 				toast.info(t('shell.schedule.optionsOutdated'));
 			}
+			onSaved?.(saved);
 			if (run) {
 				await agentDirectory.runSchedule(saved.id);
 				toast.success(t('shell.schedule.started', { name: saved.name }));
@@ -112,6 +126,12 @@
 	{onClose}
 >
 	{#snippet icon()}<ClockIcon size={15} />{/snippet}
+	{#if !schedule && agentOpts.length > 1}
+		<div class="field">
+			<span>{t('shell.schedule.agent')}</span>
+			<Select value={draft.agent} options={agentOpts} onChange={(v) => (draft.agent = v)} />
+		</div>
+	{/if}
 	<label class="field">
 		<span>{t('shell.schedule.name')}</span>
 		<input bind:this={nameEl} bind:value={draft.name} placeholder={t('shell.schedule.namePlaceholder')} />

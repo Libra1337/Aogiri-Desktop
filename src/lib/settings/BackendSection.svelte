@@ -40,6 +40,7 @@
 	import { t } from '$lib/i18n';
 	import SettingsSection from './SettingsSection.svelte';
 	import SettingsRow from './SettingsRow.svelte';
+	import ToolProviders from './ToolProviders.svelte';
 
 	let settings = $state<BackendSettings>(loadBackendSettings());
 	let status = $state<Partial<Record<BackendId, BackendStatus | 'checking'>>>({});
@@ -289,6 +290,9 @@
 					</div>
 				{/if}
 			</div>
+			{#if id === 'claude' || id === 'codex'}
+				<div class="bindent"><ToolProviders tool={id} /></div>
+			{/if}
 		</div>
 	{/each}
 </SettingsSection>

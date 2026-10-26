@@ -4,7 +4,7 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { crossfade } from '$lib/ui/viewTransition';
 	import DropLayer from '$lib/shell/DropLayer.svelte';
-	import { engine } from '$lib/engineVersion.svelte';
+	import { engine, engineHas } from '$lib/engineVersion.svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -25,6 +25,7 @@
 	import TreeStructureIcon from 'phosphor-svelte/lib/TreeStructureIcon';
 	import UsersThreeIcon from 'phosphor-svelte/lib/UsersThreeIcon';
 	import Toaster from '$lib/ui/Toaster.svelte';
+	import CornerNotices from '$lib/ui/CornerNotices.svelte';
 	import ModelSetup from '$lib/ModelSetup.svelte';
 	import { modelSetup } from '$lib/modelSetupState.svelte';
 	import ConfirmHost from '$lib/ui/ConfirmHost.svelte';
@@ -63,6 +64,7 @@
 	import TrialGrantCard from '$lib/TrialGrantCard.svelte';
 	import { trial } from '$lib/trial.svelte';
 	import { browser, type WebRef } from '$lib/browser.svelte';
+	import { devServers } from '$lib/devServers.svelte';
 	import { prefs } from '$lib/prefs.svelte';
 	import { playChime, unlockChimes, type Chime } from '$lib/chime';
 	import { fmtTokens } from '$lib/usageStats';
@@ -101,7 +103,7 @@
 	import Mosaic from '$lib/workbench/Mosaic.svelte';
 	import HomePage from '$lib/HomePage.svelte';
 	import TitleBar from '$lib/shell/TitleBar.svelte';
-	import OpenInEditor from '$lib/shell/OpenInEditor.svelte';
+	import ProjectMenu from '$lib/shell/ProjectMenu.svelte';
 	import TabChromePopover from '$lib/workbench/TabChromePopover.svelte';
 	import ChatPane, { type ChatPaneApi, type ProviderOption } from '$lib/ChatPane.svelte';
 	import SettingsPage from '$lib/settings/SettingsPage.svelte';
@@ -120,6 +122,9 @@
 	import { matches } from '$lib/shortcuts';
 	import { readSidebarCollapsed, writeSidebarCollapsed, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH } from '$lib/shell/sidebarState';
 	import TaskDialog from '$lib/TaskDialog.svelte';
+	import ProjectPickDialog from '$lib/ProjectPickDialog.svelte';
+	import { llmTarget as llmTargetOf } from '$lib/llmTarget';
+	import { setupCommand } from '$lib/forks';
 	import DeskPage from '$lib/DeskPage.svelte';
 	import ProjectPage from '$lib/ProjectPage.svelte';
 	import FeedbackDialog from '$lib/FeedbackDialog.svelte';
@@ -131,7 +136,7 @@
 	import Modal from '$lib/ui/Modal.svelte';
 	import BackendIcon from '$lib/BackendIcon.svelte';
 	import { agentDirectory } from '$lib/agents.svelte';
-	import type { Project, WorktreeMeta } from '$lib/types';
+	import type { Project, Session, WorktreeMeta } from '$lib/types';
 	import PlanPanel from '$lib/PlanPanel.svelte';
 	import ProposalPane from '$lib/ProposalPane.svelte';
 	import { planPages, proposalOf, proposalPanel } from '$lib/planPages.svelte';
@@ -524,19 +529,7 @@
 	// Target endpoint for one-shot AI text (commit / PR). Prefer the active
 	// session's provider; fall back to the default lynshen gateway or the first
 	// configured provider. Strip any `[1m]`-style alias suffix from the model id.
-	const llmTarget = $derived.by(() => {
-		const pick =
-			providersList.find((p) => p.id === chat?.provider) ??
-			providersList.find((p) => p.id === 'lynshen') ??
-			providersList[0];
-		if (!pick) return null;
-		const model =
-			chat?.provider === pick.id && chat?.model
-				? chat.model.replace(/\[.*?\]$/, '')
-				: (pick.models[0]?.name ?? '');
-		if (!model) return null;
-		return { provider: pick.id, baseUrl: pick.base_url, format: pick.format, model };
-	});
+	const llmTarget = $derived(llmTargetOf(providersList, chat));
 
 	const savedSidebarWidth = Number(localStorage.getItem('lynshen-sidebar-width'));
 	/** The expanded navigator's width (the user drags it, 240–460px). */
@@ -638,6 +631,11 @@
 		if (previewed) return fileName(previewed);
 		return (ALL_PANELS as readonly string[]).includes(tab.panel) ? t(`dock.tabs.${tab.panel}`) : tab.panel;
 	}
+	/** The session's engine has a TUI the daemon can run: the native CLIs,
+	 *  and (a daemon with built-in ACP agents) a built-in agent's session. */
+	function tuiCapable(s: Session): boolean {
+		return canHandOffToTui(s.backendId, s.acpAgent, engineHas('acp_presets'));
+	}
 	function tuiReady(sid: string): boolean {
 		const session = sessionMap.get(sid);
 		return !!session &&
@@ -668,6 +666,26 @@
 				})
 				.catch(() => {});
 	}
+	/** A new conversation from ⌘N, the title bar, the palette, the tray or
+	 *  the navigator's 新对话: its project is asked first (ProjectPickDialog),
+	 *  with `current` picked ('' for a conversation of no project; left out:
+	 *  the active project), so Enter opens it there. */
+	let pickingProject = $state<{ current: string } | null>(null);
+	function askProject(current?: string) {
+		const active = activeProject && !activeProject.home && !activeProject.chats && !activeProject.stale ? activeProject.id : '';
+		pickingProject = { current: current ?? active };
+	}
+	/** The home page's start box in a project: a conversation there with
+	 *  that first message. */
+	function startIn(p: Project, text: string) {
+		store.addSession(p, text);
+		showHome = false;
+		projectPageId = null;
+	}
+	function pickProject(p: Project | null) {
+		if (p) newSession(p);
+		else void startChat();
+	}
 	function pickTuiBackend(backend: BackendId) {
 		const p = tuiPick;
 		tuiPick = null;
@@ -697,7 +715,7 @@
 	$effect(() => {
 		if (prefs.defaultSurface !== 'tui') return;
 		for (const [sid, session] of sessionMap) {
-			if (openedInTui.has(sid) || !session.restored || !canHandOffToTui(session.backendId)) continue;
+			if (openedInTui.has(sid) || !session.restored || !tuiCapable(session)) continue;
 			if (!tuiReady(sid) || !daemon.sessionOf(sid)) continue;
 			openedInTui.add(sid);
 			if (!session.chat.busy && !session.chat.bgTasks.length) store.openInTui(sid);
@@ -760,10 +778,9 @@
 	function mosaicAdd(leafId: string | null, key: string) {
 		if (key === 'chat') {
 			if (leafId) focusedLeaf = leafId;
-			// In the current project; with none open, a conversation of its own.
-			// The activeId effect opens its tile in the focused leaf.
-			if (activeProject && !activeProject.home) newSession(activeProject);
-			else void startChat();
+			// Its project asked first; the activeId effect opens its tile in the
+			// focused leaf.
+			askProject();
 			return;
 		}
 		// The embedded browser is a singleton native webview — a second tab
@@ -854,6 +871,18 @@
 			applyTiles(openElsewhere(tab, { place: 'side', sessionId: request.sessionId || store.activeId }));
 		});
 	});
+	// A new worktree of a project (a parallel task, a fork, a conversation
+	// started in a new worktree): the project's setup script runs in a
+	// terminal there, beside the worktree's conversation (B09, D15).
+	async function runSetup(tree: Project, from: Project) {
+		const script = from.setup?.trim();
+		if (!script) return;
+		const shell = await shells.terminal().catch(() => null);
+		const windows = /Windows/.test(navigator.userAgent) && !/bash/i.test(shell?.program ?? '');
+		const command = setupCommand(script, from.path, tree.path, windows);
+		if (command) terminalRequests.open(command, tree.path, tree.sessions[0]?.id ?? '', true);
+	}
+	SessionStore.onWorktree = (tree, from) => void runSetup(tree, from);
 	/** A worktree subagent's changes beside its session's chat: the Changes
 	 *  panel at the agent's workdir, one tab per agent. */
 	function openAgentChanges(sessionId: string, agent: string) {
@@ -1301,6 +1330,8 @@
 		// Started on a requirement: the description goes with its start (the
 		// start card), not as a first message.
 		const project = store.createProject(path, meta, (!requirement && description) || undefined);
+		const main = store.userProjects.find((x) => !x.worktree && normPath(x.path) === normPath(meta.mainRepoPath));
+		if (main) void runSetup(project, main);
 		const first = project.sessions[0];
 		if (requirement && first) {
 			first.requirement = requirement;
@@ -1404,8 +1435,7 @@
 				captureSignal += 1;
 			});
 		if (matches(e, 'find') && chat) return act(() => pane?.toggleFind());
-		if (matches(e, 'newSession'))
-			return act(() => (activeProject && !activeProject.home ? newSession(activeProject) : void startChat()));
+		if (matches(e, 'newSession')) return act(() => askProject());
 		if (matches(e, 'settings')) return act(() => !showSettings && openSettings());
 		if (matches(e, 'sidebar')) return act(toggleSidebar);
 		if (matches(e, 'audit')) return act(toggleAudit);
@@ -1489,6 +1519,13 @@
 					}
 				}
 				flushModeSync(s.chat, s.id);
+				// A backend never listed here: its model list, read once and
+				// quietly, so a new conversation of it can pick a model first.
+				if (s.chat.wantsCatalog) {
+					s.chat.wantsCatalog = false;
+					s.chat.silentModelView++;
+					dispatch(s.id, { op: 'command', input: '/model' });
+				}
 				// Let go of while hidden and starting something: watched again.
 				store.rouse(s);
 				const miss = s.chat.cacheMiss;
@@ -1545,11 +1582,15 @@
 				agentDirectory.handle(frame);
 				sync.handle(frame);
 				requirements.handle(frame);
+				devServers.handle(frame);
 			};
 			daemon.onDisconnect = () => {
 				agentDirectory.disconnected();
 				sync.reset();
+				devServers.disconnected();
 			};
+			// A dev server's notice names the conversation that started it.
+			devServers.titleOf = (sid) => store.allSessions.find((s) => s.chat.sessionId === sid)?.chat.title ?? agentDirectory.sessions.find((s) => s.session === sid)?.title ?? '';
 			daemon.onHello = (version, features) => {
 				engine.version = version;
 				engine.features = features;
@@ -1597,12 +1638,8 @@
 					browser.handleEvent(p);
 				}
 			});
-			// 托盘菜单「新建会话」：在当前项目里开新会话；没有项目时开一个独立对话。
-			const untray = await listen('tray-new-session', () => {
-				const p = store.activeProject;
-				if (p && !p.home) newSession(p);
-				else void startChat();
-			});
+			// 托盘菜单「新建会话」：先选项目（默认当前项目），再开新会话。
+			const untray = await listen('tray-new-session', () => askProject());
 			// Quitting (tray menu, Cmd+Q): save the workspaces first; the app
 			// waits for this (see begin_quit in src-tauri).
 			const unquit = await listen('app-quit', async () => {
@@ -1708,6 +1745,7 @@
 {/snippet}
 
 <Toaster />
+<CornerNotices />
 <ConfirmHost />
 {#if dragFiles}<DropLayer count={dragFiles} />{/if}
 
@@ -1728,12 +1766,12 @@
 	>
 		{#snippet actions()}
 			{@const editorProject = showSettings || showDesk || showSetup || homeShown ? undefined : (pageProject ?? activeProject)}
-			{#if editorProject && !editorProject.chats && !editorProject.home && !editorProject.agents && !editorProject.stale}<OpenInEditor path={editorProject.path} />{/if}
+			{#if editorProject && !editorProject.chats && !editorProject.home && !editorProject.agents && !editorProject.stale}<ProjectMenu path={editorProject.path} name={editorProject.name} onOpenGit={() => openPanelTile('git')} />{/if}
 			{#if !showSettings && !showDesk && !showSetup && active && active.surface === 'tui'}
 				<button class="tile-action" title={t('dock.tui.backToGui')} aria-label={t('dock.tui.backToGui')} onclick={() => active && tuiPanels[active.id]?.backToGui()}>
 					<ChatCircleTextIcon size={16} />
 				</button>
-			{:else if !showSettings && !showDesk && !showSetup && active && canHandOffToTui(active.backendId)}
+			{:else if !showSettings && !showDesk && !showSetup && active && tuiCapable(active)}
 				<button
 					class="tile-action"
 					disabled={!tuiReady(active.id)}
@@ -1767,7 +1805,7 @@
 				onNewProject={addProject}
 				onNewTask={newTask}
 				onNewSession={(p) => newSession(p)}
-				onNewChat={startChat}
+				onNewChat={() => askProject('')}
 				onCloseSession={removeSession}
 				onCloseProject={removeProject}
 				onArchiveSession={(id) => store.archiveSession(id)}
@@ -1813,7 +1851,7 @@
 						projects={store.userProjects}
 						agents={agentDirectory.agents}
 						agentsOn={agentDirectory.status === 'on'}
-						onStart={(text, model) => startChat(text, model)}
+						onStart={(text, model, project) => (project ? startIn(project, text) : startChat(text, model))}
 						modelPicker={defaultBackendFor(store.home?.lastBackend) === 'lynshen'}
 						onOpenSession={(id) => crossfade(() => ((store.activeId = id), (showHome = false)))}
 						onOpenProject={openProjectPage}
@@ -1829,6 +1867,7 @@
 							{currentStep}
 							onClose={() => (projectPageId = null)}
 							onDirs={(dirs) => store.setProjectDirs(pageProject, dirs)}
+							onSetup={pageProject.worktree || pageProject.home || pageProject.chats ? undefined : (script) => (pageProject.setup = script || undefined)}
 							onStartRequirement={startRequirement}
 							onOpenSession={(s) => openDaemonSession(s)}
 							onOpenAgent={(id) => openDesk(id)}
@@ -1864,7 +1903,7 @@
 										<button class="tile-action" title={t('dock.tui.backToGui')} aria-label={t('dock.tui.backToGui')} onclick={() => tuiPanels[sid]?.backToGui()}>
 											<ChatCircleTextIcon size={13} />
 										</button>
-									{:else if sid && session && canHandOffToTui(session.backendId)}
+									{:else if sid && session && tuiCapable(session)}
 										<button
 											class="tile-action"
 											disabled={!tuiReady(sid)}
@@ -1893,7 +1932,9 @@
 												backend={sess.backendId}
 												cwd={store.projectPathOf(sid) ?? ''}
 												session={daemon.sessionOf(sid)}
+												terminal={sess.chat.terminal}
 												onBackToGui={() => store.returnToGui(sid)}
+												onReattach={() => store.rewatch(sid)}
 												onOpenSettings={() => openSettings('agents')}
 											/>
 											{/if}
@@ -2125,6 +2166,16 @@
 		<FeedbackDialog onClose={() => (showFeedback = false)} />
 	{/if}
 
+	{#if pickingProject}
+		<ProjectPickDialog
+			projects={store.codeProjects.filter((p) => !p.stale && !p.chats)}
+			current={pickingProject.current}
+			onPick={pickProject}
+			onOpenFolder={addProject}
+			onClose={() => (pickingProject = null)}
+		/>
+	{/if}
+
 	{#if taskDialogFor}
 		<TaskDialog
 			project={taskDialogFor}
@@ -2191,7 +2242,7 @@
 			panelOptions={panelKeys.map((k) => ({ key: k, label: t(`dock.tabs.${k}`) }))}
 			onClose={() => (showPalette = false)}
 			onRun={runCommand}
-			onNewSession={() => activeProject && newSession(activeProject)}
+			onNewSession={() => askProject()}
 			onNewProject={addProject}
 			onNewTask={() => newTask(activeProject)}
 			onSettings={() => openSettings()}
@@ -2206,7 +2257,7 @@
 			onHistory={() => activeProject && store.openHistory(activeProject)}
 			onShortcuts={() => (showShortcuts = true)}
 			onFeedback={() => (showFeedback = true)}
-			canOpenTui={!!active && active.surface !== 'tui' && canHandOffToTui(active.backendId) && tuiReady(active.id)}
+			canOpenTui={!!active && active.surface !== 'tui' && tuiCapable(active) && tuiReady(active.id)}
 			onOpenTui={() => active && continueInTui(active.id)}
 		/>
 	{/if}

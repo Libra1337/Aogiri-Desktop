@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { overBrowser } from '$lib/browser.svelte';
 	import type { Snippet } from 'svelte';
 	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
@@ -440,7 +441,7 @@
 		</div>
 		{#if drag?.live && zoneOf(hover)?.leafId === leaf.id}
 			{@const z = zoneOf(hover)!}
-			<div class="dropzone {z.zone}">
+			<div use:overBrowser class="dropzone {z.zone}">
 				<span class="dropzone-label">
 					{z.zone === 'center' ? t('dock.mosaic.stackHere') : t('dock.mosaic.splitHere')}
 				</span>

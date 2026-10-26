@@ -16,6 +16,7 @@
 		tokens = 0,
 		call = null,
 		messages = [],
+		turnSince = 0,
 		onDetails
 	}: {
 		/** ChatState.phase. */
@@ -25,6 +26,9 @@
 		/** The model request in flight. */
 		call?: CallTiming | null;
 		messages?: readonly Msg[];
+		/** When the running turn began (0: not known): its clock at the
+		 *  line's end. */
+		turnSince?: number;
 		/** Show a tool call's details (its card in the transcript). */
 		onDetails?: (call: Extract<Msg, { kind: 'tool' }>) => void;
 	} = $props();
@@ -65,6 +69,8 @@
 				<CaretRightIcon size={12} />
 			</button>
 		{/if}
+		<!-- The whole turn so far, at the line's end, where it never moves. -->
+		{#if turnSince > 0}<span class="turn" title={t('chat.turnClock')} aria-label={t('chat.turnClock')}>{workElapsed(now - turnSince)}</span>{/if}
 	</div>
 {/if}
 
@@ -101,6 +107,16 @@
 		font-size: var(--fs-2xs);
 	}
 	.time {
+		flex-shrink: 0;
+		color: var(--dim2);
+		font-family: var(--font-mono);
+		font-size: var(--fs-2xs);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.turn {
+		margin-left: auto;
+		padding-left: 12px;
 		flex-shrink: 0;
 		color: var(--dim2);
 		font-family: var(--font-mono);

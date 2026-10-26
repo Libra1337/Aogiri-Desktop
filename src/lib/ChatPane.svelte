@@ -54,6 +54,7 @@
 		git,
 		gitCheckpointCapture,
 		gitCheckpointRestore,
+		generateText,
 		resolveFileRef,
 		type FileTarget,
 		readConfig,
@@ -61,7 +62,8 @@
 		type ImportSkipKind,
 		type Op
 	} from '$lib/protocol';
-	import { buildModelRows, splitRoute, stripGroupSuffix, toolModels, type ToolModel } from '$lib/composer/modelRows';
+	import { buildModelRows, customProviderRows, splitRoute, stripGroupSuffix, toolModels, type ToolModel } from '$lib/composer/modelRows';
+	import { draftProvider, loadToolProviders, toolProviderConfigs } from '$lib/toolProviders.svelte';
 	import { displayNameOf } from '$lib/models/items';
 	import { gatewayCatalog } from '$lib/models/catalogStore.svelte';
 	import { configModelList } from '$lib/configModels';
@@ -77,6 +79,11 @@
 	import type { SessionStore } from '$lib/session.svelte';
 	import type { Session } from '$lib/types';
 	import { editorStore } from '$lib/editor/editorStore.svelte';
+	import { turnBase, turnDiffs } from '$lib/editor/turnBase';
+	import ForkDialog from '$lib/ForkDialog.svelte';
+	import GitForkIcon from 'phosphor-svelte/lib/GitForkIcon';
+	import { HANDOFF_SYSTEM, handoffPrompt } from '$lib/forks';
+	import { llmTarget } from '$lib/llmTarget';
 	import Composer, { type StyleMenu } from '$lib/Composer.svelte';
 	import { replyStyles } from '$lib/styles.svelte';
 	import { currentStyle } from '$lib/styles';
@@ -103,11 +110,15 @@
 	import { provideFileCheck } from '$lib/fileCheck';
 	import { editors } from '$lib/editors.svelte';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
+	import ScheduleDialog from '$lib/ScheduleDialog.svelte';
+	import { proposals } from '$lib/proposals.svelte';
+	import type { Proposal } from '$lib/turnSummary';
+	import type { ScheduleDraft } from '$lib/schedules';
 	import { copyText } from '$lib/clipboard';
 	import PopMenu, { type PopMenuItem } from '$lib/ui/PopMenu.svelte';
 	import { imageViewer } from '$lib/ui/imageViewer.svelte';
 	import { isMac } from '$lib/shortcuts';
-	import type { Msg, ModelOption } from '$lib/chat.svelte';
+	import { shownTitle, type Msg, type ModelOption } from '$lib/chat.svelte';
 	import type { SessionSwitch } from '$lib/composer/SessionSwitches.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
@@ -902,6 +913,9 @@
 			return p.items.map((it) => ({ id: it.id, label: it.label, detail: it.detail, active: it.active, command: `/resume ${it.id}`, depth: nil }));
 		if (p.kind === 'checkpoint')
 			return p.items.map((it) => ({ id: it.id, label: it.label, detail: it.detail, active: it.active, command: `/rewind ${it.id}`, depth: nil }));
+		// A custom provider serves the models picked for it in Settings.
+		if (customProvider)
+			return customProviderRows(customProvider, session.draft ? (session.draftPick?.model ?? chat.model) : chat.model);
 		// Model picker rows (pure packing in $lib/composer/modelRows): the active
 		// provider's models from the engine's model_view plus, for lynshen
 		// sessions, the catalog of every other provider with credentials.
@@ -933,6 +947,32 @@
 		const stored = stripGroupSuffix(providersList.find((p) => p.id === chat.provider)?.models.find((m) => m.name === chat.model)?.display_name || '');
 		if (chat.backendId !== 'lynshen' || !chat.model) return stored || undefined;
 		return displayNameOf(chat.provider ?? '', chat.model, stored || stripGroupSuffix(chat.modelLabel || ''), gatewayCatalog.lookup);
+	});
+
+	// Claude Code / Codex: the custom provider the session runs on (its engine
+	// says), or a draft starts on (its pick, else the tool's default). A
+	// daemon without custom providers: none.
+	const customProvider = $derived.by(() => {
+		const tool = chat.backendId;
+		if (tool !== 'claude' && tool !== 'codex') return undefined;
+		if (!session.draft) return chat.toolProvider ?? undefined;
+		if (session.gateway || !engineHas('tool_providers')) return undefined;
+		return draftProvider(tool, session.draftToolProvider);
+	});
+	$effect(() => {
+		const tool = chat.backendId;
+		if ((tool === 'claude' || tool === 'codex') && engineHas('tool_providers'))
+			untrack(() => void loadToolProviders(tool).catch(() => {}));
+	});
+	// A draft on a custom provider shows a model it serves (the daemon starts
+	// it on the provider's default).
+	$effect(() => {
+		const p = customProvider;
+		if (session.draft && p && !p.models.includes(chat.model))
+			untrack(() => {
+				chat.model = p.model;
+				chat.modelLabel = '';
+			});
 	});
 
 	// Claude Code / Codex: the current model and where it can run, for the
@@ -973,7 +1013,29 @@
 		return true;
 	}
 
-	async function pickProvider(m: ToolModel, choice: { local: true } | { group: string }) {
+	async function pickProvider(m: ToolModel, choice: { local: true } | { group: string } | { custom: string }) {
+		if ('custom' in choice) {
+			chat.closePicker();
+			const p = toolProviderConfigs[chat.backendId as 'claude' | 'codex']?.providers.find((x) => x.id === choice.custom);
+			store.setDraftToolProvider(session.id, choice.custom, p?.model);
+			return;
+		}
+		// A draft leaves its custom provider: for the tool's own config, or for
+		// the gateway on a model it serves.
+		if (session.draft && customProvider) {
+			chat.closePicker();
+			if ('local' in choice) {
+				// The provider's model may not be the tool's: the tool's own default.
+				const own = chat.modelCatalog.find((x) => x.active)?.model ?? chat.modelCatalog[0]?.model;
+				store.setDraftToolProvider(session.id, '', own);
+				return;
+			}
+			store.setDraftToolProvider(session.id, '');
+			const served = providersList.find((p) => p.id === 'lynshen')?.models ?? [];
+			await store.applyToolProfile(session.id, 'lynshen', m.lynshen ?? served[0]?.name);
+			store.setSessionGroup(session.id, choice.group);
+			return;
+		}
 		if (toolMode === 'lynshen' && !('local' in choice)) {
 			store.setSessionGroup(session.id, choice.group);
 			return;
@@ -981,6 +1043,8 @@
 		chat.closePicker();
 		if ('local' in choice) {
 			if (toolMode === 'lynshen' && m.local) await switchTool('system', m.local);
+			// A draft names it: not the tool's default custom provider.
+			if (session.draft) store.setDraftToolProvider(session.id, '');
 			return;
 		}
 		// Set once the switch is confirmed; the gateway reads it per request.
@@ -1188,7 +1252,10 @@
 	 *  took it (`unqueued`): one that started meanwhile changes nothing. */
 	function queueAction(action: QueueAction, messages: readonly string[] = chat.pendingMessages) {
 		if (action.kind === 'interrupt') {
-			if (chat.busy) markStopped(chat.messages);
+			if (chat.busy) {
+				markStopped(chat.messages);
+				chat.stopAsked = true;
+			}
 			autoRetry.cancel(chat);
 			limitResume.cancel(chat);
 			planWaits.cancel(session.id);
@@ -1216,7 +1283,10 @@
 		if (cut) void store.retryTurn(session.id, t('chat.cut.note'), cut.started);
 	}
 	function stop() {
-		if (chat.busy) markStopped(chat.messages);
+		if (chat.busy) {
+			markStopped(chat.messages);
+			chat.stopAsked = true;
+		}
 		autoRetry.cancel(chat);
 		limitResume.cancel(chat);
 		planWaits.cancel(session.id);
@@ -1279,7 +1349,7 @@
 			if (entry?.reasoning === false) chat.efforts = [];
 			else if (entry?.reasoning_efforts?.length) {
 				chat.efforts = entry.reasoning_efforts;
-				if (!chat.efforts.includes(chat.effort)) chat.effort = defaultEffort(chat.efforts);
+				if (!chat.efforts.includes(chat.effort) && chat.effort !== chat.effortDefault) chat.effort = defaultEffort(chat.efforts, chat.effortDefault);
 			}
 			if (effort) chat.effort = effort;
 			session.draftPick = { model: name, effort: chat.effort || undefined };
@@ -1559,6 +1629,33 @@
 	// (preview/FilePreview.svelte), whatever it is and wherever it lies; the
 	// tab says when it is gone and offers its folder and its default app.
 	// Only a file in that message's list (`files`) is previewed.
+	// A scheduled task the agent proposed (propose_schedule): 创建 opens the
+	// task dialog filled in from it, for the conversation's agent or one the
+	// reader picks (a task belongs to an agent); the task keeps the
+	// proposal's id. Without an agent, it says where to make one.
+	let proposing = $state<{ preset: Partial<ScheduleDraft>; id: string } | null>(null);
+	const proposalAgents = $derived(agentDirectory.agents.map((a) => ({ id: a.id, name: a.name })));
+	function scheduleFrom(p: Proposal) {
+		if (!proposalAgents.length) {
+			toast.info(t('chat.proposal.noAgent'));
+			return;
+		}
+		proposing = {
+			id: p.id,
+			preset: {
+				name: p.name,
+				prompt: p.prompt,
+				repeat: p.repeat,
+				time: p.time,
+				...(p.days ? { days: p.days } : {}),
+				...(p.date ? { date: p.date } : {}),
+				...(chat.agent ? { agent: chat.agent } : {}),
+				origin: p.id
+			}
+		};
+	}
+	const revealFile = (path: string) => revealItemInDir(path).catch((e) => toast.error(String(e)));
+
 	function openAttachment(path: string, files: string[]) {
 		filePreviews.open(session.id, path, files);
 	}
@@ -1601,10 +1698,12 @@
 	// Before each codex/claude turn, snapshot the working tree so a later rewind
 	// can restore files to this turn's starting state (the engines rewind only the
 	// conversation). Fire-and-forget; the sha lands under its turn index.
+	// A fork into a worktree (ForkDialog) starts from them too, so LynShen
+	// takes them as well; an ACP agent does neither.
 	function captureCheckpoint() {
 		const c = chat;
 		const cwd = project?.path;
-		if (!cwd || (c.backendId !== 'codex' && c.backendId !== 'claude')) return;
+		if (!cwd || c.backendId === 'acp') return;
 		const idx = c.userTurns;
 		gitCheckpointCapture(cwd, session.id, idx)
 			.then((sha) => {
@@ -1664,6 +1763,62 @@
 		const target = await pending;
 		if (!target) return void toast.error(t('chat.fileNotFound', { path: ref.path }));
 		openTarget(target, ref);
+	}
+	// Forks (B09, D15): after any finished turn, beside the original or in a
+	// worktree of its own (ForkDialog). A daemon without the hello's `fork`
+	// (LynShen CLI before B08) offers none.
+	const canFork = $derived(store.canFork(session.id) && !project?.chats);
+	let forkAt = $state<number | null>(null);
+	// A fork: the conversation it came from, when it is open here, and what
+	// the fork found, written up for that conversation's composer.
+	const forkSource = $derived(session.forkedFrom ? store.bySid(session.forkedFrom.sid) : undefined);
+	let bringing = $state(false);
+	async function bringBack() {
+		const from = session.forkedFrom;
+		const src = forkSource;
+		if (!from || bringing) return;
+		if (!src) return void toast.error(t('chat.fork.sourceGone'));
+		const prompt = handoffPrompt(chat.messages, from.turns || 1, project?.worktree?.branch);
+		if (!prompt) return void toast.info(t('chat.fork.nothingYet'));
+		const llm = llmTarget(providersList, chat);
+		if (!llm) return void toast.error(t('chat.fork.noModel'));
+		bringing = true;
+		try {
+			const text = (await generateText(llm.provider, llm.baseUrl, llm.format, llm.model, HANDOFF_SYSTEM, prompt)).trim();
+			if (!text) throw new Error(t('chat.fork.empty'));
+			// Into the original's composer, to read and send.
+			src.chat.pendingFill = text;
+			store.activeId = src.id;
+			toast.info(t('chat.fork.brought'));
+		} catch (e) {
+			toast.error(String(e instanceof Error ? e.message : e));
+		} finally {
+			bringing = false;
+		}
+	}
+
+	// A file a turn changed (its change pill's list) opens in the editor with
+	// that turn's changes: the file before the turn, worked out from the
+	// turn's own edits (turnBase.ts), or git HEAD when that can't be (edited
+	// since; an edit without its own diff).
+	async function openEdited(path: string, reply: Msg) {
+		const { ref, target: pending } = fileTarget(path, reply.kind === 'assistant' ? reply.text : undefined);
+		const target = await pending;
+		if (!target) return void toast.error(t('chat.fileNotFound', { path: ref.path }));
+		if (!target.text) return openTarget(target, ref);
+		const abs = target.path;
+		try {
+			const opened = await editorStore.open(abs, rootOf(abs) ?? folderOf(abs));
+			// Open since before the agent edited it: the file as it is now.
+			if (!opened.dirty) await editorStore.reload(opened.path);
+			const tab = editorStore.tab(opened.path) ?? opened;
+			const diffs = turnDiffs(chat.messages, reply, abs);
+			const base = diffs ? turnBase(tab.doc, diffs) : null;
+			editorStore.showTurn(tab.path, base);
+			if (base == null) toast.info(t('editor.turnBaseUnknown'));
+		} catch (e) {
+			toast.error(t('chat.fileOpenFailed', { path: ref.path, error: String(e) }));
+		}
 	}
 	function openTarget(target: FileTarget, ref: FileRef) {
 		const abs = target.path;
@@ -1859,6 +2014,22 @@
 	style:--col-l={beside ? `${cardsAt!.left}px` : undefined}
 	style:--col-r={beside ? `${cardsAt!.right}px` : undefined}
 >
+	{#if session.forkedFrom}
+		<!-- A fork: where it came from, and taking what it found back there. -->
+		<div class="owner forkbar">
+			<GitForkIcon size={14} />
+			{#if forkSource}
+				<button class="owner-name forklink" onclick={() => (store.activeId = forkSource.id)} title={t('chat.fork.open')}>{t('chat.fork.from', { title: shownTitle(session.forkedFrom.title || forkSource.chat.title) })}</button>
+			{:else}
+				<span class="owner-name">{t('chat.fork.from', { title: shownTitle(session.forkedFrom.title) })}</span>
+			{/if}
+			{#if project?.worktree}<span class="forkbranch">{project.worktree.branch}</span>{/if}
+			<span class="owner-role"></span>
+			<Button size="sm" variant="ghost" onclick={bringBack} disabled={bringing || !forkSource || chat.busy} title={forkSource ? t('chat.fork.bringHint') : t('chat.fork.sourceGone')}>
+				{#if bringing}<CircleNotchIcon size={14} class="spin" /> {t('chat.fork.bringing')}{:else}{t('chat.fork.bring')}{/if}
+			</Button>
+		</div>
+	{/if}
 	{#if owner}
 		<div class="owner">
 			<AgentAvatar agent={owner} size={16} />
@@ -1916,7 +2087,7 @@
 	<main bind:this={scroller} onscroll={onScroll} onwheel={onWheel} onpointerdown={reader.down}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div bind:this={contentEl} oncontextmenu={onFileMenu}>
-			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} busy={turnOpen} foldTurns={prefs.foldTurns} root={project?.path || chat.cwd || ''} />
+			<MessageList bind:this={messageList} bind:mark messages={chat.messages} {streamingMsg} {streamingReasoning} phase={chat.phase} call={chat.call} turnSince={chat.turnRunningSince} compactionTokens={chat.compactionTokens} retry={chat.retry} autoRetry={chat.autoRetry} onAutoRetryNow={() => autoRetry.now(chat)} onAutoRetryCancel={() => autoRetry.cancel(chat)} {findActive} {scroller} onEdit={editMessage} onCite={citeText} onNote={noteRequirement} onRewind={rewindToMessage} onFile={openChatFile} onAttachment={openAttachment} onDismiss={(m) => (chat.messages = chat.messages.filter((x) => x !== m))} backend={chat.backendId} provider={chat.provider ?? ''} onErrorAction={fixError} planWaitUntil={planWaits.until(session.id)} onCancelPlanWait={() => planWaits.cancel(session.id)} traceOf={traceable ? traceOf : undefined} agents={allAgents} onOpenAgent={traceable ? openAgent : undefined} onAgentChanges={viewAgentChanges} onMergeAgent={mergeAgent} onStopAgent={chat.backendId === 'lynshen' ? stopAgent : undefined} onPickAttempt={pickAttempt} attemptPicks={chat.attemptPicks} sendOf={(id) => chat.sendOf(id)} {onOpenSession} onPlan={planAction} onOpenPlan={(id) => planPages.open(session.id, id)} {planMode} onChanges={onOpenChanges ? openChanges : undefined} onOpenEdited={openEdited} onFork={canFork ? (keep) => (forkAt = keep) : undefined} busy={turnOpen} foldTurns={prefs.foldTurns} root={project?.path || chat.cwd || ''} onReveal={revealFile} onSchedule={scheduleFrom} onDeclineSchedule={(p) => proposals.set(p.id, 'declined')} scheduleState={(id) => proposals.state(id, agentDirectory.schedules)} />
 		</div>
 		{#if chat.booting && chat.engineState !== 'exited'}
 			<div class="welcome spawning">
@@ -1977,7 +2148,13 @@
 		{/if}
 
 		{#if chat.inTerminal}
-			<p class="interm">{t('chat.inTerminal')}</p>
+			<p class="interm">
+				{t('chat.inTerminal')}
+				<!-- Opened on another client: this tile can view it too. -->
+				{#if chat.terminal && engineHas('term_attach')}
+					<Button size="sm" variant="ghost" onclick={() => store.viewTui(session.id)}>{t('chat.viewTerminal')}</Button>
+				{/if}
+			</p>
 		{/if}
 		{#if chat.rateLimit}
 			<UsageLimit
@@ -2060,6 +2237,12 @@
 						local: toolModel.local !== undefined,
 						lynshen: toolModel.lynshen !== undefined,
 						onLynShen: toolMode === 'lynshen',
+						custom: customProvider?.name,
+						customs:
+							session.draft && (chat.backendId === 'claude' || chat.backendId === 'codex')
+								? (toolProviderConfigs[chat.backendId]?.providers ?? []).map((p) => ({ id: p.id, name: p.name, model: p.model, models: p.models.length }))
+								: undefined,
+						customId: customProvider?.id,
 						group: session.group ?? '',
 						groups: store.takesSessionGroup(session),
 						onPick: (choice) => pickProvider(toolModel, choice)
@@ -2070,12 +2253,13 @@
 			repoName={project?.name ?? ''}
 			onBranchChanged={refreshGitBranch}
 			onBackend={(b, acpAgent) => store.switchBackend(session.id, b, acpAgent)}
+			onSessionOption={(id, value) => send({ op: 'set_session_option', id, value })}
 			onContinueOnLynShen={canContinueOnLynShen ? continueOnLynShenHere : undefined}
 			bind:pickerQuery
 		bind:pickerSelIdx={selIdx}
 			onEffort={setEffort}
 			onSwitch={setSwitch}
-			gateway={chat.backendId === 'acp' && chat.acpOpencode ? !!session.gateway : null}
+			gateway={chat.backendId === 'acp' && (chat.acpOpencode || chat.agentGateway || (!!session.acpAgent?.builtin && !chat.engineCaps)) ? !!session.gateway : null}
 			effortDisabled={!!pendingModel || chat.switching}
 			onApproval={setApprovalMode}
 			{styleMenu}
@@ -2085,6 +2269,10 @@
 	</div>
 </div>
 
+{#if proposing}
+	{@const made = proposing}
+	<ScheduleDialog agent={chat.agent ?? ''} agents={proposalAgents} preset={made.preset} onSaved={() => proposals.set(made.id, 'created')} onClose={() => (proposing = null)} />
+{/if}
 {#if fileMenu}
 	<div class="file-menu" use:portal bind:this={fileMenuEl} style:left="{fileMenuPos.x}px" style:top="{fileMenuPos.y}px">
 		<PopMenu items={fileMenuItems} title={fileMenu.target ? undefined : t('chat.fileMenu.missing')} placement="down-left" fit={false} onSelect={runFileMenu} onClose={() => (fileMenu = null)} />
@@ -2126,6 +2314,24 @@
 {#snippet historyTabs()}
 	<Segmented bind:value={historyTab} options={historySources} onChange={showHistorySource} />
 {/snippet}
+
+{#if isActive && forkAt !== null}
+	<ForkDialog
+		repo={project?.worktree?.mainRepoPath ?? project?.path ?? ''}
+		cwd={project?.path ?? ''}
+		title={chat.title}
+		session={session.id}
+		keep={forkAt}
+		latest={forkAt >= chat.userTurns}
+		checkpoint={chat.fileCheckpoints[forkAt]}
+		onFork={(worktree) => {
+			const keep = forkAt!;
+			forkAt = null;
+			store.forkSession(session.id, keep, worktree);
+		}}
+		onClose={() => (forkAt = null)}
+	/>
+{/if}
 
 {#if isActive && chat.pendingRewind}
 	<Modal title={t('shell.rewindQuestion')} onClose={() => (chat.pendingRewind = null)}>
@@ -2195,6 +2401,28 @@
 	.owner-link:hover {
 		color: var(--text);
 		text-decoration: underline;
+	}
+	/* A fork's strip: where it came from (a link to it), its worktree's
+	   branch in mono, and 带回结论. */
+	.forkbar {
+		padding-block: 4px;
+	}
+	.forklink {
+		padding: 0;
+		border: none;
+		background: none;
+		font: inherit;
+		font-weight: 500;
+		cursor: pointer;
+	}
+	.forklink:hover {
+		text-decoration: underline;
+	}
+	.forkbranch {
+		flex: none;
+		font-family: var(--font-mono);
+		font-size: var(--fs-2xs);
+		color: var(--dim2);
 	}
 	.chatpane {
 		position: relative;

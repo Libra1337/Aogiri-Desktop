@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { overBrowser } from '$lib/browser.svelte';
 	import { popOut } from '$lib/ui/motion';
 	// The composer's branch picker, opened from the branch chip under the input:
 	// filter the local branches, switch to one, or create one and switch to it.
@@ -17,6 +18,7 @@
 		cwd,
 		repo,
 		current,
+		down = false,
 		onChanged,
 		onClose
 	}: {
@@ -24,6 +26,9 @@
 		/** Shown in the search placeholder. */
 		repo: string;
 		current: string;
+		/** Opens below its anchor, right-aligned (the title bar's project
+		 *  menu); else above, left-aligned (the composer). */
+		down?: boolean;
 		onChanged: () => void;
 		onClose: () => void;
 	} = $props();
@@ -96,7 +101,7 @@
 <svelte:window onkeydown={(e) => e.key === 'Escape' && !creating && onClose()} />
 
 <button class="bm-backdrop" aria-label={t('common.close')} tabindex="-1" onclick={onClose}></button>
-<div class="pop bm" role="dialog" out:popOut|global aria-label={t('chat.branchMenu.title')}>
+<div use:overBrowser class="pop bm" class:down role="dialog" out:popOut|global aria-label={t('chat.branchMenu.title')}>
 	{#if creating}
 		<label class="field">
 			<GitBranchIcon size={15} />
@@ -151,6 +156,13 @@
 		width: min(340px, calc(100vw - 32px));
 		transform-origin: bottom left;
 		animation: pop-in var(--t-pop) var(--ease-enter);
+	}
+	.bm.down {
+		top: calc(100% + 6px);
+		right: 0;
+		bottom: auto;
+		left: auto;
+		transform-origin: top right;
 	}
 	.field {
 		display: flex;

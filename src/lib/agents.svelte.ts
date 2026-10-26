@@ -90,10 +90,14 @@ export interface DaemonSessionView {
 	/** How many entries its engine saved: LynShen conversations, newer
 	 *  daemons (0: nothing in it, see savedEmpty.ts). */
 	entries?: number | null;
-	/** ACP: the desktop's registry agent it was started with (newer daemons). */
-	acp_agent?: { id: string; name: string } | null;
+	/** ACP: the desktop's registry entry it was started with, or a built-in
+	 *  agent (`builtin`, a daemon with `acp_presets`). Newer daemons. */
+	acp_agent?: { id: string; name: string; builtin?: boolean } | null;
 	/** A turn runs or messages wait (newer daemons). */
 	running?: boolean;
+	/** A fork: the conversation it came from and the turns it took (B08,
+	 *  LynShen CLI with the hello's `fork`). */
+	forked_from?: { session?: string | null; turns?: number | null; at?: string | null } | null;
 	/** Background work its turn left going runs: 后台任务运行中 (daemons with
 	 *  `schedule_runs`). */
 	background?: boolean;

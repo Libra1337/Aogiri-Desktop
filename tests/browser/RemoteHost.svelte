@@ -10,6 +10,11 @@
 	//                            background task, one switched off after
 	//                            failures, one coming up (with &features=schedule_runs
 	//                            as a newer daemon lists them)
+	//   &deliver                 the session's last turn presented an image, a
+	//                           video and a page (fs_image answers them)
+	//   &tui                     the session s-cache is in its TUI on the
+	//                           computer (`surface` names t-9); term_attach
+	//                           replays its screen, term_input is echoed
 	// window.__remoteOps: every op the page sent; __remoteSend(frame) sends
 	// one more frame from the computer.
 	import { onMount, type Component } from 'svelte';
@@ -24,6 +29,8 @@
 	import { openTarget } from '../../src/lib/remote/push';
 	import { setLocale } from '../../src/lib/i18n';
 	import type { SocketLike } from '../../src/lib/daemon';
+	import { VIDEO_SRC } from './media';
+	import { imageSrc } from './previewFiles';
 
 	const params = new URL(location.href).searchParams;
 	setLocale(params.get('lang') === 'en' ? 'en' : 'zh');
@@ -31,6 +38,7 @@
 	const ops: Frame[] = [];
 	let rules: Frame = { daily_budget: 20, quiet_start: '23:00', quiet_end: '08:00', turn_done: true, sent_today: 3 };
 	const SESSION = 's-cache';
+	const DIR = '/Users/me/code/lynshen-desktop/out';
 	const sessions: Frame[] = [
 		{ session: SESSION, running: true, cwd: '/Users/me/code/lynshen-desktop', title: '会话缓存分片', open: true, watchers: 0, updated_at: Date.now(), created_at: Date.now(), entries: 4, engine: 'lynshen', agent: null, archived: false, chat: false },
 		{ session: 's-docs', cwd: '/Users/me/code/lynshen-desktop', title: '翻译文档', open: false, watchers: 0, updated_at: Date.now() - 3_600_000, created_at: Date.now() - 3_600_000, entries: 9, engine: 'lynshen', agent: null, archived: false, chat: false }
@@ -127,11 +135,20 @@
 					setTimeout(() => {
 						this.emit({ type: 'startup', session: op.session, session_id: op.session, cwd: sessions[0].cwd, model: 'gpt-5.5', version: '0.7.5' });
 						this.emit({ type: 'approval_mode', session: op.session, mode: 'manual' });
+						// &deliver: the turn presented an image, a video and a page.
+						const presented = params.has('deliver')
+							? [
+									{ role: 'user', content: '做一份 Q3 月活的报告，配图和演示视频。' },
+									{ role: 'tool', name: 'present_files', call_id: 'p1', output: JSON.stringify({ files: [{ path: `${DIR}/q3-mau.png`, description: 'Q3 月活走势', size: 182_400, kind: 'image' }, { path: `${DIR}/demo.webm`, description: '演示录屏', size: 1_740, kind: 'video' }, { path: `${DIR}/q3.html`, description: 'Q3 月活报告', size: 20_480, kind: 'file' }] }) },
+									{ role: 'assistant', content: '报告、配图和录屏都在 out/ 下。' }
+								]
+							: [];
 						this.emit({
 							type: 'transcript', session: op.session,
 							items: [
 								{ role: 'user', content: '把会话缓存改成按会话分片，跑完单元测试再提交。' },
-								{ role: 'assistant', content: '改好了，单元测试全部通过。接下来推送分支。' }
+								{ role: 'assistant', content: '改好了，单元测试全部通过。接下来推送分支。' },
+								...presented
 							]
 						});
 						// The engine's commands, for the "/" list (ticket #46).
@@ -145,6 +162,7 @@
 							]
 						});
 						this.emit({ type: 'attended', session: op.session, attended: true });
+						if (params.has('tui') && op.session === SESSION) this.emit({ type: 'surface', session: op.session, surface: 'tui', term: 't-9', client: 1 });
 						if (op.session === SESSION && !approved) this.emit(approval);
 					}, 30);
 					return;
@@ -158,6 +176,40 @@
 					setTimeout(() => this.emit({ type: 'tool_output', session: SESSION, call_id: 'call-push', name: 'bash', output: '已推送', is_error: false }), 30);
 					// The turn ends once the push ran (`?idleAfterApprove`).
 					if (params.has('idleAfterApprove')) setTimeout(() => this.emit({ type: 'status', session: SESSION, message: 'ready' }), 60);
+					return;
+				// The files a message sent or a turn presented, as data URLs.
+				case 'fs_image': {
+					const path = String(op.path);
+					if (/\.webm$/.test(path)) return answer({ type: 'fs_image', data: VIDEO_SRC });
+					if (/\.png$/.test(path)) return answer({ type: 'fs_image', data: imageSrc() });
+					return answer({ type: 'error', message: `not an image or a video: ${path}` });
+				}
+				// B11: the computer's built-in agents, a new session, its TUI.
+				case 'acp_presets':
+					return answer({
+						type: 'acp_presets',
+						presets: [
+							{ id: 'opencode', name: 'OpenCode', status: 'ready', path: '/usr/local/bin/opencode', version: '1.19.2', min_version: '1.0.0', below_version: '2.0.0', approvals: true, gateway: true, install: 'npm i -g opencode-ai@1', tui: true },
+							{ id: 'omp', name: 'oh-my-pi', status: 'missing', path: null, version: null, min_version: null, below_version: null, approvals: true, gateway: true, install: 'bun install -g @oh-my-pi/pi-coding-agent', tui: true },
+							{ id: 'pi', name: 'Pi', status: 'ready', path: '/usr/local/bin/pi', version: '0.82.1', min_version: '0.81.0', below_version: null, approvals: false, gateway: true, install: 'npm install -g @earendil-works/pi-coding-agent', tui: true }
+						]
+					});
+				case 'session_create':
+					return answer({ type: 'session_created', session: 's-new' });
+				case 'term_attach':
+					answer({ type: 'term_attached', term: op.term, cols: 80, rows: 24 });
+					setTimeout(() => this.emit({ type: 'term_output', term: op.term, data: btoa('LynShen TUI on the computer\r\n> '), replay: true }), 40);
+					return;
+				case 'session_tui':
+					answer({ type: 'term_opened', term: 't-9' });
+					setTimeout(() => this.emit({ type: 'term_output', term: 't-9', data: btoa('> ') }), 40);
+					return;
+				case 'term_input':
+					setTimeout(() => this.emit({ type: 'term_output', term: op.term, data: op.data }), 10);
+					return;
+				case 'term_ack':
+				case 'term_detach':
+				case 'term_resize':
 					return;
 				case 'feedback_send':
 					// ?oldEngine: a daemon before feedback_send.

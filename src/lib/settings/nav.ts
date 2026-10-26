@@ -29,6 +29,8 @@ export type SectionKey =
 	/** 权限与沙箱: the LynShen sandbox, its directories and command rules. */
 	| 'sandbox'
 	| 'team'
+	/** 应用工具: the tools the daemon gives every agent (app_tools). */
+	| 'apptools'
 	| 'acp'
 	| 'import'
 	| 'daemon'
@@ -39,7 +41,7 @@ export type SectionKey =
 export const GROUPS: { key: string; sections: SectionKey[] }[] = [
 	{ key: 'app', sections: ['general', 'shortcuts', 'account', 'purchase', 'invite', 'devices', 'usage', 'voice'] },
 	{ key: 'models', sections: ['providers', 'models', 'styles', 'network'] },
-	{ key: 'agents', sections: ['agents', 'sandbox', 'team', 'acp', 'skills', 'plugins', 'mcp', 'import'] },
+	{ key: 'agents', sections: ['agents', 'sandbox', 'team', 'apptools', 'acp', 'skills', 'plugins', 'mcp', 'import'] },
 	{ key: 'system', sections: ['daemon', 'chat', 'updates'] }
 ];
 
@@ -86,6 +88,7 @@ export const ROWS: SearchRow[] = [
 	{ section: 'general', id: 'cache-miss', titleKey: 'settings.behavior.cacheMissAlert', descKey: 'settings.behavior.cacheMissAlertHint' },
 	{ section: 'general', id: 'sounds', titleKey: 'settings.behavior.sounds', descKey: 'settings.behavior.soundsHint' },
 	{ section: 'general', id: 'html-open', titleKey: 'settings.behavior.htmlOpen' },
+	{ section: 'general', id: 'dev-server-open', titleKey: 'settings.behavior.devServerAutoOpen', descKey: 'settings.behavior.devServerAutoOpenHint' },
 	{ section: 'general', id: 'autostart', titleKey: 'settings.autostart.title', descKey: 'settings.autostart.hint' },
 	{ section: 'general', id: 'autostart-mode', titleKey: 'settings.autostart.mode', descKey: 'settings.autostart.modeHint' },
 	{ section: 'general', id: 'feedback', titleKey: 'settings.help.feedback' },
@@ -134,6 +137,7 @@ export const ROWS: SearchRow[] = [
 	{ section: 'agents', id: 'shell-command', titleKey: 'settings.shells.command', descKey: 'settings.shells.commandHint' },
 	{ section: 'agents', id: 'terminal-shell', titleKey: 'settings.shells.terminal', descKey: 'settings.shells.terminalHint' },
 	{ section: 'agents', id: 'backend-list', titleKey: 'settings.section.agents' },
+	{ section: 'agents', id: 'providers-claude', titleKey: 'settings.toolProviders.title' },
 	{ section: 'agents', id: 'dependencies', titleKey: 'setup.deps.title' },
 	{ section: 'sandbox', id: 'sandbox-mode', titleKey: 'settings.sandbox.modeTitle', descKey: 'settings.sandbox.modeHint.workspace-write' },
 	{ section: 'sandbox', id: 'sandbox-network', titleKey: 'settings.sandbox.network', descKey: 'settings.sandbox.networkHint' },
@@ -142,7 +146,9 @@ export const ROWS: SearchRow[] = [
 	{ section: 'sandbox', id: 'sandbox-rules', titleKey: 'settings.sandbox.rulesTitle', descKey: 'settings.sandbox.rulesHint' },
 	{ section: 'team', id: 'team-v2', titleKey: 'settings.team.v2', descKey: 'settings.team.v2Hint' },
 	{ section: 'team', id: 'team-fanout', titleKey: 'settings.team.fanout', descKey: 'settings.team.fanoutHint.plan' },
-	{ section: 'team', id: 'team-messages', titleKey: 'settings.team.messages', descKey: 'settings.team.messagesHint.on' },
+	{ section: 'apptools', id: 'app-tools-present', titleKey: 'settings.appTools.presentFiles', descKey: 'settings.appTools.presentFilesHint' },
+	{ section: 'apptools', id: 'app-tools-schedule', titleKey: 'settings.appTools.proposeSchedule', descKey: 'settings.appTools.proposeScheduleHint' },
+	{ section: 'apptools', id: 'team-messages', titleKey: 'settings.team.messages', descKey: 'settings.team.messagesHint.on' },
 	{ section: 'team', id: 'team-wake', titleKey: 'settings.team.wakeOnResult', descKey: 'settings.team.wakeOnResultHint' },
 	{ section: 'team', id: 'team-review', titleKey: 'settings.team.reviewOnComplete', descKey: 'settings.team.reviewOnCompleteHint' },
 	{ section: 'team', id: 'team-max-live', titleKey: 'settings.team.maxLive', descKey: 'settings.team.maxLiveHint' },

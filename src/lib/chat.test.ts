@@ -17,6 +17,84 @@ describe('countDiffLines', () => {
 });
 
 describe('ChatState.handle', () => {
+	it('names the terminal a conversation moved to, and clears it on return', () => {
+		const c = new ChatState();
+		c.handle({ type: 'surface', session: 's', surface: 'tui', term: 't-1', client: 3 } as never);
+		expect(c.inTerminal).toBe(true);
+		expect(c.terminal).toBe('t-1');
+		c.handle({ type: 'surface', session: 's', surface: 'gui' } as never);
+		expect(c.inTerminal).toBe(false);
+		expect(c.terminal).toBe('');
+		// An older daemon names no terminal: in the TUI, nothing to view.
+		c.handle({ type: 'surface', session: 's', surface: 'tui' } as never);
+		expect(c.inTerminal).toBe(true);
+		expect(c.terminal).toBe('');
+	});
+
+	it("keeps an ACP agent's caps, settings and its unset effort", () => {
+		const store = new Map<string, string>();
+		vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k), clear: () => store.clear() });
+		const c = new ChatState('acp');
+		c.acpAgentId = 'omp';
+		c.handle({
+			type: 'engine_caps',
+			agent: { id: 'omp', name: 'oh-my-pi', version: '18.1.21' },
+			approvals: true,
+			gateway: true,
+			caps: { interrupt: true, modelPicker: true, slashCommands: 'yes' }
+		} as never);
+		expect(c.engineCaps).toEqual({ interrupt: true, modelPicker: true });
+		expect(c.agentInfo).toEqual({ id: 'omp', name: 'oh-my-pi', version: '18.1.21' });
+		expect(c.agentGateway).toBe(true);
+		expect(c.agentApprovals).toBe(true);
+		c.handle({
+			type: 'session_options',
+			options: [
+				{ id: 'mode', name: 'Mode', description: null, category: 'mode', type: 'select', value: 'default', choices: [{ value: 'default', name: 'Default', description: null }, { value: 'plan', name: 'Plan', description: null }] },
+				{ id: 'think', name: 'Show thinking', description: null, category: null, type: 'boolean', value: true },
+				{ id: 'odd', name: 'Odd', description: null, category: null, type: 'text', value: 'x' }
+			]
+		} as never);
+		expect(c.sessionOptions.map((o) => o.id)).toEqual(['mode', 'think']);
+		c.handle({ type: 'model_status', provider: 'acp', model: 'lynshen/gpt-6', model_label: 'GPT-6', reasoning_effort: 'auto', reasoning_efforts: ['low', 'medium', 'high'], default_effort: 'auto', state: 'ready' } as never);
+		expect(c.effortDefault).toBe('auto');
+		// A startup leaves them: the daemon sends them on change only.
+		c.handle({ type: 'startup', session_id: 'x' } as never);
+		expect(c.engineCaps).toEqual({ interrupt: true, modelPicker: true });
+		// A draft of the same agent starts from them.
+		const draft = new ChatState('acp');
+		draft.acpAgentId = 'omp';
+		draft.seedFromProfile();
+		expect(draft.engineCaps).toEqual({ interrupt: true, modelPicker: true });
+		expect(draft.effortDefault).toBe('auto');
+		vi.unstubAllGlobals();
+	});
+
+	it("asks once, quietly, for the model list of a backend that never listed it", () => {
+		const store = new Map<string, string>();
+		vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k), clear: () => store.clear() });
+		const c = new ChatState('claude');
+		c.handle({ type: 'model_status', provider: 'claude', model: 'opus', state: 'ready' } as never);
+		expect(c.wantsCatalog).toBe(true);
+		c.wantsCatalog = false;
+		c.handle({ type: 'model_status', provider: 'claude', model: 'opus', state: 'ready' } as never);
+		expect(c.wantsCatalog).toBe(false);
+		// Kept already: no ask.
+		c.handle({ type: 'model_view', models: [{ model: 'opus', active: true }], active_effort: '' } as never);
+		const next = new ChatState('claude');
+		next.handle({ type: 'model_status', provider: 'claude', model: 'opus', state: 'ready' } as never);
+		expect(next.wantsCatalog).toBe(false);
+		vi.unstubAllGlobals();
+	});
+
+	it("names the custom provider a Claude Code session runs on, never its key", () => {
+		const c = new ChatState('claude');
+		c.handle({ type: 'tool_provider', session: 's', provider: { id: 'relay', name: 'Relay', model: 'claude-opus-5', models: ['claude-opus-5'] } } as never);
+		expect(c.toolProvider).toEqual({ id: 'relay', name: 'Relay', model: 'claude-opus-5', models: ['claude-opus-5'] });
+		c.handle({ type: 'tool_provider', session: 's', provider: null } as never);
+		expect(c.toolProvider).toBeNull();
+	});
+
 	it('leaves a reasoning block the reader opened open when it ends', () => {
 		const c = new ChatState();
 		c.handle({ type: 'reasoning_delta', delta: 'think' });
@@ -474,6 +552,58 @@ describe('ChatState.handle', () => {
 		});
 		expect(c.modelCatalog).toEqual([{ model: 'opus', active: true, reasoning_efforts: ['high', 'max'] }]);
 		expect(c.modelCatalogEffort).toBe('high');
+	});
+
+	it('times each tool call, and keeps a replayed call\'s failure and id', () => {
+		const c = new ChatState();
+		c.handle({ type: 'user_message', content: 'go' });
+		c.handle({ type: 'status', message: 'streaming' });
+		c.handle({ type: 'tool_start', call_id: 'a', name: 'bash' });
+		const call = c.messages.find((m) => m.kind === 'tool')!;
+		expect(call.kind === 'tool' && call.startedAt).toBeGreaterThan(0);
+		expect(call.kind === 'tool' && call.endedAt).toBeUndefined();
+		c.handle({ type: 'tool_output', call_id: 'a', name: 'bash', output: '{}' });
+		expect(call.kind === 'tool' && call.endedAt).toBeGreaterThanOrEqual(call.kind === 'tool' ? call.startedAt! : 0);
+		// A call whose output never came ends with the turn.
+		c.handle({ type: 'tool_start', call_id: 'b', name: 'read' });
+		c.handle({ type: 'status', message: 'ready' });
+		const lost = c.messages.findLast((m) => m.kind === 'tool');
+		expect(lost?.kind === 'tool' && lost.endedAt).toBeGreaterThan(0);
+		const r = new ChatState();
+		r.handle({ type: 'transcript', items: [{ role: 'user', content: 'go' }, { role: 'tool', name: 'bash', output: '{}', is_error: true, call_id: 'x1' }] });
+		const replayed = r.messages.find((m) => m.kind === 'tool');
+		expect(replayed).toMatchObject({ isError: true, callId: 'x1', running: false });
+		expect(replayed?.kind === 'tool' && replayed.startedAt).toBeUndefined();
+	});
+
+	it('marks the steps of the conversation\'s course where they happen, out of the notices', () => {
+		const c = new ChatState();
+		c.handle({ type: 'model_status', model: 'gpt-5.5', state: 'idle' });
+		c.handle({ type: 'user_message', content: 'go' });
+		c.handle({ type: 'connecting' });
+		c.handle({ type: 'status', message: 'streaming' });
+		c.handle({ type: 'assistant_delta', delta: 'working on it' });
+		// The reader stops the turn: a divider where it ended, once.
+		c.stopAsked = true;
+		c.handle({ type: 'status', message: 'interrupted' });
+		c.handle({ type: 'status', message: 'ready' });
+		const flows = () => c.messages.flatMap((m) => (m.kind === 'system' && m.flow ? [m.flow.type] : []));
+		expect(flows()).toEqual(['interrupted']);
+		// Another model in the same engine; the first report made none.
+		c.handle({ type: 'model_status', model: 'claude-opus-5-5', model_label: 'Opus 5.5', state: 'idle' });
+		expect(c.messages.at(-1)).toMatchObject({ kind: 'system', text: 'Now on Opus 5.5', flow: { type: 'switch' } });
+		c.handle({ type: 'model_status', model: 'claude-opus-5-5', state: 'idle' });
+		c.handle({ type: 'task_done', kind: 'local_bash', status: 'completed', summary: 'npm run dev' });
+		c.handle({ type: 'info', message: 'nothing old enough to compact' });
+		expect(flows()).toEqual(['interrupted', 'switch', 'task']);
+		// The notices strip keeps the chatter only.
+		expect(c.statusLog).toEqual(['nothing old enough to compact']);
+		// A turn that ends by itself has no divider.
+		c.handle({ type: 'user_message', content: 'again' });
+		c.handle({ type: 'connecting' });
+		c.handle({ type: 'status', message: 'streaming' });
+		c.handle({ type: 'status', message: 'ready' });
+		expect(flows()).toEqual(['interrupted', 'switch', 'task']);
 	});
 
 	it('collects meta notices into statusLog, keeping them out of the bubble stream', () => {
@@ -950,7 +1080,7 @@ describe('claude session extras', () => {
 		c.handle({ type: 'background_tasks', tasks: [] });
 		c.handle({ type: 'task_done', task_id: 'w1', kind: 'local_workflow', status: 'completed', summary: 'Review done' });
 		expect(c.bgTasks).toEqual([]);
-		expect(c.messages.at(-1)).toEqual({ kind: 'system', text: '多智能体编排已完成：Review done' });
+		expect(c.messages.at(-1)).toEqual({ kind: 'system', flow: { type: 'task' }, text: '多智能体编排已完成：Review done' });
 		c.handle({ type: 'task_output', task_id: 'b1', output: 'ok', truncated: true });
 		expect(c.taskOutputs.b1).toEqual({ output: 'ok', truncated: true, error: '' });
 	});
@@ -976,7 +1106,7 @@ describe('claude session extras', () => {
 		setLocale('zh');
 		const c = new ChatState();
 		c.handle({ type: 'model_fallback', from: 'Opus 5.5', to: 'Sonnet 5.5', reason: 'overloaded' });
-		expect(c.messages.at(-1)).toEqual({ kind: 'system', text: '模型已从 Opus 5.5 切换到 Sonnet 5.5（原模型过载）' });
+		expect(c.messages.at(-1)).toEqual({ kind: 'system', flow: { type: 'fallback' }, text: '模型已从 Opus 5.5 切换到 Sonnet 5.5（原模型过载）' });
 		c.handle({ type: 'subagent_lifecycle', path: 'a1', label: 'Scan auth', status: 'running', message: 'Reading' });
 		expect(c.subagents.a1).toMatchObject({ status: 'running', message: 'Reading', label: 'Scan auth' });
 		c.handle({ type: 'tool_start', call_id: 't2', name: 'read', subagent: 'Scan auth' });

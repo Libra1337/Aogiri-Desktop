@@ -33,6 +33,8 @@ export function policy(hashes) {
 		"style-src 'self' 'unsafe-inline'",
 		// Attachments shown before upload, inline icons.
 		"img-src 'self' data: blob:",
+		// A presented video, played from the bytes the computer sent (a blob).
+		"media-src 'self' blob:",
 		"font-src 'self' data:",
 		// The relay and its push key, on this origin.
 		"connect-src 'self' wss://app.lynshen.org",

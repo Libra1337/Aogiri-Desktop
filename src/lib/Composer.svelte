@@ -85,6 +85,7 @@
 		repoName = '',
 		onBranchChanged,
 		onBackend,
+		onSessionOption,
 		onContinueOnLynShen,
 		onSubmit,
 		onStop,
@@ -145,6 +146,8 @@
 		/** A branch was switched to or created from the chip. */
 		onBranchChanged?: () => void;
 		onBackend?: (b: BackendId, acpAgent?: AcpAgentRef) => void | Promise<void>;
+		/** ACP: sets one of the agent's settings (see ModelMenu). */
+		onSessionOption?: (id: string, value: string | boolean) => void;
 		/** A started Claude Code / Codex conversation: continue it on LynShen. */
 		onContinueOnLynShen?: () => void;
 		onSubmit: () => void;
@@ -388,7 +391,7 @@
 	}
 	// Exposed to the page (⇧⌘M): opens the model menu when the session has one.
 	export function openModelMenu() {
-		if ((chat.efforts.length || bcaps.modelPicker || !backendLocked || onContinueOnLynShen) && !modelPopoverVisible) toggleModelPopover();
+		if ((chat.efforts.length || bcaps.modelPicker || !backendLocked || onContinueOnLynShen || chat.sessionOptions.length) && !modelPopoverVisible) toggleModelPopover();
 	}
 	// Exposed to the page: drop a web-element reference chip at the caret.
 	export function insertToken(token: string) {
@@ -1124,7 +1127,10 @@
 		{#if payer}
 			<span class="fbtn static payer" class:warn={payer.warn} role="note" title={payer.title} aria-label={payer.title}>{payer.label}</span>
 		{/if}
-		{#if chat.efforts.length || bcaps.modelPicker || !backendLocked || gateway !== null || onContinueOnLynShen}
+		{#if chat.backendId === 'acp' && chat.agentApprovals === false}
+			<span class="fbtn static noappr" role="note" title={t('chat.noApprovalHint')}>{t('chat.noApproval')}</span>
+		{/if}
+		{#if chat.efforts.length || bcaps.modelPicker || !backendLocked || gateway !== null || onContinueOnLynShen || chat.sessionOptions.length}
 			<!-- The model button opens the model menu (agent, model, effort, provider). -->
 			<button
 				class="fbtn model"
@@ -1138,7 +1144,7 @@
 			>
 				{#key chat.model}
 					<span class="mswap">
-						{#if chat.backendId !== 'lynshen'}<BackendIcon backend={chat.backendId} size={14} />{/if}
+						{#if chat.backendId !== 'lynshen'}<BackendIcon backend={chat.backendId} agent={chat.acpAgentId} size={14} />{/if}
 						<span class="m">{modelDisplayName || stripGroupSuffix(chat.modelLabel || '') || chat.model || backendLabel}</span>
 					</span>
 				{/key}
@@ -1147,7 +1153,7 @@
 			</button>
 		{:else if chat.model}
 			<span class="fbtn model static"
-				><BackendIcon backend={chat.backendId} size={14} /><span class="m">{modelDisplayName || stripGroupSuffix(chat.modelLabel || '') || chat.model}</span></span
+				><BackendIcon backend={chat.backendId} agent={chat.acpAgentId} size={14} /><span class="m">{modelDisplayName || stripGroupSuffix(chat.modelLabel || '') || chat.model}</span></span
 			>
 		{/if}
 		{#if modelPopoverVisible}
@@ -1165,6 +1171,7 @@
 				onEffort={setEffort}
 				{onSwitch}
 				{onBackend}
+				{onSessionOption}
 				{onContinueOnLynShen}
 				onRefreshModels={() => onModel()}
 			/>
@@ -1190,6 +1197,7 @@
 					<EffortMenu
 						efforts={chat.efforts}
 						effort={chat.effort}
+						unset={chat.effortDefault}
 						disabled={effortDisabled}
 						accent={modelColor(chat.model)}
 						onEffort={setEffort}
@@ -1482,6 +1490,9 @@
 	}
 	/* Who pays (the plan or the balance): plain text, the caution colour only
 	   once the plan cannot pay. */
+	.fbtn.noappr {
+		color: var(--warn);
+	}
 	.fbtn.payer {
 		flex-shrink: 1;
 		overflow: hidden;

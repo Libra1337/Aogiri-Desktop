@@ -1,6 +1,7 @@
 <script lang="ts">
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon';
 	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
+	import GitForkIcon from 'phosphor-svelte/lib/GitForkIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 	import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
 	import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon';
@@ -17,7 +18,12 @@
 	import EscalationLine from '$lib/sandbox/EscalationLine.svelte';
 	import PlanCard, { type PlanAction } from '$lib/PlanCard.svelte';
 	import CompactionCard from '$lib/CompactionCard.svelte';
+	import FlowMarker from '$lib/FlowMarker.svelte';
 	import RecapReceipt from '$lib/RecapReceipt.svelte';
+	import ArtifactCards from '$lib/ArtifactCards.svelte';
+	import ScheduleProposal from '$lib/ScheduleProposal.svelte';
+	import ChildSessions from '$lib/ChildSessions.svelte';
+	import { turnSummary, USER_TOOLS, type Proposal, type TurnSummary } from '$lib/turnSummary';
 	import type { ApprovalMode } from '$lib/approval';
 	import { attemptGroups, SPAWN_TOOLS, spawnAgentRow, WAIT_TOOLS, type AgentRow } from '$lib/agentProgress';
 	import type { OpenHow } from '$lib/agents/subagentPages.svelte';
@@ -25,7 +31,10 @@
 	import { parseDelivery } from '$lib/delivery';
 	import { sendCardProps, sendCardView, type SessionMessageView } from '$lib/sessions/sessionMessage';
 	import { ReplyStream, finishedBlocks, type Block } from '$lib/streamBlocks';
-	import { parseToolOutput, toolIcon, toolTarget, toolVerb } from '$lib/toolSummary';
+	import { diffStat, editedPaths, isEdit, parseToolOutput, toolFailed, toolIcon, toolTarget, toolVerb } from '$lib/toolSummary';
+	import DiffStat from '$lib/DiffStat.svelte';
+	import ToolTime from '$lib/ToolTime.svelte';
+	import RunLight from '$lib/ui/RunLight.svelte';
 	import Indicator from '$lib/Indicator.svelte';
 	import CallTimer from '$lib/CallTimer.svelte';
 	import RetryNotice from '$lib/RetryNotice.svelte';
@@ -46,6 +55,7 @@
 	import ListPlusIcon from 'phosphor-svelte/lib/ListPlusIcon';
 	import { copyText } from '$lib/clipboard';
 	import { lastTurnStart, turnEnds, turnText } from '$lib/turnText';
+	import { forkPoints } from '$lib/forks';
 	import { contextItems, type ContextItem } from '$lib/ui/contextMenu';
 	import { streamText } from '$lib/streamText';
 	import type { PlainSource } from '$lib/streamPlain';
@@ -57,6 +67,7 @@
 		streamingReasoning,
 		phase,
 		call = null,
+		turnSince = 0,
 		compactionTokens = 0,
 		retry = null,
 		autoRetry = null,
@@ -81,6 +92,8 @@
 		onOpenAgent,
 		onAgentChanges,
 		onChanges,
+		onOpenEdited,
+		onFork,
 		onMergeAgent,
 		onStopAgent,
 		onPickAttempt,
@@ -94,6 +107,10 @@
 		busy = false,
 		foldTurns = false,
 		root = '',
+		onReveal,
+		onSchedule,
+		onDeclineSchedule,
+		scheduleState,
 		mark = $bindable(-1)
 	}: {
 		messages: Msg[];
@@ -102,6 +119,8 @@
 		phase: string | null;
 		/** The model request in flight, timed live (see CallTiming). */
 		call?: CallTiming | null;
+		/** When the running turn began (the status line's turn clock). */
+		turnSince?: number;
 		compactionTokens?: number;
 		/** A failed model request being re-sent: shown instead of the phase. */
 		retry?: RetryState | null;
@@ -177,6 +196,12 @@
 		/** Shows the project's changes in the Git panel: the end of a turn's
 		 *  list of changed files. */
 		onChanges?: () => void;
+		/** Opens a file the turn that `reply` ends changed, with that turn's
+		 *  changes (absent: as a file). */
+		onOpenEdited?: (path: string, reply: Msg) => void;
+		/** Forks the conversation after the turn a reply ends, keeping that
+		 *  many user turns (absent: it cannot fork). */
+		onFork?: (keep: number) => void;
 		/** The session's folder: a changed file shows relative to it. */
 		root?: string;
 		/** The last turn still runs, or waits on work it handed off: it does
@@ -184,6 +209,15 @@
 		busy?: boolean;
 		/** A finished turn folds its work into one line (turnFold.ts). */
 		foldTurns?: boolean;
+		/** Shows a deliverable in the file manager (absent: no button). */
+		onReveal?: (path: string) => void;
+		/** Opens the task dialog for a proposed scheduled task (absent: the
+		 *  card only shows it). */
+		onSchedule?: (proposal: Proposal) => void;
+		/** Sets a proposal aside (absent: no 不用了). */
+		onDeclineSchedule?: (proposal: Proposal) => void;
+		/** Whether a task was created from proposal `id`, or it was set aside. */
+		scheduleState?: (id: string) => 'created' | 'declined' | null;
 	} = $props();
 
 	// ── Virtual list (dynamic-height windowing) ─────────────────────────────
@@ -268,6 +302,7 @@
 			case 'reasoning':
 			case 'agent_message':
 			case 'escalation':
+			case 'system':
 				return 28;
 			case 'user':
 				return 48 + 24 * Math.floor(m.text.length / 60);
@@ -356,6 +391,8 @@
 		// A hit inside a folded turn opens it.
 		const fold = folds.of.get(messages[findActive]!);
 		if (fold) untrack(() => openFolds.add(fold.key));
+		const head = toolGroups.headOf.get(messages[findActive]!);
+		if (head) untrack(() => openGroups.add(head));
 		if (virtual && scroller) {
 			scroller.scrollTo({ top: Math.max(0, offsets[findActive] - viewH / 2), behavior: 'smooth' });
 		} else {
@@ -449,9 +486,15 @@
 		for (let j = i; j < messages.length && messages[j]!.kind !== 'user'; j++) if (ends.has(messages[j]!)) end = messages[j];
 		return copy(turnText(messages, i), end);
 	}
+	// Where the conversation can fork: the reply that ends each finished turn.
+	const forks = $derived(onFork ? forkPoints(messages.slice(0, liveFrom), false) : new Map<Msg, number>());
 	function turnMenu(i: number): ContextItem[] {
 		if (i >= liveFrom || !turnText(messages, i)) return [];
-		return [{ key: 'copy-turn', label: t('chat.copyTurn'), run: () => copyTurn(i) }];
+		const keep = forks.get(messages[i]!);
+		return [
+			{ key: 'copy-turn', label: t('chat.copyTurn'), run: () => copyTurn(i) },
+			...(keep && onFork ? [{ key: 'fork', label: t('chat.fork.here'), run: () => onFork(keep) }] : [])
+		];
 	}
 
 	// A sent message's state shows on its bubble; the bottom indicator would
@@ -583,9 +626,11 @@
 
 	// Skip empty placeholders (e.g. an assistant message before its first delta).
 	function hasContent(m: Msg): boolean {
-		// Meta/status notices render in the collapsible status strip, not inline.
-		if (m.kind === 'system') return false;
-		if (m.kind === 'tool') return !!(m.name || m.output);
+		// A step of the conversation's course shows where it happened
+		// (FlowMarker); other notes go to the notices strip.
+		if (m.kind === 'system') return !!m.flow;
+		// present_files / propose_schedule show in the turn's summary (turnSummary.ts).
+		if (m.kind === 'tool') return !!(m.name || m.output) && !USER_TOOLS.has(m.name);
 		if (m.kind === 'plan') return !!(m.title || m.text);
 		if (m.kind === 'agent_message') return !!m.summary;
 		if (m.kind === 'compaction' || m.kind === 'escalation' || m.kind === 'cut') return true;
@@ -602,29 +647,41 @@
 		return untrack(() => hasContent(m)) || hasContent(m);
 	}
 
-	// A run of consecutive tool calls (rows that show nothing don't break it)
-	// renders as one row on its first call: a header naming the count and the
-	// latest call, then — expanded — the calls in a tight list. The other calls
-	// of the run render no row of their own.
+	// A run of consecutive tool calls (rows that show nothing don't break it),
+	// with the thinking that led to each call, renders as one row on its first
+	// member: one line naming what the run did, its line counts and its time,
+	// then — expanded — the thinking (each one folded line) and the calls in
+	// a tight list. The run's other members render no row of their own.
+	// Thinking that no call follows (yet) stays a block of its own, and a
+	// single call keeps its own row.
 	const GROUP_MIN = 2;
 	const toolGroups = $derived.by(() => {
-		const members = new Map<Msg, Msg[]>(); // first call → the run
+		const members = new Map<Msg, Msg[]>(); // first member → the run
 		const headOf = new Map<Msg, Msg>();
 		let run: Msg[] = [];
+		let calls = 0;
+		let thoughts: Msg[] = [];
 		const flush = () => {
-			if (run.length >= GROUP_MIN) {
+			if (calls >= GROUP_MIN) {
 				members.set(run[0]!, run);
 				for (const x of run) headOf.set(x, run[0]!);
 			}
 			run = [];
+			calls = 0;
+			thoughts = [];
 		};
 		for (const m of messages) {
 			if (!contentful(m)) continue;
 			// A message to another conversation keeps a row of its own: its
 			// state changes after the run.
-			if (m.kind === 'tool' && !isAgentCall(m) && m.name !== 'send_to_session') run.push(m);
+			if (m.kind === 'tool' && !isAgentCall(m) && m.name !== 'send_to_session') {
+				run.push(...thoughts, m);
+				thoughts = [];
+				calls++;
+			} else if (m.kind === 'reasoning') thoughts.push(m);
 			else flush();
 		}
+		// Thinking at the end leads to no call (yet): not in the run.
 		flush();
 		return { members, headOf };
 	});
@@ -681,6 +738,37 @@
 			}
 		});
 	});
+	// Each finished turn's deliverables, proposed tasks and started
+	// conversations, under its last row (its final reply, as a rule). Only
+	// turns with such a call are looked at further.
+	const SUMMARY_TOOLS = new Set([...USER_TOOLS, 'start_session']);
+	const summaries = $derived.by(() => {
+		const out = new Map<Msg, TurnSummary>();
+		let from = -1;
+		let has = false;
+		const close = (to: number) => {
+			if (!has || from < 0) return;
+			const turn = messages.slice(from, to);
+			const summary = turnSummary(turn);
+			if (!summary) return;
+			const last = turn.findLast((m) => shown(m)) ?? turn[0]!;
+			out.set(last, summary);
+		};
+		for (let i = 0; i < messages.length; i++) {
+			const m = messages[i]!;
+			if (m.kind === 'user' && !parseDelivery(m.text)) {
+				close(i);
+				from = i;
+				has = false;
+			} else if (m.kind === 'tool' && SUMMARY_TOOLS.has(m.name)) has = true;
+		}
+		// The running turn (or one waiting on work it handed off) has none yet.
+		if (!busy) close(messages.length);
+		return out;
+	});
+	/** The phone page reads them through `loadImage`; the desktop itself. */
+	const canMedia = $derived(!!loadImage || (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window));
+
 	/** The fold line's first words: how long the turn took, else its steps. */
 	function foldWords(f: TurnFold): string {
 		return f.elapsed !== null ? t('chat.fold.worked', { t: fmtDur(f.elapsed) }) : t('chat.fold.steps', { n: f.calls });
@@ -706,20 +794,49 @@
 		}
 		return { lead, hidden };
 	});
+	type ToolMsg = Extract<Msg, { kind: 'tool' }>;
+	/** One call as a run's line reads it, kept while its output is the same:
+	 *  a streaming call's updates parse only its own output again. */
+	type CallFacts = { failed: boolean; edit: boolean; paths: string[]; stat: { add: number; del: number } | null };
+	const callFacts = new WeakMap<Msg, { output: string; isError: boolean; facts: CallFacts }>();
+	function factsOf(x: ToolMsg): CallFacts {
+		const known = callFacts.get(x);
+		if (known && known.output === x.output && known.isError === x.isError) return known.facts;
+		const parsed = parseToolOutput(x.output);
+		const failed = toolFailed(x, parsed);
+		const edit = isEdit(x.name, parsed);
+		const facts = { failed, edit, paths: edit && !failed ? editedPaths(parsed) : [], stat: edit && !failed ? diffStat(parsed) : null };
+		callFacts.set(x, { output: x.output, isError: x.isError, facts });
+		return facts;
+	}
+	/** A run's line: its calls, whether one runs, how many failed, the
+	 *  latest call, and — for a run that only edits — the files it edited;
+	 *  the lines its edits added and removed. */
 	function groupInfo(run: Msg[]) {
+		const tools = run.filter((x): x is ToolMsg => x.kind === 'tool');
 		let running = false;
 		let failed = 0;
-		for (const x of run) {
-			if (x.kind !== 'tool') continue;
+		let onlyEdits = true;
+		let add = 0;
+		let del = 0;
+		let counted = false;
+		const files = new Set<string>();
+		for (const x of tools) {
+			const f = factsOf(x);
 			if (x.running) running = true;
-			if (x.isError) failed++;
+			if (f.failed) failed++;
+			if (!f.edit) onlyEdits = false;
+			for (const p of f.paths) files.add(p);
+			if (f.stat) {
+				counted = true;
+				add += f.stat.add;
+				del += f.stat.del;
+			}
 		}
-		const last = run[run.length - 1];
-		const latest =
-			last?.kind === 'tool'
-				? { Icon: toolIcon(last.name), verb: toolVerb(last.name), target: toolTarget(last.name, parseToolOutput(last.output)) }
-				: null;
-		return { running, failed, latest };
+		const edited = onlyEdits && files.size ? [...files].map((p) => p.split(/[\\/]/).pop() || p) : null;
+		const last = tools[tools.length - 1];
+		const latest = last && !edited ? { Icon: toolIcon(last.name), verb: toolVerb(last.name), target: toolTarget(last.name, parseToolOutput(last.output)) } : null;
+		return { tools, running, failed, latest, edited, stat: counted ? { add, del } : null };
 	}
 
 	// The text under the view stays still as rows window in or out above it
@@ -792,6 +909,8 @@
 				{/if}
 				{#if fold && !openFolds.has(fold.key)}
 					<!-- Folded: the line is the whole row. -->
+				{:else if toolGroups.members.has(m)}
+					{@render toolRun(m, toolGroups.members.get(m)!)}
 				{:else if m.kind === 'user'}
 			{@const delivery = parseDelivery(m.text)}
 			{@const drop = userOrdinal.size - (userOrdinal.get(m) ?? 0)}
@@ -864,9 +983,14 @@
 								{#if m.tokens}<span class="mono">{t('chat.tokens', { n: m.tokens })}</span>{/if}
 							{/if}
 							{#if turnEnd}
+								{@const keep = forks.get(m)}
 								<button class="tcopy" class:done={copied === m} onclick={() => copyTurn(i)} aria-label={t(copied === m ? 'common.copied' : 'chat.copyTurn')} title={t('chat.copyTurn')}>
 									{#if copied === m}<CheckIcon size={13} /><span>{t('common.copied')}</span>{:else}<CopyIcon size={13} />{/if}
 								</button>
+								{#if keep && onFork}
+									<!-- Fork from here: a new conversation with the turns up to this one. -->
+									<button class="tcopy tfork" onclick={() => onFork(keep)} aria-label={t('chat.fork.here')} title={t('chat.fork.here')}><GitForkIcon size={13} /></button>
+								{/if}
 							{/if}
 						</div>
 					{/if}
@@ -875,7 +999,7 @@
 							<!-- The turn's changed files: a click opens one; the last row shows the project's changes in Git. -->
 							<div class="changed" aria-label={t('chat.stat.files')}>
 								{#each m.turn.changes as f (f.path)}
-									<button class="cfile" title={f.path} onclick={() => onFile?.(f.path, m.text)}>
+									<button class="cfile" title={f.path} onclick={() => (onOpenEdited ? onOpenEdited(f.path, m) : onFile?.(f.path, m.text))}>
 										<span class="cpath">{shownPath(f.path)}</span>
 										<span class="mono add">+{f.added}</span><span class="mono del">−{f.removed}</span>
 									</button>
@@ -888,64 +1012,9 @@
 				{/if}
 			</div>
 		{:else if m.kind === 'reasoning'}
-			<div class="reason" class:open={!m.collapsed}>
-				<div class="reason-row">
-				<button class="reason-head" onclick={() => (m.collapsed = !m.collapsed)}>
-					<span>
-						{#if m.durationMs !== undefined}
-							{t('chat.reasoningFor', { t: fmtDur(Math.max(1000, m.durationMs)) })}
-						{:else if m === streamingReasoning && m.startedAt !== undefined}
-							{t('chat.reasoningNow')} <CallTimer since={m.startedAt} />
-						{:else}
-							{t('chat.reasoning')}
-						{/if}
-						{#if m.interrupted}<span class="cut" title={t('chat.interruptedTitle')}>{t('chat.interrupted')}</span>{/if}
-					</span>
-					<span class="rchev"><CaretRightIcon size={13} /></span>
-				</button>
-				{#if m.collapsed && m === streamingReasoning}
-					<!-- Folded while it streams: its latest words in one line,
-					     the earliest sliding out to the left. -->
-					<button class="reason-line" onclick={() => (m.collapsed = false)} aria-label={t('chat.reasoningExpand')}
-						><span>{reasoningTail(m)}</span></button
-					>
-				{/if}
-				</div>
-				<Collapse open={!m.collapsed}>
-					<div class="reason-body">
-						<!-- Plain text while it streams (no per-frame Markdown), in
-						     blocks written once; Markdown once finished, taking
-						     over from the plain text a few chunks each frame. -->
-						<ReasoningBody source={shownText(m)} text={m.text} live={m === streamingReasoning} onFile={(href) => onFile?.(href, m.text)} />
-					</div>
-				</Collapse>
-			</div>
+			{@render reasoningRow(m)}
 		{:else if m.kind === 'tool'}
-			{@const run = toolGroups.members.get(m)}
-			{#if run}
-				{@const g = groupInfo(run)}
-				{@const open = openGroups.has(m)}
-				<button class="tgroup" class:open onclick={() => (open ? openGroups.delete(m) : openGroups.add(m))}>
-					<span class="tg-count">{t('chat.toolGroup', { n: run.length })}</span>
-					{#if g.failed}<span class="tg-fail">{t('chat.toolGroupFailed', { n: g.failed })}</span>{/if}
-					{#if g.latest && !open}
-						<span class="tg-latest">
-							<g.latest.Icon size={13} />
-							<span class="tg-verb">{g.latest.verb}</span>
-							{#if g.latest.target}<span class="tg-target">{g.latest.target}</span>{/if}
-						</span>
-					{/if}
-					{#if g.running}<CircleNotchIcon size={12} class="spin" />{/if}
-					<span class="rchev"><CaretRightIcon size={13} /></span>
-				</button>
-				{#if open}
-					<div class="tg-list">
-						{#each run as x (x)}
-							{#if x.kind === 'tool'}<ToolCard name={x.name} output={x.output} running={x.running} isError={x.isError} subagent={x.subagent} trace={traceOf?.(x) ?? undefined} reveal={reveal(x)} onFile={onFile ? (href) => onFile(href) : undefined} />{/if}
-						{/each}
-					</div>
-				{/if}
-			{:else if agents && isAgentCall(m)}
+			{#if agents && isAgentCall(m)}
 				{@const attempt = attempts.lead.get(m)}
 				{#if attempt}
 					<AttemptGroupCard group={attempt.group} rows={attempt.rows} picked={attemptPicks[attempt.group] ?? ''} onOpen={onOpenAgent} onViewChanges={onAgentChanges} onPick={onPickAttempt} onStop={onStopAgent} />
@@ -954,9 +1023,9 @@
 				{/if}
 			{:else if m.name === 'send_to_session'}
 				{@const card = sendCardProps(sendCardView(m, sendOf?.(m.callId)), m.isError)}
-				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} heading={card.heading} badge={card.badge} sections={card.sections} />
+				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} heading={card.heading} badge={card.badge} sections={card.sections} startedAt={m.startedAt} endedAt={m.endedAt} />
 			{:else}
-				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} trace={traceOf?.(m) ?? undefined} reveal={reveal(m)} onFile={onFile ? (href) => onFile(href) : undefined} />
+				<ToolCard name={m.name} output={m.output} running={m.running} isError={m.isError} subagent={m.subagent} trace={traceOf?.(m) ?? undefined} reveal={reveal(m)} startedAt={m.startedAt} endedAt={m.endedAt} onFile={onFile ? (href) => onFile(href) : undefined} />
 			{/if}
 		{:else if m.kind === 'compaction'}
 			<CompactionCard stage={m.state} before={m.before} after={m.after} written={m.written} since={m.since} summary={m.summary} error={m.error} live={m.live} />
@@ -966,6 +1035,8 @@
 			<AgentMessageLine from={m.from} to={m.to} summary={m.summary} />
 		{:else if m.kind === 'escalation'}
 			<EscalationLine record={m.record} />
+		{:else if m.kind === 'system' && m.flow}
+			<FlowMarker flow={m.flow} text={m.text} />
 		{:else if m.kind === 'cut'}
 			<!-- The engine went away during the turn: it ends here, unfinished. -->
 			<div class="cutmark" role="note" title={t('chat.cut.markerDetail')}>
@@ -982,6 +1053,7 @@
 				onDismiss={onDismiss ? () => onDismiss(m) : undefined}
 			/>
 				{/if}
+				{#if summaries.has(m)}{@render summaryOf(summaries.get(m)!)}{/if}
 			</div>
 		{/if}
 	{/each}
@@ -991,7 +1063,7 @@
 	{:else if autoRetry}
 		<RetryNotice retry={autoRetry} {backend} onNow={onAutoRetryNow} onCancel={onAutoRetryCancel} />
 	{:else}
-		<Indicator phase={shownPhase} tokens={compactionTokens} {call} {messages} onDetails={revealCall} />
+		<Indicator phase={shownPhase} tokens={compactionTokens} {call} {messages} {turnSince} onDetails={revealCall} />
 	{/if}
 </div>
 {#if cite}
@@ -1008,6 +1080,94 @@
 		{/if}
 	</div>
 {/if}
+
+<!-- What a finished turn leaves (turnSummary.ts): the conversations it
+     started, its deliverables (images and videos shown), the tasks it
+     proposed. -->
+{#snippet summaryOf(summary: TurnSummary)}
+	{#if summary.children.length}<ChildSessions sessions={summary.children} onOpen={onOpenSession} />{/if}
+	{#if summary.artifacts.length}<ArtifactCards files={summary.artifacts} onOpen={onFile ? (path) => onFile(path) : undefined} {onReveal} load={loadImage} media={canMedia} />{/if}
+	{#each summary.proposals as p (p.id)}
+		{@const state = scheduleState?.(p.id) ?? null}
+		<ScheduleProposal proposal={p} created={state === 'created'} declined={state === 'declined'} onCreate={onSchedule} onDecline={onDeclineSchedule} />
+	{/each}
+{/snippet}
+
+<!-- A thinking block: its head line (how long it thought), its latest words
+     while it streams, its text opened. -->
+{#snippet reasoningRow(m: Extract<Msg, { kind: 'reasoning' }>)}
+	<div class="reason" class:open={!m.collapsed}>
+		<div class="reason-row">
+		<button class="reason-head" onclick={() => (m.collapsed = !m.collapsed)}>
+			<span>
+				{#if m.durationMs !== undefined}
+					{t('chat.reasoningFor', { t: fmtDur(Math.max(1000, m.durationMs)) })}
+				{:else if m === streamingReasoning && m.startedAt !== undefined}
+					{t('chat.reasoningNow')} <CallTimer since={m.startedAt} />
+				{:else}
+					{t('chat.reasoning')}
+				{/if}
+				{#if m.interrupted}<span class="cut" title={t('chat.interruptedTitle')}>{t('chat.interrupted')}</span>{/if}
+			</span>
+			<span class="rchev"><CaretRightIcon size={13} /></span>
+		</button>
+		{#if m.collapsed && m === streamingReasoning}
+			<!-- Folded while it streams: its latest words in one line,
+			     the earliest sliding out to the left. -->
+			<button class="reason-line" onclick={() => (m.collapsed = false)} aria-label={t('chat.reasoningExpand')}
+				><span>{reasoningTail(m)}</span></button
+			>
+		{/if}
+		</div>
+		<Collapse open={!m.collapsed}>
+			<div class="reason-body">
+				<!-- Plain text while it streams (no per-frame Markdown), in
+				     blocks written once; Markdown once finished, taking
+				     over from the plain text a few chunks each frame. -->
+				<ReasoningBody source={shownText(m)} text={m.text} live={m === streamingReasoning} onFile={(href) => onFile?.(href, m.text)} />
+			</div>
+		</Collapse>
+	</div>
+{/snippet}
+
+<!-- A run of tool calls as one line (design.md, "Workbench canvas"): what it
+     did — "已编辑 2 个文件 · a.ts, b.ts" for edits only, else the count and
+     its latest call — its failures, its line counts (rolling while an edit
+     streams) and its time; opened, the thinking and the calls in order. -->
+{#snippet toolRun(m: Msg, run: Msg[])}
+	{@const g = groupInfo(run)}
+	{@const open = openGroups.has(m)}
+	<button class="tgroup" class:open onclick={() => (open ? openGroups.delete(m) : openGroups.add(m))} aria-expanded={open}>
+		<span class="tg-what">
+			{#if g.edited}
+				<span class="tg-count">{t('chat.editedFiles', { n: g.edited.length })}</span>
+				<span class="tg-latest tg-names">{g.edited.join(', ')}</span>
+			{:else}
+				<span class="tg-count">{t('chat.toolGroup', { n: g.tools.length })}</span>
+				{#if g.latest && !open}
+					<span class="tg-latest">
+						<g.latest.Icon size={13} />
+						<span class="tg-verb">{g.latest.verb}</span>
+						{#if g.latest.target}<span class="tg-target">{g.latest.target}</span>{/if}
+					</span>
+				{/if}
+			{/if}
+			{#if g.running}<RunLight />{/if}
+		</span>
+		{#if g.failed}<span class="tg-fail">{t('chat.toolGroupFailed', { n: g.failed })}</span>{/if}
+		{#if g.stat}<DiffStat add={g.stat.add} del={g.stat.del} live={g.running} />{/if}
+		<ToolTime spans={g.tools} />
+		<span class="rchev"><CaretRightIcon size={13} /></span>
+	</button>
+	{#if open}
+		<div class="tg-list">
+			{#each run as x (x)}
+				{#if x.kind === 'tool'}<ToolCard name={x.name} output={x.output} running={x.running} isError={x.isError} subagent={x.subagent} trace={traceOf?.(x) ?? undefined} reveal={reveal(x)} startedAt={x.startedAt} endedAt={x.endedAt} onFile={onFile ? (href) => onFile(href) : undefined} />
+				{:else if x.kind === 'reasoning'}{@render reasoningRow(x)}{/if}
+			{/each}
+		</div>
+	{/if}
+{/snippet}
 
 <style>
 	.cite {
@@ -1558,8 +1718,11 @@
 	.fold .del {
 		color: var(--err);
 	}
-	/* A run of tool calls: one summary line (--fs-xs --dim, no card). */
+	/* A run of tool calls: one summary line (--fs-xs --dim, no card): what
+	   it did (the running light over it while a call runs), failures, line
+	   counts, time. */
 	.tgroup {
+		--row-bg: var(--bg);
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
@@ -1580,8 +1743,23 @@
 			background var(--t-fast) var(--ease-base);
 	}
 	.tgroup:hover {
+		--row-bg: color-mix(in srgb, var(--text) 6%, var(--bg));
 		background: var(--surface2);
 		color: var(--text);
+	}
+	.tg-what {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		overflow: hidden;
+	}
+	.tg-names {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
 	}
 	.tg-count,
 	.tg-fail {

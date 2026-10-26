@@ -4,5 +4,12 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Aogiri 使用麦克风进行语音输入转写。Aogiri uses the microphone for voice-input transcription.</string>
+	<!-- The built-in browser loads plain-http pages (local dev servers, LAN
+	     addresses); the app's own window keeps ATS. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

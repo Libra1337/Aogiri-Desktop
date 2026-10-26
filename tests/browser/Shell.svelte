@@ -55,7 +55,9 @@
 	//   &work=<step>            a third turn at work, on one step: think, write,
 	//                           bash (lynshen: `started: <command>`), read or
 	//                           edit (a card naming the file, as claude's), mcp,
-	//                           a run of calls (group), compact
+	//                           a run of calls (group), compact, a run of edits
+	//                           with the last still streaming (edits;
+	//                           `window.__grow(n)` its line count)
 	//   &textOnly               the engine reports a model that takes no images
 	//                           and does not think (`window.__chat` attaches files)
 	//   &styles                 the engine reports the reply style: the "+"
@@ -74,9 +76,33 @@
 	//                           first one fixed); `window.__sent` the ops. With
 	//                           ?features=queue,files the daemon's hello has
 	//                           them (fakeDaemon.ts); without, it is an old one
+	//   &features=a,b           the daemon's hello names these features
+	//                           (fakeDaemon.ts); without, an older daemon
+	//   &draft                  the conversation is new, nothing sent: the
+	//                           start picker (project, agent) over the composer
+	//   &acp=<id>               an ACP session of that built-in agent, as the
+	//                           daemon's full client reports it (caps, its own
+	//                           settings, its model and the unset effort);
+	//                           =pi: an agent that never asks
+	//   &tui                    the conversation is in its TUI on another
+	//                           client (`surface` names the terminal)
 	//   &openfile               the app's editor beside the conversation (a Read
 	//                           row opens its file there); `window.__editor`
 	//   &drop=<n>               files dragged over the window (the drop layer)
+	//   &devserver              a dev server comes up: the corner notice
+	//   &pick                   ⌘N asks the new conversation's project first
+	//                           (ProjectPickDialog); a pick goes to
+	//                           `window.__opened` as `pick:<name>` (none: `pick:`)
+	//   &repo                   the project is a git repository (main.ts)
+	//   &fork                   the conversation has a daemon session and the
+	//                           daemon can fork (add &features=fork); a fork
+	//                           goes to the navigator (`window.__shellStore`)
+	//   &forked                 the conversation is a fork of 浅色主题调色 after
+	//                           its first turn (its strip, 带回结论)
+	//   &deliver[=old]          a third turn that presented an image, a video and
+	//                           a page, proposed a scheduled task and started a
+	//                           conversation (=old: a daemon whose tasks carry no
+	//                           origin); `window.__ops` the daemon ops
 	// `window.__prefs` is the preferences store (the regressions change the
 	// conversation width through it); `window.__shellChat` the conversation's
 	// chat (to send it more events), `window.__shellStore` its sessions,
@@ -94,15 +120,20 @@
 	import Sidebar from '../../src/lib/Sidebar.svelte';
 	import TabChromePopover from '../../src/lib/workbench/TabChromePopover.svelte';
 	import TitleBar from '../../src/lib/shell/TitleBar.svelte';
-	import OpenInEditor from '../../src/lib/shell/OpenInEditor.svelte';
+	import ProjectMenu from '../../src/lib/shell/ProjectMenu.svelte';
 	import ContextMenuHost from '../../src/lib/ui/ContextMenuHost.svelte';
 	import ConfirmHost from '../../src/lib/ui/ConfirmHost.svelte';
 	import Toaster from '../../src/lib/ui/Toaster.svelte';
+	import CornerNotices from '../../src/lib/ui/CornerNotices.svelte';
+	import { devServers } from '../../src/lib/devServers.svelte';
 	import TrialGrantCard from '../../src/lib/TrialGrantCard.svelte';
 	import { trial } from '../../src/lib/trial.svelte';
 	import { SessionStore } from '../../src/lib/session.svelte';
+	import { agentDirectory } from '../../src/lib/agents.svelte';
+	import { daemonState } from './fakeDaemon';
 	import { Requirements, provideRequirements } from '../../src/lib/requirements.svelte';
 	import { daemon, type Op } from '../../src/lib/protocol';
+	import TuiPanel from '../../src/lib/TuiPanel.svelte';
 	import { adapterFor, clearDraft } from '../../src/lib/backends/router';
 	import { prefs } from '../../src/lib/prefs.svelte';
 	import { showWaiting } from '../../src/lib/shell/attention.svelte';
@@ -112,6 +143,8 @@
 	import { setLocale } from '../../src/lib/i18n';
 	import { fileName, withFiles, withVideo } from '../../src/lib/attachments';
 	import HomePage from '../../src/lib/HomePage.svelte';
+	import ProjectPickDialog from '../../src/lib/ProjectPickDialog.svelte';
+	import { matches } from '../../src/lib/shortcuts';
 	import SettingsPage from '../../src/lib/settings/SettingsPage.svelte';
 	import { SIDEBAR_RAIL_WIDTH } from '../../src/lib/shell/sidebarState';
 	import { SAMPLE_PLAIN_IDS } from '../../src/lib/models/catalogSample';
@@ -156,6 +189,7 @@
 	let rowMenu = $state<{ sid: string; x: number; y: number } | null>(null);
 	const menuSession = $derived(rowMenu ? (store.allSessions.find((s) => s.id === rowMenu!.sid) ?? null) : null);
 	const session = store.allSessions.find((s) => s.id === first.sessions[0].id)!;
+	let picking = $state(false);
 	store.activeId = session.id;
 	// ?claudeChat: a Claude Code conversation that has started (ticket #40:
 	// it can go on in a new LynShen conversation).
@@ -210,7 +244,9 @@
 	const gatewayModels = mode.has('models');
 	const providersList = gatewayModels
 		? [{ id: 'monoize', name: 'LynShen', base_url: 'https://api.lynshen.org/v1', format: 'responses', models: SAMPLE_PLAIN_IDS.map((name) => ({ name, display_name: name })) }]
-		: [];
+		: mode.has('forked')
+			? [{ id: 'lynshen', name: 'LynShen', base_url: 'https://api.lynshen.org/v1', format: 'responses', models: [{ name: 'deepseek-v4.1-flash', display_name: 'deepseek-v4.1-flash' }] }]
+			: [];
 	if (gatewayModels) {
 		feed({ type: 'model_status', provider: 'monoize', model: 'deepseek-v4.1-flash', model_label: 'deepseek-v4.1-flash', reasoning_effort: 'medium', reasoning_efforts: ['low', 'medium', 'high'], state: 'ready', context_window: 384000 });
 		session.chat.silentModelView = 1;
@@ -401,6 +437,54 @@
 			feed({ type: 'prompt_suggestion', text: recapMode === 'long' ? '提交并推送，然后在 PR 描述里写清楚缓存键的新格式、旧缓存的迁移方式和回滚办法，再请两位同事评审' : '提交并推送' });
 	}
 
+	// ?shell&turnedit (with &openfile): a third turn that changed cache.ts
+	// (the 200 numbered lines main.ts reads for it): line 5 was rewritten and
+	// a line was added after line 9. Its change pill lists the file; a row
+	// opens it with the turn's changes (D20). &turnedit=lost: the edit's diff
+	// no longer matches the file (changed since): compared with git HEAD.
+	const turnEdit = mode.get('turnedit');
+	if (turnEdit !== null && !mode.has('empty')) {
+		const diff = turnEdit === 'lost' ? '-export const gone = 0;\n+export const renamed = 5;' : ['--- a/src/lib/cache.ts', '+++ b/src/lib/cache.ts', '@@ -4,3 +4,3 @@', ' export const line4 = 4;', '-export const five = 5;', '+export const line5 = 5;', ' export const line6 = 6;', '@@ -9,2 +9,3 @@', ' export const line9 = 9;', '+export const line10 = 10;', ' export const extra = 11;'].join('\n');
+		feed({ type: 'user_message', content: '把常量改成按行号命名。' });
+		feed({ type: 'connecting' });
+		feed({ type: 'status', message: 'streaming' });
+		feed({ type: 'tool_start', call_id: 'te1', name: 'edit' });
+		feed({ type: 'tool_output', call_id: 'te1', name: 'edit', output: JSON.stringify({ path: '/Users/me/code/lynshen-desktop/src/lib/cache.ts', diff }) });
+		feed({ type: 'assistant_delta', delta: '改好了：第 5 行改名，第 9 行后加了一个常量。' });
+		feed({ type: 'status', message: 'ready' });
+	}
+
+	// ?shell&deliver: a third turn that ends with deliverables (an image, a
+	// video, a page), a proposed scheduled task and a conversation it started
+	// (answered meanwhile). &deliver=old: a daemon before the origin of a
+	// task (it never says the proposal was created).
+	const deliverMode = mode.get('deliver');
+	if (deliverMode !== null && !mode.has('empty')) {
+		const dir = '/Users/me/code/lynshen-desktop/out';
+		const call = (id: string, name: string, output: unknown, args?: unknown) => {
+			feed({ type: 'tool_start', call_id: id, name });
+			if (args) feed({ type: 'tool_update', call_id: id, name, output: JSON.stringify(args) });
+			feed({ type: 'tool_output', call_id: id, name, output: JSON.stringify(output) });
+		};
+		feed({ type: 'user_message', content: '做一份 Q3 月活的报告，配图和演示视频；以后每个工作日早上自动更新。翻译交给另一个对话。' });
+		feed({ type: 'status', message: 'streaming' });
+		call('d1', 'bash', { command: 'python3 report.py', exit_code: 0, stdout: 'wrote out/q3.html\nwrote out/q3-mau.png\nwrote out/demo.webm', stderr: '' });
+		call('d2', 'start_session', { id: 'm1', session: 's-translate', title: '把报告翻成英文', status: 'delivered' }, { message: '把 out/q3.html 翻成英文', engine: 'claude', title: '把报告翻成英文' });
+		call('d3', 'present_files', {
+			files: [
+				{ path: `${dir}/q3-mau.png`, description: 'Q3 月活走势', size: 182_400, kind: 'image' },
+				{ path: `${dir}/demo.webm`, description: '演示录屏', size: 1_740, kind: 'video' },
+				{ path: `${dir}/q3.html`, description: 'Q3 月活报告', size: 20_480, kind: 'file' }
+			]
+		});
+		call('d4', 'propose_schedule', { id: 'prop-q3', name: '更新月活报告', prompt: '重新跑 report.py，月活有明显变化就在报告开头写一句说明。', repeat: 'weekdays', time: '09:00', note: 'Shown to the user as a card; nothing is scheduled until they create it.' });
+		call('d5', 'wait_session', { id: 'm1', session: 's-translate', title: '把报告翻成英文', status: 'replied', reply: 'Done: out/q3.en.html' });
+		feed({ type: 'assistant_delta', delta: '报告和配图在 out/ 下；英文版由另一个对话做完了。每个工作日早上更新的定时任务需要你确认后才会创建。' });
+		feed({ type: 'status', message: 'ready' });
+		// One agent to run the task (a task belongs to an agent).
+		agentDirectory.handle({ type: 'agents', agents: [{ id: 'ops', name: '运维', cwd: '/Users/me/code/lynshen-desktop', enabled: true, approval_mode: 'auto', summary: '', sessions: 0, busy: false, sandbox: 'workspace-write', network: true, directories: [], command_rules: [] }] });
+	}
+
 	// ?shell&cards: a third turn at work. The plan is 3/7 with the fourth
 	// step running; four subagents of the agent team (roles, an attempt, one
 	// done, one queued), the team's tokens against its budget and its board.
@@ -448,6 +532,7 @@
 	const work = mode.get('work');
 	if (work && !mode.has('empty')) {
 		feed({ type: 'user_message', content: '把会话缓存改成按会话分片，跑完单元测试再提交。' });
+		feed({ type: 'connecting' });
 		feed({ type: 'status', message: 'streaming' });
 		const tool = (id: string, name: string, update?: string) => {
 			feed({ type: 'tool_start', call_id: id, name });
@@ -465,6 +550,20 @@
 			tool('w2', 'bash', 'started: pnpm vitest run src/lib/cache.test.ts');
 			feed({ type: 'tool_update', call_id: 'w2', name: 'bash', output: 'running 2.0s\nstdout:\n ✓ cache.test.ts (12 tests)' });
 		} else if (work === 'compact') session.chat.handle({ type: 'compaction_start' } as never);
+		else if (work === 'edits') {
+			// A run of edits: thinking, two edits done, a third still streaming
+			// its input (Claude Code's Write reports its counts as they grow).
+			const at = (p: string) => `/Users/me/code/lynshen-desktop/${p}`;
+			const diff = (p: string, add: number, del: number) => [`--- a/${p}`, `+++ b/${p}`, '@@ -1 +1 @@', ...Array.from({ length: del }, (_, i) => `-old ${i}`), ...Array.from({ length: add }, (_, i) => `+new ${i}`)].join('\n');
+			feed({ type: 'reasoning_delta', delta: '缓存键要带上会话 ID，先改 cache.ts，再改调用方。' });
+			tool('e1', 'str_replace');
+			feed({ type: 'tool_output', call_id: 'e1', name: 'str_replace', output: JSON.stringify({ path: at('src/lib/cache.ts'), diff: diff('src/lib/cache.ts', 30, 5) }) });
+			feed({ type: 'reasoning_delta', delta: '调用方只有 session.svelte.ts 一处。' });
+			tool('e2', 'str_replace');
+			feed({ type: 'tool_output', call_id: 'e2', name: 'str_replace', output: JSON.stringify({ path: at('src/lib/session.svelte.ts'), diff: diff('src/lib/session.svelte.ts', 10, 2) }) });
+			tool('e3', 'write', JSON.stringify({ path: at('src/lib/cache.test.ts'), paths: [at('src/lib/cache.test.ts')], add: 12, del: 0 }));
+			Object.assign(window, { __grow: (add: number) => feed({ type: 'tool_update', call_id: 'e3', name: 'write', output: JSON.stringify({ path: at('src/lib/cache.test.ts'), paths: [at('src/lib/cache.test.ts')], add, del: 0 }) }) });
+		}
 	}
 	const opened: string[] = [];
 	// What the conversation sends its engine: no engine runs here, so the
@@ -492,20 +591,79 @@
 			...(queueMode === 'claude' ? { fixed: 1 } : {})
 		});
 	}
+	// B11: a new conversation (the start picker), an ACP session of a
+	// built-in agent, a conversation in its TUI elsewhere.
+	if (mode.has('draft')) {
+		session.draft = true;
+		session.chat.messages = [];
+	}
+	const acpMode = mode.get('acp');
+	if (acpMode) {
+		const agents: Record<string, { name: string; approvals: boolean }> = { opencode: { name: 'OpenCode', approvals: true }, omp: { name: 'oh-my-pi', approvals: true }, pi: { name: 'Pi', approvals: false } };
+		const a = agents[acpMode] ?? agents.omp;
+		session.backendId = 'acp';
+		session.chat.backendId = 'acp';
+		session.chat.acpAgentId = acpMode;
+		session.chat.acpAgentName = a.name;
+		session.acpAgent = { id: acpMode, name: a.name, builtin: true, ...(a.approvals ? {} : { noApprovals: true }) };
+		feed({ type: 'engine_caps', agent: { id: acpMode, name: a.name, version: '18.1.21' }, approvals: a.approvals, gateway: true, caps: { interrupt: true, approvalModes: a.approvals, modelPicker: true, contextUsage: false, slashCommands: true, transcriptReplay: true, fork: false } });
+		feed({
+			type: 'session_options',
+			options: [
+				{ id: 'mode', name: 'Mode', description: null, category: 'mode', type: 'select', value: 'default', choices: [{ value: 'default', name: 'Default', description: null }, { value: 'plan', name: 'Plan', description: null }] },
+				{ id: 'show_thinking', name: 'Show thinking', description: 'Stream the reasoning', category: null, type: 'boolean', value: true }
+			]
+		});
+		feed({ type: 'model_status', provider: 'acp', model: 'lynshen/gpt-6', model_label: 'GPT-6', reasoning_effort: 'auto', reasoning_efforts: ['minimal', 'low', 'medium', 'high'], default_effort: 'auto', state: 'ready', context_window: 0 });
+		session.chat.silentModelView = 1;
+		feed({ type: 'model_view', active_effort: 'auto', models: [{ model: 'lynshen/gpt-6', label: 'GPT-6', active: true, context_window: 0, reasoning_efforts: ['minimal', 'low', 'medium', 'high'] }, { model: 'lynshen-claude/claude-opus-5', label: 'Claude Opus 5', active: false, context_window: 0, reasoning_efforts: ['low', 'medium', 'high'] }] });
+	}
+	if (mode.has('tui')) {
+		// Watched in the daemon, as the page does once it opened the session.
+		session.chat.sessionId = 's-shell';
+		session.restored = true;
+		void daemon.open(session.id, first.path, 's-shell');
+		feed({ type: 'surface', session: 's-shell', surface: 'tui', term: 't-7', client: 3 });
+	}
+	// ?empty&repo: a new conversation (a draft) in a repository: the third
+	// menu of its sentence, where it works.
+	if (mode.has('empty') && mode.has('repo')) session.draft = true;
+	// ?fork / ?forked: a conversation the daemon has, and (forked) one it
+	// was forked from.
+	if (mode.has('fork') || mode.has('forked')) {
+		session.chat.sessionId = 'conv-main';
+		session.restored = true;
+	}
+	if (mode.has('forked')) {
+		const src = first.sessions[1]!;
+		src.chat.sessionId = 'conv-src';
+		session.forkedFrom = { sid: 'conv-src', title: '浅色主题调色', turns: 1 };
+	}
 	// As +page.svelte does: the daemon's hello says what it takes.
-	if (queueMode !== null || mode.has('openfile')) {
+	if (queueMode !== null || mode.has('openfile') || mode.has('features') || mode.has('fork')) {
 		daemon.onHello = (version, features) => {
 			engine.version = version;
 			engine.features = features;
 		};
 		void daemon.connect();
 	}
-	if (mode.has('cards') || mode.has('styles') || mode.has('recap') || queueMode !== null || mode.has('openfile')) {
+	if (deliverMode === 'old') daemonState.old = true;
+	if (deliverMode !== null) void daemon.connect();
+	if (mode.has('cards') || mode.has('styles') || mode.has('recap') || queueMode !== null || mode.has('openfile') || deliverMode !== null || acpMode || mode.has('tui')) {
 		clearDraft(session.id);
 		const adapter = adapterFor(session.id);
 		if (adapter) adapter.encodeOp = (op: Op) => (sent.push(op), []);
 	}
 	Object.assign(window, { __shellChat: session.chat, __shellSession: session.id, __shellStore: store, __opened: opened, __sent: sent });
+	// ?shell&devserver: the daemon lists no server when the window connects,
+	// then one this conversation's command started (as +page.svelte wires it);
+	// `window.__devServers(frame)` sends another list.
+	if (mode.has('devserver')) {
+		devServers.titleOf = (sid) => (sid === 's-shell' ? session.chat.title : '');
+		devServers.handle({ type: 'dev_servers', servers: [] });
+		setTimeout(() => devServers.handle({ type: 'dev_servers', servers: [{ port: 5173, url: 'http://localhost:5173/', pid: 4242, name: 'node', session: 's-shell' }] }), 300);
+		Object.assign(window, { __devServers: (frame: Record<string, unknown>) => devServers.handle(frame) });
+	}
 	$effect(() => {
 		const request = subagentPages.request;
 		if (request) untrack(() => opened.push(`agent:${request.agentId}:${request.place}`));
@@ -549,7 +707,18 @@
 	});
 </script>
 
+<!-- ?pick: ⌘N asks the project first (+page.svelte's askProject). -->
+<svelte:window onkeydown={(e) => mode.has('pick') && matches(e, 'newSession') && (e.preventDefault(), (picking = true))} />
+{#if picking}
+	<ProjectPickDialog projects={store.codeProjects} current={first.id} onPick={(p) => opened.push(`pick:${p?.name ?? ''}`)} onOpenFolder={() => opened.push('pick-folder')} onClose={() => (picking = false)} />
+{/if}
+
 {#snippet chat()}
+	{#if session.surface === 'tui'}
+		<!-- As +page.svelte renders a conversation in its TUI: the session's
+		     terminal, viewed (the fake daemon echoes what is typed). -->
+		<TuiPanel backend={session.backendId} session="s-shell" terminal={session.chat.terminal} onBackToGui={() => store.returnToGui(session.id)} />
+	{:else}
 	<ChatPane
 		{session}
 		{store}
@@ -560,12 +729,14 @@
 		onOpenTeam={mode.has('cards') ? () => opened.push('team') : undefined}
 		onOpenChanges={mode.has('recap') ? () => opened.push('changes') : undefined}
 	/>
+	{/if}
 {/snippet}
 
 <ConfirmHost />
 {#if mode.get('drop')}<DropLayer count={Number(mode.get('drop'))} />{/if}
 {#if mode.has('files') || mode.has('tabmenu')}<ContextMenuHost />{/if}
 <Toaster />
+<CornerNotices />
 <TrialGrantCard />
 <div class="app">
 	<TitleBar
@@ -579,7 +750,7 @@
 		onAdd={() => {}}
 	>
 		{#snippet actions()}
-			{#if !settings && !home}<OpenInEditor path={first.path} />{/if}
+			{#if !settings && !home}<ProjectMenu path={first.path} name={first.name} onOpenGit={() => opened.push('git')} />{/if}
 		{/snippet}
 	</TitleBar>
 	<div class="body">
@@ -618,7 +789,7 @@
 			/>
 			<div class="canvas" data-testid="canvas">
 				{#if home}
-					<HomePage projects={store.userProjects} onStart={() => {}} onOpenSession={() => {}} onOpenProject={() => {}} onAddProject={() => {}} onOpenAgent={() => {}} />
+					<HomePage projects={store.userProjects} onStart={(text, _model, project) => opened.push(`start:${project?.name ?? ''}:${text}`)} onOpenSession={() => {}} onOpenProject={() => {}} onAddProject={() => {}} onOpenAgent={() => {}} />
 				{:else if mode.has('preview') || toolPanel}
 					<Mosaic
 						hideSoloBar

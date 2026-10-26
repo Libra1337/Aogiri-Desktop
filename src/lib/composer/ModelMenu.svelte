@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { overBrowser } from '$lib/browser.svelte';
 	import { popOut } from '$lib/ui/motion';
 	import { onMount, tick } from 'svelte';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
@@ -17,6 +18,11 @@
 	import { loadBackendSettings, versionLabel } from '$lib/backends/settings';
 	import { isOpencodeAgent } from '$lib/backends/acp-agents';
 	import { CAPS, NATIVE_BACKEND_IDS, BACKEND_LABELS, type AcpAgentRef, type BackendId } from '$lib/backends';
+	import { builtinAgents, builtinNote, builtinRef, confirmNoApprovals, loadBuiltinAgents, type AcpBuiltin } from '$lib/acpBuiltins.svelte';
+	import Segmented from '$lib/ui/Segmented.svelte';
+	import Select from '$lib/ui/Select.svelte';
+	import Switch from '$lib/ui/Switch.svelte';
+	import { choiceLabel, optionLabel } from './sessionOptions';
 	import { t } from '$lib/i18n';
 	import type { ChatState } from '$lib/chat.svelte';
 	import { stripGroupSuffix, type ModelRow } from './modelRows';
@@ -46,6 +52,7 @@
 		onEffort,
 		onSwitch,
 		onBackend,
+		onSessionOption,
 		onRefreshModels,
 		onContinueOnLynShen,
 		gateway = null
@@ -66,6 +73,8 @@
 		onEffort: (effort: string) => void;
 		onSwitch: (name: SessionSwitch, on: boolean) => void;
 		onBackend?: (b: BackendId, acpAgent?: AcpAgentRef) => void | Promise<void>;
+		/** ACP: sets one of the agent's settings (`session_options`). */
+		onSessionOption?: (id: string, value: string | boolean) => void;
 		/** Re-request the model catalog (after an agent switch). */
 		onRefreshModels: () => void;
 		/** A Claude Code / Codex conversation that has started: continue it in
@@ -115,12 +124,22 @@
 		acpAgentsList()
 			.then((a) => (acpAgents = a))
 			.catch(() => {});
+		void loadBuiltinAgents();
 	});
+	// The daemon's built-in agents (a daemon with `acp_presets`): each one,
+	// shown also when it cannot start here (not installed, wrong version) so
+	// the user learns it exists; a registered agent running the same program
+	// (OpenCode) is then the user's own copy and stays listed.
+	const builtins = $derived(builtinAgents.list);
+	const builtinTitle = (a: AcpBuiltin) => {
+		const note = builtinNote(a);
+		return [a.name, a.status === 'ready' ? a.version : '', note].filter(Boolean).join(' · ');
+	};
 	// Only agents that can run here: Claude Code / Codex show once installed
 	// and signed in to an account of their own (the session's own always
 	// shows). One agent alone is nothing to switch between, so the section goes.
 	const shownNative = $derived(NATIVE_BACKEND_IDS.filter((id) => id === 'lynshen' || id === chat.backendId || probe[id]?.usable));
-	const canSwitchAgent = $derived(shownNative.length + acpAgents.length > 1);
+	const canSwitchAgent = $derived(shownNative.length + acpAgents.length + builtins.length > 1);
 	const agentTitle = (id: BackendId) => {
 		const p = probe[id];
 		if (!p) return BACKEND_LABELS[id];
@@ -146,6 +165,17 @@
 		switching = true;
 		try {
 			await onBackend?.('acp', { id: agent.id, name: agent.name, ...(isOpencodeAgent(agent) ? { opencode: true } : {}) });
+		} finally {
+			switching = false;
+		}
+	}
+	async function pickBuiltin(agent: AcpBuiltin) {
+		if (switching || agent.status !== 'ready' || (chat.backendId === 'acp' && chat.acpAgentId === agent.id)) return;
+		// An agent that never asks runs in 全自动 only: said, and agreed to.
+		if (!agent.approvals && !(await confirmNoApprovals(agent.name))) return;
+		switching = true;
+		try {
+			await onBackend?.('acp', builtinRef(agent));
 		} finally {
 			switching = false;
 		}
@@ -245,14 +275,14 @@
 	/>
 {:else}
 <button class="mm-backdrop" aria-label={t('common.close')} tabindex="-1" onclick={onClose}></button>
-<div class="pop mm" role="dialog" out:popOut|global aria-label={t('chat.switchModel')} bind:this={popEl} style:left="{popLeft}px" style:top="{popTop}px">
+<div use:overBrowser class="pop mm" role="dialog" out:popOut|global aria-label={t('chat.switchModel')} bind:this={popEl} style:left="{popLeft}px" style:top="{popTop}px">
 	{#if page === 'main'}
 		<section class="current">
 			{#if canPickModel}
 				<QuickSwitcher {items} {trial} {facts} onPick={pickItem} onBrowse={(q) => (browsing = q)} onRoutes={routesOf} />
 			{:else}
 				<div class="pop-row static">
-					<span class="pop-ico"><BackendIcon backend={chat.backendId} size={15} /></span>
+					<span class="pop-ico"><BackendIcon backend={chat.backendId} agent={chat.acpAgentId} size={15} /></span>
 					<span class="pop-txt"><span class="pop-label">{modelName}</span></span>
 				</div>
 			{/if}
@@ -260,6 +290,34 @@
 
 
 		<SessionSwitches {chat} {onSwitch} thinking={false} {gateway} />
+
+		{#if chat.backendId === 'acp' && chat.sessionOptions.length}
+			<!-- The agent's own settings (its mode, say), as it names them. -->
+			<section class="options" aria-label={t('chat.agentSettings')}>
+				{#each chat.sessionOptions as o (o.id)}
+					<div class="opt" title={o.description ?? undefined}>
+						<span class="olabel">{optionLabel(o)}</span>
+						{#if o.type === 'boolean'}
+							<Switch checked={o.value} label={optionLabel(o)} onChange={(v) => onSessionOption?.(o.id, v)} />
+						{:else if o.choices.length <= 4}
+							<Segmented
+								value={o.value}
+								options={o.choices.map((c) => ({ value: c.value, label: choiceLabel(o, c) }))}
+								onChange={(v) => onSessionOption?.(o.id, v)}
+							/>
+						{:else}
+							<div class="osel">
+								<Select
+									value={o.value}
+									options={o.choices.map((c) => ({ value: c.value, label: choiceLabel(o, c) }))}
+									onChange={(v) => onSessionOption?.(o.id, v)}
+								/>
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</section>
+		{/if}
 
 		{#if chat.backendId === 'lynshen' && chat.provider === 'lynshen' && chat.model}
 			{#key chat.model}<GroupPicker model={chat.model} />{/key}
@@ -285,6 +343,20 @@
 						onclick={() => pickNative(id)}
 					>
 						<BackendIcon backend={id} size={15} /><span>{BACKEND_LABELS[id]}</span>
+					</button>
+				{/each}
+				{#each builtins as agent (agent.id)}
+					<button
+						class="agent"
+						class:on={chat.backendId === 'acp' && chat.acpAgentId === agent.id}
+						class:miss={agent.status !== 'ready'}
+						disabled={switching || agent.status !== 'ready'}
+						title={builtinTitle(agent)}
+						data-builtin={agent.id}
+						onclick={() => pickBuiltin(agent)}
+					>
+						<BackendIcon backend="acp" agent={agent.id} size={15} /><span>{agent.name}</span>
+						{#if agent.status !== 'ready'}<span class="anote">{builtinNote(agent)}</span>{:else if !agent.approvals}<span class="anote">{t('chat.noApproval')}</span>{/if}
 					</button>
 				{/each}
 				{#each acpAgents as agent (agent.id)}
@@ -453,6 +525,37 @@
 	}
 	.agent:disabled {
 		cursor: default;
+	}
+	.agent.miss {
+		color: var(--dim2);
+	}
+	.anote {
+		color: var(--dim2);
+		font-size: var(--fs-2xs);
+	}
+	.options {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 2px 8px;
+	}
+	.opt {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		min-height: 32px;
+	}
+	.olabel {
+		min-width: 0;
+		overflow: hidden;
+		color: var(--dim);
+		font-size: var(--fs-sm);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.osel {
+		width: 180px;
 	}
 	.models {
 		display: flex;

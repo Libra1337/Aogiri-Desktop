@@ -3,6 +3,7 @@
 	// then projects with their sessions nested and an archived section each.
 	// Sessions come from the daemon's list, the one the desktop shows too, so
 	// titles, archive state and removals are the same on every device.
+	import { listable } from './engines';
 	import FolderIcon from 'phosphor-svelte/lib/FolderIcon';
 	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpenIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
@@ -59,13 +60,14 @@
 	const projects = $derived(remoteProjects.active?.projects ?? []);
 	const chats = $derived(CHATS_ENABLED ? projects.find((p) => p.chats) : undefined);
 	const code = $derived(projects.filter((p) => !p.chats));
-	/** The daemon's sessions, newest first. A closed ACP session cannot be
-	 *  reopened, so it is not listed (the desktop does the same); nor are
+	/** The daemon's sessions, newest first. A closed session of a registered
+	 *  ACP agent reopens on the desktop only, so it is not listed (one of a
+	 *  built-in agent is: the daemon starts it by id); nor are
 	 *  chats while they are hidden, nor a conversation saved with nothing in
 	 *  it (savedEmpty.ts): a new one is listed from its first message. */
 	const listed = $derived(
 		agentDirectory.sessions
-			.filter((s) => !s.agent && (s.engine !== 'acp' || s.open) && (CHATS_ENABLED || !s.chat) && !savedEmpty(s))
+			.filter((s) => !s.agent && listable(s) && (CHATS_ENABLED || !s.chat) && !savedEmpty(s))
 			.sort((a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at))
 	);
 	const sessionsOf = (p: ProjectView) => listed.filter((s) => trim(s.cwd) === trim(p.path));
@@ -148,7 +150,7 @@
 			<!-- A session outside the projects names its folder. -->
 			{#if !p}<span class="where" title={s.cwd}>{baseName(s.cwd)}</span>{/if}
 			{#if s.engine && s.engine !== 'lynshen'}
-				<span class="chip"><BackendIcon backend={s.engine as 'claude'} size={12} /></span>
+				<span class="chip"><BackendIcon backend={s.engine as 'claude'} agent={s.acp_agent?.id} size={12} /></span>
 			{/if}
 			{#if waiting(s)}<span class="tag">{t('shell.awaitShort')}</span>
 			{:else if s.background && !s.running}<span class="tag bg">{t('shell.schedule.run.background')}</span>{/if}

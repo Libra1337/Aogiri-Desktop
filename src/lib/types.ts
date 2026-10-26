@@ -5,15 +5,20 @@ import type { TabIcon } from './workbench/tabChrome';
 export interface Session {
 	id: string;
 	chat: ChatState;
+	/** The conversation it was forked from: its engine id, its title then,
+	 *  and the user turns the fork took from it (persisted; the daemon's
+	 *  list also names it, `forked_from`). */
+	forkedFrom?: { sid: string; title: string; turns: number };
 	/** Engine backend driving this session (persisted; 'lynshen' default). */
 	backendId: BackendId;
 	/** Tab tag color (persisted with the session's saved tab). */
 	color?: string;
 	/** Tab icon: builtin id, slug/emoji, or sanitized SVG (persisted). */
 	icon?: TabIcon;
-	/** For 'acp' sessions: the registry id + display name of the launched agent
-	 *  (passed as the allowlisted `agent` spawn option on every (re)spawn), and
-	 *  whether it is OpenCode (approval modes, the LynShen gateway switch). */
+	/** For 'acp' sessions: the launched agent (needed on every (re)spawn): a
+	 *  built-in one the daemon starts by id (`builtin`), or a registry entry
+	 *  by its id and name, and whether it is OpenCode (approval modes, the
+	 *  LynShen gateway switch). */
 	acpAgent?: AcpAgentRef;
 	/** Per-session adapter instance (the lynshen one; not persisted). */
 	adapter: EngineAdapter;
@@ -48,6 +53,13 @@ export interface Session {
 	at?: number;
 	/** Model and effort picked while a draft, applied when it starts. */
 	draftPick?: { model?: string; effort?: string };
+	/** Claude Code / Codex: the custom provider picked while a draft (its id;
+	 *  '': the tool's own login or config). Unset: the tool's default. */
+	draftToolProvider?: string;
+	/** A draft's choice to start in a new worktree of its project's
+	 *  repository, from local branch `base`: made with its first message
+	 *  (SessionStore.#startDraft), as a project of its own. */
+	draftWorktree?: { base: string };
 	/** The reply style picked while a draft (LynShen), sent before its first
 	 *  message. */
 	draftStyle?: string;
@@ -92,6 +104,11 @@ export interface Project {
 	/** 附加目录（绝对路径，不含主目录 path）：引擎在主目录启动时也能读写这些目录。
 	 *  随 workspaces.json 保存并同步给后台服务。 */
 	dirs?: string[];
+	/** Run in a terminal in each new worktree made from this project (a new
+	 *  task, a fork, a conversation started in a worktree): install
+	 *  dependencies, copy .env… LYNSHEN_PROJECT_ROOT and LYNSHEN_WORKTREE_PATH
+	 *  are set. Saved with the workspace (desktop only). */
+	setup?: string;
 	sessions: Session[];
 	/** 并行任务 worktree 项目才有；普通项目为 undefined。 */
 	worktree?: WorktreeMeta;

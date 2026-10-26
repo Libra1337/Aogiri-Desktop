@@ -34,4 +34,15 @@ describe('canHandOffToTui', () => {
 		expect(canHandOffToTui('codex')).toBe(true);
 		expect(canHandOffToTui('acp')).toBe(false);
 	});
+
+	it('allows a built-in ACP agent and a registered OpenCode once the daemon runs them', () => {
+		const omp = { id: 'omp', builtin: true };
+		expect(canHandOffToTui('acp', omp, true)).toBe(true);
+		expect(canHandOffToTui('acp', { id: 'pi', builtin: true }, true)).toBe(true);
+		expect(canHandOffToTui('acp', { id: 'my-opencode', opencode: true }, true)).toBe(true);
+		// Another registered agent, an unknown built-in, an older daemon: no.
+		expect(canHandOffToTui('acp', { id: 'gemini' }, true)).toBe(false);
+		expect(canHandOffToTui('acp', { id: 'goose', builtin: true }, true)).toBe(false);
+		expect(canHandOffToTui('acp', omp, false)).toBe(false);
+	});
 });

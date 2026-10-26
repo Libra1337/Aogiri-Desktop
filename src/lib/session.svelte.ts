@@ -1,5 +1,8 @@
-import { AUTO_CONTINUE, ChatState, UNTITLED } from './chat.svelte';
-import { acpAgentsList, closeSession, recordOpencodeCopy, createChatDir, daemon, hostSession, listDir, sessionMeta, sessionHistory, defaultWorkspaceDir, writeConfig, git, type AcpAgent, type FsEntry, type HistoryItem } from './protocol';
+import { AUTO_CONTINUE, ChatState, UNTITLED, shownTitle } from './chat.svelte';
+import { acpAgentsList, closeSession, recordOpencodeCopy, createChatDir, daemon, hostSession, listDir, sessionMeta, sessionHistory, defaultWorkspaceDir, writeConfig, git, worktreeBase, type AcpAgent, type FsEntry, type HistoryItem } from './protocol';
+import { forkedMessages, sessionWorktreeNames } from './forks';
+import { engineHas } from './engineVersion.svelte';
+import { probeEngine } from './engineProbe';
 import { chatFolderName } from './chatFolder';
 import { savedEmpty } from './savedEmpty';
 import { DaemonError, type EngineSpec } from './daemon';
@@ -53,6 +56,8 @@ export interface SavedProject extends SavedTabChrome {
 		model?: string;
 		/** Last activity, ms (see `lastActive`). */
 		at?: number;
+		/** Session.forkedFrom. */
+		forkedFrom?: { sid: string; title: string; turns: number };
 	} & SavedTabChrome)[];
 	/** 并行任务 worktree 项目的元数据（isWorktree/mainRepoPath/branch/baseBranch/slug）。 */
 	worktree?: WorktreeMeta;
@@ -68,6 +73,8 @@ export interface SavedProject extends SavedTabChrome {
 	newFolder?: boolean;
 	/** 附加目录（见 Project.dirs）。 */
 	dirs?: string[];
+	/** Project.setup. */
+	setup?: string;
 }
 
 /** A start that failed because the daemon is not there (see daemon.ts), as
@@ -87,6 +94,17 @@ const base = (p: string) => p.replace(/\/+$/, '').split('/').pop() || p;
 /** A Unix, drive-letter or UNC absolute path (the daemon takes no other). */
 const isAbsolute = (p: string) => /^(\/|[A-Za-z]:[\\/]|\\\\)/.test(p);
 const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, '') === b.replace(/[\\/]+$/, '');
+
+/** A listed session's `forked_from` (daemon list, B08) as Session.forkedFrom;
+ *  the source's title from the open session, if any. */
+export function forkedFromList(
+	rec: { session?: string | null; turns?: number | null } | null | undefined,
+	titleOf: (sid: string) => string | undefined = () => undefined
+): Session['forkedFrom'] {
+	const sid = typeof rec?.session === 'string' ? rec.session : '';
+	if (!sid || !isValidResumeSessionId(sid)) return undefined;
+	return { sid, title: titleOf(sid) ?? '', turns: typeof rec?.turns === 'number' && rec.turns > 0 ? rec.turns : 0 };
+}
 
 /** A new conversation with nothing in it yet: no message (only notices
  *  such as a command's output), no goal, and no name (the daemon names a
@@ -201,7 +219,7 @@ export class SessionStore {
 		// answered: Codex not installed, the engine's program not found, a
 		// bad config) shows as it is.
 		if (s && s.surface !== 'tui' && !(e instanceof DaemonError) && daemonUnreachable(e) && chat.daemonRetries < DAEMON_RETRY_DELAYS.length) {
-			if (chat.daemonRetries === 0) chat.messages.push({ kind: 'system', text: t('shell.daemonReconnecting') });
+			if (chat.daemonRetries === 0) chat.messages.push({ kind: 'system', text: t('shell.daemonReconnecting'), flow: { type: 'reconnect' } });
 			const delay = DAEMON_RETRY_DELAYS[chat.daemonRetries++]!;
 			setTimeout(() => {
 				const live = this.allSessions.find((x) => x.id === s.id);
@@ -229,10 +247,15 @@ export class SessionStore {
 		const id = reuseId && !this.allSessions.some((s) => s.id === reuseId) ? reuseId : this.uid();
 		const chat = new ChatState(backendId);
 		chat.bindRunKey(id);
+		// The built-in OpenCode is OpenCode too (its modes and gateway switch).
+		if (acpAgent?.builtin && acpAgent.id === 'opencode') acpAgent = { ...acpAgent, opencode: true };
 		if (acpAgent) {
 			chat.acpAgentId = acpAgent.id;
 			chat.acpAgentName = acpAgent.name;
 			chat.acpOpencode = !!acpAgent.opencode;
+			// An agent that never asks runs in 全自动, which this window's last
+			// mode must not be pushed over.
+			if (acpAgent.noApprovals) chat.followEngineMode = true;
 		}
 		const adapter = createLynShenAdapter();
 		registerAdapter(id, adapter);
@@ -298,7 +321,9 @@ export class SessionStore {
 							...gateway,
 							...program,
 							...(extraOpts?.model ? { model: extraOpts.model } : {}),
+							...(typeof extraOpts?.tool_provider === 'string' ? { tool_provider: extraOpts.tool_provider } : {}),
 							...(extraOpts?.resume_session_at ? { resume_at: extraOpts.resume_session_at } : {}),
+							...(extraOpts?.fork_from ? { fork_from: extraOpts.fork_from, ...(extraOpts.fork_turns ? { fork_turns: extraOpts.fork_turns } : {}) } : {}),
 							// A restarted engine keeps the session's settings.
 							...(s.chat.ultracode ? { ultracode: true } : {}),
 							...(s.chat.fast ? { fast: true } : {}),
@@ -313,11 +338,17 @@ export class SessionStore {
 								approval_mode: mode,
 								...gateway,
 								...program,
+								...(typeof extraOpts?.tool_provider === 'string' ? { tool_provider: extraOpts.tool_provider } : {}),
 								// A restarted engine keeps the session's switches.
 								...(s.chat.fast ? { fast: true } : {}),
+								...(extraOpts?.fork_from ? { fork_from: extraOpts.fork_from, fork_turns: extraOpts.fork_turns } : {}),
 								...(!prefs.thinkingSummaries ? { thinking: false } : {})
 							}
 						})
+					: s.backendId === 'acp' && s.acpAgent?.builtin
+						? // A built-in agent: the daemon finds and starts it by id (it
+							// reopens a session from its record, whatever is named here).
+							Promise.resolve(this.#builtinSpec(s, mode, !!(s.chat.sessionId || resume), extraOpts))
 					: s.backendId === 'acp'
 						? // An ACP agent runs the command its registry entry names.
 							acpAgentsList().then(async (agents) => {
@@ -340,6 +371,9 @@ export class SessionStore {
 										// The agent's own environment wins over the backend's.
 										env: agentEnv(entry, base?.env),
 										acp_agent: { id: entry.id, name: entry.name },
+										// A draft's picks (a daemon with the full ACP client).
+										...(extraOpts?.model ? { model: extraOpts.model } : {}),
+										...(extraOpts?.effort ? { effort: extraOpts.effort } : {}),
 										...(opencode
 											? { approval_mode: mode, ...(s.gateway !== undefined ? { lynshen_gateway: s.gateway } : {}) }
 											: {}),
@@ -348,7 +382,13 @@ export class SessionStore {
 									}
 								};
 							})
-						: Promise.resolve(undefined);
+						: // LynShen's own engine takes no options, except a fork's.
+							extraOpts?.fork_from
+							? Promise.resolve({
+									engine: 'lynshen',
+									options: { fork_from: extraOpts.fork_from, fork_turns: extraOpts.fork_turns, ...(extraOpts.fork_cwd ? { fork_cwd: extraOpts.fork_cwd } : {}) }
+								})
+							: Promise.resolve(undefined);
 		return engine
 			.then((spec) =>
 				hostSession(s.id, cwd ?? '', resume ?? (s.chat.sessionId || undefined), agent, chat, spec).then(() => {
@@ -393,6 +433,28 @@ export class SessionStore {
 				after?.();
 				for (const op of held) dispatch(s.id, op);
 			});
+	}
+
+	/** How the daemon starts a built-in ACP agent: by its id, approval mode
+	 *  and gateway switch, never a command line. A new conversation runs on
+	 *  the LynShen gateway when this computer is signed in (as OpenCode's);
+	 *  a reopened one as it last ran. A draft's model and effort are set once
+	 *  the conversation opens. */
+	#builtinSpec(s: Session, mode: string, reopened: boolean, extraOpts?: Record<string, unknown>): EngineSpec {
+		if (s.gateway === undefined && !reopened) s.gateway = gatewayByDefault();
+		// An agent that never asks (Pi) runs in 全自动 only: the user agreed to
+		// that when picking it (any other mode is refused by the daemon).
+		if (s.acpAgent?.noApprovals || s.chat.agentApprovals === false) mode = 'full-auto';
+		return {
+			engine: 'acp',
+			options: {
+				agent: s.acpAgent?.id,
+				approval_mode: mode,
+				...(s.gateway !== undefined ? { lynshen_gateway: s.gateway } : {}),
+				...(extraOpts?.model ? { model: extraOpts.model } : {}),
+				...(extraOpts?.effort ? { effort: extraOpts.effort } : {})
+			}
+		};
 	}
 
 	/** A new session in `project`, made active, as a draft: nothing starts
@@ -452,7 +514,7 @@ export class SessionStore {
 	addTuiSession(project: Project, backend: BackendId) {
 		const id = this.addSession(project, undefined, backend);
 		const s = this.allSessions.find((x) => x.id === id);
-		if (s && canHandOffToTui(s.backendId)) {
+		if (s && canHandOffToTui(s.backendId, s.acpAgent, engineHas('acp_presets'))) {
 			s.surface = 'tui';
 			startDraft(id);
 		}
@@ -468,6 +530,15 @@ export class SessionStore {
 		s.chat.engineState = 'ready';
 		s.chat.seedFromProfile();
 		markDraft(s.id, () => this.#startDraft(s.id));
+		// Claude Code / Codex: its menus from what the engine offers now, when
+		// that was not known lately (engineProbe.ts); the draft takes the
+		// answer while it is still a draft of that backend.
+		const { id, chat } = s;
+		void probeEngine(s.backendId).then((changed) => {
+			const now = this.allSessions.find((x) => x.id === id);
+			// A model the user picked meanwhile stays.
+			if (changed && now?.draft && now.chat === chat && chat.backendId === now.backendId && !now.draftPick) chat.seedFromProfile();
+		});
 	}
 
 	/** The project's new conversation with nothing sent yet (`isBlank`), the
@@ -501,21 +572,157 @@ export class SessionStore {
 		const style = s.draftStyle;
 		s.draftStyle = undefined;
 		const model = pick?.model || s.chat.model;
+		// An ACP agent takes no /model before its conversation opens: the
+		// picks are start options it applies once open.
+		const acp = s.backendId === 'acp';
 		// The reply style, model and effort picked while a draft go first; the
 		// held first message follows.
 		const applyPick = () => {
 			if (style && caps(s.chat).replyStyles) dispatch(s.id, { op: 'set_style', style });
-			if (!pick || !model) return;
+			if (acp || !pick || !model) return;
 			const effort = pick.effort ?? '';
 			dispatch(s.id, { op: 'command', input: effort ? `/model ${model} ${effort}` : `/model ${model}` });
 		};
+		// Claude Code / Codex off the gateway: the custom provider picked (the
+		// daemon takes the tool's default otherwise, and keeps it after).
+		const provider = s.draftToolProvider;
+		s.draftToolProvider = undefined;
+		const startOpts =
+			acp && pick
+				? { ...(pick.model ? { model: pick.model } : {}), ...(pick.effort ? { effort: pick.effort } : {}) }
+				: provider !== undefined && !s.gateway && engineHas('tool_providers')
+					? { tool_provider: provider }
+					: undefined;
+		const want = s.draftWorktree;
+		s.draftWorktree = undefined;
+		if (want) {
+			void this.#startInWorktree(s, project, want.base, applyPick, startOpts);
+			return;
+		}
 		(project.newFolder ? this.#chatFolder(project, s.id) : Promise.resolve())
-			.then(() => this.#spawn(s, project.path, applyPick))
+			.then(() => this.#spawn(s, project.path, applyPick, startOpts))
 			.then(() => {
 				// Renamed while a draft, before it had a daemon session.
 				if (s.chat.title !== UNTITLED) this.#share(s, { title: s.chat.title });
 			})
 			.catch((e) => this.#engineFailed(s.chat, e));
+	}
+
+	/** A worktree is ready (the page runs the project's setup script in it,
+	 *  in a terminal there). `from`: the project it was made from. */
+	static onWorktree: ((worktree: Project, from: Project) => void) | null = null;
+
+	/** A draft that chose a new worktree, as its first message goes: the
+	 *  worktree is made from local branch `base` (named from that message),
+	 *  opened as a project of its own (a parallel task's), and the draft
+	 *  moves there and starts in it. When it cannot be made, the draft stays
+	 *  where it was, its message back in the composer. */
+	async #startInWorktree(s: Session, project: Project, base: string, after: () => void, startOpts?: Record<string, unknown>) {
+		const first = peekHeldOps(s.id).find((op) => op.op === 'user_message');
+		const text = typeof first?.content === 'string' ? first.content : '';
+		const note: Extract<Session['chat']['messages'][number], { kind: 'system' }> = { kind: 'system', text: t('chat.worktree.creating') };
+		s.chat.messages.push(note);
+		const { slug, branch } = sessionWorktreeNames(text);
+		try {
+			const container = await worktreeBase(project.path);
+			const path = `${container}${container.includes('\\') ? '\\' : '/'}${slug}`;
+			await git(['worktree', 'add', path, '-b', branch, base], project.path);
+			const tree = this.#worktreeProject(path, { isWorktree: true, mainRepoPath: project.path, branch, baseBranch: base, slug }, project);
+			// The draft goes over, its held message with it.
+			project.sessions = project.sessions.filter((x) => x !== s);
+			tree.sessions.unshift(s);
+			const live = tree.sessions[0]!;
+			live.chat.messages = live.chat.messages.map((m) => (m === note ? { kind: 'system', text: t('chat.worktree.created', { name: slug, branch, base }) } : m));
+			tree.lastBackend = live.backendId;
+			this.activeId = live.id;
+			SessionStore.onWorktree?.(tree, project);
+			this.#spawn(live, tree.path, after, startOpts)
+				.then(() => {
+					if (live.chat.title !== UNTITLED) this.#share(live, { title: live.chat.title });
+				})
+				.catch((e) => this.#engineFailed(live.chat, e));
+		} catch (e) {
+			// The message goes back to the composer, not to an engine.
+			dropHeldOps(s.id);
+			s.chat.messages = s.chat.messages.filter((m) => m !== note && !(m.kind === 'user' && m.text === text));
+			s.chat.messages.push({ kind: 'error', text: t('chat.worktree.failed', { msg: String(e) }) });
+			s.draftWorktree = { base };
+			this.#makeDraft(s);
+			if (text) s.chat.pendingFill = text;
+		}
+	}
+
+	/** A worktree of `from`'s repository as a project of its own, beside it
+	 *  in the list (a parallel task's, ParallelTasks / TaskDialog); the one
+	 *  already open for `path`, if any. Its setup script is `from`'s. */
+	#worktreeProject(path: string, meta: WorktreeMeta, from: Project): Project {
+		const known = this.userProjects.find((p) => samePath(p.path, path));
+		if (known) return known;
+		const p: Project = { id: this.uid(), name: base(path), path, sessions: [], worktree: meta };
+		if (from.color) p.color = from.color;
+		const at = this.projects.indexOf(from);
+		this.projects.splice(at < 0 ? this.projects.length : at + 1, 0, p);
+		return this.projects.find((x) => x.id === p.id)!;
+	}
+
+	/** A draft goes on in a new worktree from local branch `base` (made with
+	 *  its first message), or (null) where it is. */
+	setDraftWorktree(id: string, base: string | null) {
+		const s = this.allSessions.find((x) => x.id === id);
+		if (!s?.draft) return;
+		s.draftWorktree = base ? { base } : undefined;
+	}
+
+	/** The daemon can fork this session's conversation (its hello names
+	 *  `fork`, and the engine keeps one: LynShen, Claude Code, Codex). */
+	canFork(id: string): boolean {
+		const s = this.allSessions.find((x) => x.id === id);
+		return !!s && !s.draft && !!s.chat.sessionId && s.backendId !== 'acp' && engineHas('fork');
+	}
+
+	/** A new session that goes on from session `id`'s first `keep` user
+	 *  turns, beside it in its project, or in `worktree` (made for it,
+	 *  already checked out): a project of its own beside the original's. The
+	 *  original stays as it is. The daemon forks the conversation
+	 *  (`fork_from`, B08): Claude Code resumes it at the turn's last reply as
+	 *  a new one, Codex forks the thread, LynShen copies the turns (from the
+	 *  original's folder, `fork_cwd`). Until the engine replays it, the new
+	 *  session shows the turns copied from this one. */
+	forkSession(id: string, keep: number, worktree?: { path: string; meta: WorktreeMeta }): string | undefined {
+		const src = this.allSessions.find((x) => x.id === id);
+		const project = this.projects.find((p) => p.sessions.some((x) => x.id === id));
+		const from = src?.chat.sessionId;
+		if (!src || !project || !from || !this.canFork(id) || keep < 1) return;
+		const home = worktree ? this.#worktreeProject(worktree.path, worktree.meta, project) : project;
+		const s = this.#newSession(src.backendId);
+		s.forkedFrom = { sid: from, title: src.chat.title, turns: keep };
+		if (src.gateway !== undefined) s.gateway = src.gateway;
+		if (src.group) s.group = src.group;
+		if (src.model) s.model = src.model;
+		s.chat.approvalMode = src.chat.approvalMode;
+		s.chat.title = t('chat.fork.forkTitle', { title: shownTitle(src.chat.title) });
+		// Its engine goes on from this conversation: no other backend.
+		s.restored = true;
+		s.chat.messages = $state.snapshot(forkedMessages(src.chat.messages, keep)) as typeof src.chat.messages;
+		// Right after the original, or first in its worktree's project.
+		if (home === project) project.sessions.splice(project.sessions.indexOf(src) + 1, 0, s);
+		else home.sessions.unshift(s);
+		const live = home.sessions.find((x) => x.id === s.id)!;
+		home.lastBackend = live.backendId;
+		this.activeId = live.id;
+		// LynShen keeps sessions by folder: a fork elsewhere reads the
+		// original from its folder (`fork_cwd`).
+		const fork = { fork_from: from, fork_turns: keep, ...(worktree && src.backendId === 'lynshen' ? { fork_cwd: this.projectPathOf(id) ?? project.path } : {}) };
+		this.#spawn(live, home.path, undefined, { ...this.#keepModel(src), ...fork })
+			.then(() => this.#share(live, { title: live.chat.title }))
+			.catch((e) => this.#engineFailed(live.chat, e));
+		if (worktree) SessionStore.onWorktree?.(home, project);
+		return s.id;
+	}
+
+	/** The open session whose conversation is `sid`. */
+	bySid(sid: string): Session | undefined {
+		return this.allSessions.find((s) => s.chat.sessionId === sid);
 	}
 
 	/**
@@ -529,7 +736,8 @@ export class SessionStore {
 	async switchBackend(id: string, backend: BackendId, acpAgent?: AcpAgentRef) {
 		const s = this.allSessions.find((x) => x.id === id);
 		if (!s) return;
-		if (s.backendId === backend && (backend !== 'acp' || s.acpAgent?.id === acpAgent?.id)) return;
+		if (acpAgent?.builtin && acpAgent.id === 'opencode') acpAgent = { ...acpAgent, opencode: true };
+		if (s.backendId === backend && (backend !== 'acp' || (s.acpAgent?.id === acpAgent?.id && !!s.acpAgent?.builtin === !!acpAgent?.builtin))) return;
 		if (s.chat.userTurns > 0 || s.restored) return;
 		if (backend === 'acp' && !acpAgent) return; // nothing to launch
 		if (s.draft) {
@@ -554,6 +762,7 @@ export class SessionStore {
 			chat.acpAgentId = acpAgent.id;
 			chat.acpAgentName = acpAgent.name;
 			chat.acpOpencode = !!acpAgent.opencode;
+			if (acpAgent.noApprovals) chat.followEngineMode = true;
 			if (project) project.lastAcpAgent = acpAgent;
 		} else {
 			s.acpAgent = undefined;
@@ -584,6 +793,7 @@ export class SessionStore {
 			chat.acpAgentId = agent.id;
 			chat.acpAgentName = agent.name;
 			chat.acpOpencode = !!agent.opencode;
+			if (agent.noApprovals) chat.followEngineMode = true;
 		}
 		const adapter = createLynShenAdapter();
 		registerAdapter(s.id, adapter);
@@ -593,6 +803,7 @@ export class SessionStore {
 		s.acpAgent = agent;
 		s.draftPick = undefined;
 		s.draftStyle = undefined;
+		s.draftToolProvider = undefined;
 		this.#makeDraft(s);
 	}
 
@@ -690,12 +901,16 @@ export class SessionStore {
 			gateway?: boolean;
 			/** ACP: the registry agent that runs it. */
 			acp_agent?: AcpAgentRef | null;
+			/** A fork: the conversation it came from (B08). */
+			forked_from?: { session?: string | null; turns?: number | null } | null;
 		},
 		reuseId?: string,
 		atStart = false
 	): string {
 		const backend = normalizeBackendId(rec.engine);
 		const s = this.#newSession(backend, backend === 'acp' ? (rec.acp_agent ?? undefined) : undefined, reuseId);
+		const fork = forkedFromList(rec.forked_from, (sid) => this.bySid(sid)?.chat.title);
+		if (fork) s.forkedFrom = fork;
 		if (rec.gateway) s.gateway = true;
 		s.dormant = true;
 		s.restored = true;
@@ -1039,7 +1254,7 @@ export class SessionStore {
 			: reason
 				? t('shell.autoRestartingWhy', { reason })
 				: t('shell.autoRestarting');
-		if (spend) s.chat.messages.push({ kind: 'system', text });
+		if (spend) s.chat.messages.push({ kind: 'system', text, flow: { type: 'restart' } });
 		// The daemon reopens the session's conversation. A resume target the
 		// engine can't find ("No conversation found …") makes it exit at once,
 		// which would crash-loop re-resuming the same doomed id; when the engine
@@ -1145,7 +1360,7 @@ export class SessionStore {
 		}
 		s.chat.switching = true;
 		s.chat.engineState = 'connecting';
-		s.chat.messages.push({ kind: 'system', text: t('shell.switchingTo', { provider: provider.id, model }) });
+		s.chat.messages.push({ kind: 'system', text: t('shell.switchingTo', { provider: provider.id, model }), flow: { type: 'switch' } });
 		try {
 			await closeSession(id);
 			if (this.#gone(s)) return;
@@ -1157,6 +1372,22 @@ export class SessionStore {
 		}
 	}
 
+	/** A new Claude Code / Codex conversation starts on one of the tool's
+	 *  custom providers (`provider`, its id), or ('') on the tool's own login
+	 *  or config, instead of the tool's default; off the gateway. `model`:
+	 *  the provider's default, shown until it starts. */
+	setDraftToolProvider(id: string, provider: string, model?: string) {
+		const s = this.allSessions.find((x) => x.id === id);
+		if (!s?.draft || (s.backendId !== 'claude' && s.backendId !== 'codex')) return;
+		s.gateway = false;
+		s.draftToolProvider = provider;
+		if (model) {
+			s.draftPick = { ...s.draftPick, model };
+			s.chat.model = model;
+			s.chat.modelLabel = '';
+		}
+	}
+
 	/** Run this Claude Code / Codex / OpenCode session through the LynShen
 	 *  gateway (`lynshen`, optionally on `model`) or the provider in the user's
 	 *  own config (`system`). Only this session's process changes; other
@@ -1164,13 +1395,15 @@ export class SessionStore {
 	async applyToolProfile(id: string, mode: 'system' | 'lynshen', model?: string) {
 		const s = this.allSessions.find((x) => x.id === id);
 		if (!s) return;
-		const opencode = s.backendId === 'acp' && s.chat.acpOpencode;
-		if (s.backendId !== 'claude' && s.backendId !== 'codex' && !opencode) return;
+		// OpenCode, and a built-in agent that runs on the gateway (all of them
+		// do; `engine_caps` says so once it runs).
+		const acpGateway = s.backendId === 'acp' && (s.chat.acpOpencode || (!!s.acpAgent?.builtin && (s.chat.agentGateway || !s.chat.engineCaps)));
+		if (s.backendId !== 'claude' && s.backendId !== 'codex' && !acpGateway) return;
 		s.gateway = mode === 'lynshen';
 		// A draft starts that way with its first message.
 		if (s.draft) {
 			if (model) {
-				s.draftPick = { model };
+				s.draftPick = { ...s.draftPick, model };
 				s.chat.model = model;
 				s.chat.modelLabel = '';
 			}
@@ -1185,7 +1418,8 @@ export class SessionStore {
 		s.chat.engineState = 'connecting';
 		s.chat.messages.push({
 			kind: 'system',
-			text: mode === 'lynshen' ? t('shell.toolSwitch.toLynShen') : t('shell.toolSwitch.toSystem')
+			text: mode === 'lynshen' ? t('shell.toolSwitch.toLynShen') : t('shell.toolSwitch.toSystem'),
+			flow: { type: 'switch' }
 		});
 		try {
 			await closeSession(id);
@@ -1277,13 +1511,13 @@ export class SessionStore {
 		// A message sent again goes with its files (an image message is not
 		// sent again: `plain`).
 		const send = (text: string, hidden: boolean, files?: string[]) => {
-			c.messages.push({ kind: 'system', text: note });
+			c.messages.push({ kind: 'system', text: note, flow: { type: 'retry' } });
 			if (hidden) c.autoContinue(text);
 			else c.optimisticUser(text, undefined, true, files);
 			dispatch(id, { op: 'user_message', content: text, ...(files?.length ? { files } : {}) });
 		};
 		if (s.backendId === 'lynshen') {
-			c.messages.push({ kind: 'system', text: note });
+			c.messages.push({ kind: 'system', text: note, flow: { type: 'retry' } });
 			dispatch(id, { op: 'continue' });
 			return;
 		}
@@ -1499,10 +1733,29 @@ export class SessionStore {
 	 *  TUI can resume, so a fresh empty chat and ACP sessions are a no-op. */
 	openInTui(id: string) {
 		const s = this.allSessions.find((x) => x.id === id);
-		if (!s || s.surface === 'tui' || s.chat.switching || !canHandOffToTui(s.backendId)) return;
+		if (!s || s.surface === 'tui' || s.chat.switching || !canHandOffToTui(s.backendId, s.acpAgent, engineHas('acp_presets'))) return;
 		if (!isValidResumeSessionId(s.chat.sessionId) || !(s.chat.resumable || s.restored)) return;
 		if (!daemon.sessionOf(id)) return;
 		s.surface = 'tui';
+	}
+
+	/** The conversation is in its TUI on another client (or was left there
+	 *  by this one before a restart): this tile views that terminal too
+	 *  (`ChatState.terminal`, a daemon with `term_attach`). */
+	viewTui(id: string) {
+		const s = this.allSessions.find((x) => x.id === id);
+		if (!s || s.surface === 'tui' || !s.chat.terminal || !daemon.sessionOf(id)) return;
+		s.surface = 'tui';
+	}
+
+	/** The daemon connection came back while this conversation was in its
+	 *  TUI: open and watch it again. A session still in its TUI is only
+	 *  watched (its snapshot names the terminal); one whose TUI ended with
+	 *  the daemon starts its engine. */
+	rewatch(id: string): Promise<void> {
+		const s = this.allSessions.find((x) => x.id === id);
+		if (!s || daemon.sessionOf(id)) return Promise.resolve();
+		return this.#spawn(s, this.projectPathOf(id)).catch((e) => this.#engineFailed(s.chat, e));
 	}
 
 	/** Back to the GUI once the TUI has exited: the daemon has started the
@@ -1534,6 +1787,7 @@ export class SessionStore {
 			...(p.home ? { home: true } : {}),
 			...(p.newFolder ? { newFolder: true } : {}),
 			...(p.dirs?.length ? { dirs: p.dirs } : {}),
+			...(p.setup ? { setup: p.setup } : {}),
 			...(p.lastBackend && p.lastBackend !== 'lynshen' ? { lastBackend: p.lastBackend } : {}),
 			...(p.lastBackend === 'acp' && p.lastAcpAgent ? { lastAcpAgent: p.lastAcpAgent } : {}),
 			...(p.color ? { color: p.color } : {}),
@@ -1553,6 +1807,7 @@ export class SessionStore {
 					...(s.archived ? { archived: true } : {}),
 					...(s.pinned ? { pinned: true } : {}),
 					...(lastActive(s) ? { at: lastActive(s) } : {}),
+					...(s.forkedFrom ? { forkedFrom: s.forkedFrom } : {}),
 					...(s.color ? { color: s.color } : {}),
 					...(s.icon ? { icon: s.icon } : {}),
 				}))
@@ -1587,7 +1842,13 @@ export class SessionStore {
 			// any, never start a bare 'acp' (there is no command to run).
 			const savedAgent =
 				t.acpAgent && typeof t.acpAgent.id === 'string' && typeof t.acpAgent.name === 'string'
-					? { id: t.acpAgent.id, name: t.acpAgent.name, ...(t.acpAgent.opencode === true ? { opencode: true } : {}) }
+					? {
+							id: t.acpAgent.id,
+							name: t.acpAgent.name,
+							...(t.acpAgent.opencode === true ? { opencode: true } : {}),
+							...(t.acpAgent.builtin === true ? { builtin: true } : {}),
+							...(t.acpAgent.noApprovals === true ? { noApprovals: true } : {})
+						}
 					: undefined;
 			let acpAgent = backend === 'acp' ? (savedAgent ?? proj.lastAcpAgent) : undefined;
 			if (backend === 'acp' && !acpAgent) {
@@ -1625,6 +1886,9 @@ export class SessionStore {
 				: this.#draftSaved(proj, t.id!, t.title, backend, !!t.archived, chrome, acpAgent);
 			const restored = proj.sessions.find((s) => s.id === id)!;
 			if (t.pinned === true) restored.pinned = true;
+			const fork = t.forkedFrom;
+			if (fork && typeof fork.sid === 'string' && isValidResumeSessionId(fork.sid))
+				restored.forkedFrom = { sid: fork.sid, title: typeof fork.title === 'string' ? fork.title : '', turns: Math.max(0, Number(fork.turns) || 0) };
 			if (typeof t.at === 'number' && t.at > 0) restored.at = t.at;
 		}
 	}
@@ -1662,6 +1926,7 @@ export class SessionStore {
 				if (p.home === true) proj.home = true;
 				if (p.newFolder === true) proj.newFolder = true;
 				this.setProjectDirs(proj, p.dirs);
+				if (typeof p.setup === 'string' && p.setup.trim()) proj.setup = p.setup;
 				this.setProjectChrome(proj, p);
 				if (p.lastBackend) proj.lastBackend = normalizeBackendId(p.lastBackend);
 				if (
@@ -1673,7 +1938,9 @@ export class SessionStore {
 					proj.lastAcpAgent = {
 						id: p.lastAcpAgent.id,
 						name: p.lastAcpAgent.name,
-						...(p.lastAcpAgent.opencode === true ? { opencode: true } : {})
+						...(p.lastAcpAgent.opencode === true ? { opencode: true } : {}),
+						...(p.lastAcpAgent.builtin === true ? { builtin: true } : {}),
+						...(p.lastAcpAgent.noApprovals === true ? { noApprovals: true } : {})
 					};
 				}
 				if (p.worktree) {

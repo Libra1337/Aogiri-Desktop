@@ -16,6 +16,11 @@ export interface AcpAgentRef {
 	id: string;
 	name: string;
 	opencode?: boolean;
+	/** A built-in agent the daemon starts by id (`acp_presets`), not a
+	 *  registry entry with a command line. */
+	builtin?: boolean;
+	/** It never asks before running tools (Pi): it starts in 全自动 only. */
+	noApprovals?: boolean;
 }
 
 /** The backends with a single well-known binary (probe rows, path overrides).
