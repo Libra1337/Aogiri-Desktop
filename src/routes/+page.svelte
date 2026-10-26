@@ -122,6 +122,7 @@
 	import { matches } from '$lib/shortcuts';
 	import { readSidebarCollapsed, writeSidebarCollapsed, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH } from '$lib/shell/sidebarState';
 	import TaskDialog from '$lib/TaskDialog.svelte';
+	import ProjectPickDialog from '$lib/ProjectPickDialog.svelte';
 	import DeskPage from '$lib/DeskPage.svelte';
 	import ProjectPage from '$lib/ProjectPage.svelte';
 	import FeedbackDialog from '$lib/FeedbackDialog.svelte';
@@ -659,6 +660,26 @@
 				})
 				.catch(() => {});
 	}
+	/** A new conversation from ⌘N, the title bar, the palette, the tray or
+	 *  the navigator's 新对话: its project is asked first (ProjectPickDialog),
+	 *  with `current` picked ('' for a conversation of no project; left out:
+	 *  the active project), so Enter opens it there. */
+	let pickingProject = $state<{ current: string } | null>(null);
+	function askProject(current?: string) {
+		const active = activeProject && !activeProject.home && !activeProject.chats && !activeProject.stale ? activeProject.id : '';
+		pickingProject = { current: current ?? active };
+	}
+	/** The home page's start box in a project: a conversation there with
+	 *  that first message. */
+	function startIn(p: Project, text: string) {
+		store.addSession(p, text);
+		showHome = false;
+		projectPageId = null;
+	}
+	function pickProject(p: Project | null) {
+		if (p) newSession(p);
+		else void startChat();
+	}
 	function pickTuiBackend(backend: BackendId) {
 		const p = tuiPick;
 		tuiPick = null;
@@ -751,10 +772,9 @@
 	function mosaicAdd(leafId: string | null, key: string) {
 		if (key === 'chat') {
 			if (leafId) focusedLeaf = leafId;
-			// In the current project; with none open, a conversation of its own.
-			// The activeId effect opens its tile in the focused leaf.
-			if (activeProject && !activeProject.home) newSession(activeProject);
-			else void startChat();
+			// Its project asked first; the activeId effect opens its tile in the
+			// focused leaf.
+			askProject();
 			return;
 		}
 		// The embedded browser is a singleton native webview — a second tab
@@ -1395,8 +1415,7 @@
 				captureSignal += 1;
 			});
 		if (matches(e, 'find') && chat) return act(() => pane?.toggleFind());
-		if (matches(e, 'newSession'))
-			return act(() => (activeProject && !activeProject.home ? newSession(activeProject) : void startChat()));
+		if (matches(e, 'newSession')) return act(() => askProject());
 		if (matches(e, 'settings')) return act(() => !showSettings && openSettings());
 		if (matches(e, 'sidebar')) return act(toggleSidebar);
 		if (matches(e, 'audit')) return act(toggleAudit);
@@ -1592,12 +1611,8 @@
 					browser.handleEvent(p);
 				}
 			});
-			// 托盘菜单「新建会话」：在当前项目里开新会话；没有项目时开一个独立对话。
-			const untray = await listen('tray-new-session', () => {
-				const p = store.activeProject;
-				if (p && !p.home) newSession(p);
-				else void startChat();
-			});
+			// 托盘菜单「新建会话」：先选项目（默认当前项目），再开新会话。
+			const untray = await listen('tray-new-session', () => askProject());
 			// Quitting (tray menu, Cmd+Q): save the workspaces first; the app
 			// waits for this (see begin_quit in src-tauri).
 			const unquit = await listen('app-quit', async () => {
@@ -1763,7 +1778,7 @@
 				onNewProject={addProject}
 				onNewTask={newTask}
 				onNewSession={(p) => newSession(p)}
-				onNewChat={startChat}
+				onNewChat={() => askProject('')}
 				onCloseSession={removeSession}
 				onCloseProject={removeProject}
 				onArchiveSession={(id) => store.archiveSession(id)}
@@ -1809,7 +1824,7 @@
 						projects={store.userProjects}
 						agents={agentDirectory.agents}
 						agentsOn={agentDirectory.status === 'on'}
-						onStart={(text, model) => startChat(text, model)}
+						onStart={(text, model, project) => (project ? startIn(project, text) : startChat(text, model))}
 						modelPicker={defaultBackendFor(store.home?.lastBackend) === 'lynshen'}
 						onOpenSession={(id) => crossfade(() => ((store.activeId = id), (showHome = false)))}
 						onOpenProject={openProjectPage}
@@ -2121,6 +2136,16 @@
 		<FeedbackDialog onClose={() => (showFeedback = false)} />
 	{/if}
 
+	{#if pickingProject}
+		<ProjectPickDialog
+			projects={store.codeProjects.filter((p) => !p.stale && !p.chats)}
+			current={pickingProject.current}
+			onPick={pickProject}
+			onOpenFolder={addProject}
+			onClose={() => (pickingProject = null)}
+		/>
+	{/if}
+
 	{#if taskDialogFor}
 		<TaskDialog
 			project={taskDialogFor}
@@ -2187,7 +2212,7 @@
 			panelOptions={panelKeys.map((k) => ({ key: k, label: t(`dock.tabs.${k}`) }))}
 			onClose={() => (showPalette = false)}
 			onRun={runCommand}
-			onNewSession={() => activeProject && newSession(activeProject)}
+			onNewSession={() => askProject()}
 			onNewProject={addProject}
 			onNewTask={() => newTask(activeProject)}
 			onSettings={() => openSettings()}

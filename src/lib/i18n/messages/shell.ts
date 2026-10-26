@@ -187,6 +187,7 @@ const shell = {
 		updateShort: '可更新',
 		newChat: '新对话',
 		home: {
+			place: '在哪里开始',
 			title: '主页',
 			chats: '对话',
 			noChats: '还没有对话',
@@ -1087,6 +1088,14 @@ const shell = {
 		paletteSearch: '搜索命令或操作…',
 		paletteEmpty: '没有匹配的命令',
 		paletteFoot: '↑↓ 选择 · Enter 执行 · Esc 关闭',
+		// A new conversation's project, asked first (ProjectPickDialog.svelte).
+		projectPick: {
+			label: '新对话的项目',
+			search: '搜索项目…',
+			none: '不属于项目',
+			noneHint: '在自己的文件夹里开始，不放进任何项目',
+			foot: '↑↓ 选择 · Enter 打开 · {keys} 直接选 · Esc 关闭'
+		},
 		cmd: {
 			tuiHint: '在引擎自己的终端界面中继续，退出后回到这里',
 			tuiKw: 'tui cli 终端 命令行 terminal',
@@ -1363,6 +1372,7 @@ const shell = {
 		updateShort: 'Update',
 		newChat: 'New chat',
 		home: {
+			place: 'Where it starts',
 			title: 'Home',
 			chats: 'Chats',
 			noChats: 'No chats yet',
@@ -2251,6 +2261,13 @@ const shell = {
 		paletteSearch: 'Search commands or actions…',
 		paletteEmpty: 'No matching commands',
 		paletteFoot: '↑↓ Navigate · Enter Run · Esc Close',
+		projectPick: {
+			label: 'Project for the new conversation',
+			search: 'Search projects…',
+			none: 'No project',
+			noneHint: 'Starts in a folder of its own, in no project',
+			foot: '↑↓ Navigate · Enter Open · {keys} Pick · Esc Close'
+		},
 		cmd: {
 			tuiHint: 'Continue in the engine’s own terminal UI; quit it to come back',
 			tuiKw: 'tui cli terminal command line',

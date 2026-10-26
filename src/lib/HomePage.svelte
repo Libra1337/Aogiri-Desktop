@@ -8,6 +8,8 @@
 	import FolderPlusIcon from 'phosphor-svelte/lib/FolderPlusIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import ChatCircleIcon from 'phosphor-svelte/lib/ChatCircleIcon';
+	import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
+	import PopMenu from '$lib/ui/PopMenu.svelte';
 	import { t } from '$lib/i18n';
 	import { shownTitle } from '$lib/chat.svelte';
 	import { listedSessions } from '$lib/session.svelte';
@@ -39,9 +41,10 @@
 		agents?: AgentView[];
 		/** The daemon is reachable, so agents can be listed and made. */
 		agentsOn?: boolean;
-		/** A new conversation outside any project, with its first message
-		 *  and the model picked for it (none: the engine's current one). */
-		onStart: (text: string, model?: string) => void;
+		/** A new conversation with its first message, in `project` (none:
+		 *  outside any project), and the model picked for it (none: the
+		 *  engine's current one). */
+		onStart: (text: string, model?: string, project?: Project) => void;
 		onOpenSession: (id: string) => void;
 		onOpenProject: (p: Project) => void;
 		onAddProject: () => void;
@@ -93,11 +96,24 @@
 	$effect(() => {
 		box?.focus();
 	});
+	// Where it starts (D12): outside any project unless one is picked here.
+	const NONE = '\u0000none';
+	let place = $state<string>(NONE);
+	let placeOpen = $state(false);
+	const placeProject = $derived(projects.find((p) => p.id === place && !p.chats && !p.home && !p.stale));
+	const short = (path: string) => path.replace(/^(\/Users|\/home)\/[^/]+/, '~').replace(/^[A-Za-z]:\\Users\\[^\\]+/, '~');
+	const OPEN = '\u0000open';
+	function pickPlace(key: string) {
+		placeOpen = false;
+		if (key === OPEN) return onAddProject();
+		place = key;
+		box?.focus();
+	}
 	function start() {
 		const message = text.trim();
 		if (!message) return;
 		text = '';
-		onStart(message, modelPicker && picked && model ? model : undefined);
+		onStart(message, modelPicker && picked && model ? model : undefined, placeProject);
 	}
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -138,11 +154,30 @@
 			<textarea
 				bind:this={box}
 				bind:value={text}
-				class:below={modelPicker && !!shownModel}
+				class="below"
 				rows="3"
 				placeholder={t('chat.composerPlaceholder')}
 				onkeydown={onKey}
 			></textarea>
+			<div class="place-anchor" class:after={modelPicker && !!shownModel}>
+				<button class="place" class:on={placeOpen} onclick={() => (placeOpen = !placeOpen)} aria-haspopup="menu" aria-expanded={placeOpen} aria-label={t('shell.home.place')} title={placeProject?.path ?? t('shell.projectPick.noneHint')}>
+					{#if placeProject}<FolderIcon size={14} color={placeProject.color} />{:else}<ChatCircleIcon size={14} />{/if}
+					<span class="pname">{placeProject?.name ?? t('shell.projectPick.none')}</span>
+					<CaretDownIcon size={10} />
+				</button>
+				{#if placeOpen}
+					<PopMenu
+						placement="down-left"
+						items={[
+							{ key: NONE, label: t('shell.projectPick.none'), desc: t('shell.projectPick.noneHint'), icon: ChatCircleIcon, checked: !placeProject },
+							...codeProjects.filter((p) => !p.stale).map((p) => ({ key: p.id, label: p.name, desc: short(p.path), icon: FolderIcon, checked: p.id === placeProject?.id })),
+							{ key: OPEN, label: t('shell.startPicker.openFolder'), icon: FolderPlusIcon }
+						]}
+						onSelect={pickPlace}
+						onClose={() => (placeOpen = false)}
+					/>
+				{/if}
+			</div>
 			{#if modelPicker && shownModel}
 				<div class="model-anchor">
 					<ModelPicker
@@ -284,6 +319,49 @@
 	}
 	textarea.below {
 		padding-bottom: 48px;
+	}
+	/* Where it starts, then the model, at the box's bottom left (the send
+	   button is at the right). */
+	.place-anchor {
+		position: absolute;
+		left: 10px;
+		bottom: 10px;
+		display: inline-flex;
+	}
+	.place-anchor.after {
+		left: auto;
+		right: 46px;
+	}
+	.place {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		max-width: 240px;
+		height: 28px;
+		padding: 0 8px;
+		border: none;
+		border-radius: var(--r-sm);
+		background: none;
+		color: var(--dim);
+		font: inherit;
+		font-size: var(--fs-xs);
+		cursor: pointer;
+		transition: background var(--t-fast) var(--ease-out);
+	}
+	.place:hover,
+	.place.on {
+		background: var(--surface2);
+		color: var(--text);
+	}
+	.place:focus-visible {
+		outline: 2px solid var(--brand);
+		outline-offset: 1px;
+	}
+	.pname {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	/* The model, at the box's bottom left (the send button is at the right). */
 	.model-anchor {

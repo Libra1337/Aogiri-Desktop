@@ -80,6 +80,10 @@
 	//                           row opens its file there); `window.__editor`
 	//   &drop=<n>               files dragged over the window (the drop layer)
 	//   &devserver              a dev server comes up: the corner notice
+	//   &pick                   ⌘N asks the new conversation's project first
+	//                           (ProjectPickDialog); a pick goes to
+	//                           `window.__opened` as `pick:<name>` (none: `pick:`)
+	//   &repo                   the project is a git repository (main.ts)
 	//   &deliver[=old]          a third turn that presented an image, a video and
 	//                           a page, proposed a scheduled task and started a
 	//                           conversation (=old: a daemon whose tasks carry no
@@ -123,6 +127,8 @@
 	import { setLocale } from '../../src/lib/i18n';
 	import { fileName, withFiles, withVideo } from '../../src/lib/attachments';
 	import HomePage from '../../src/lib/HomePage.svelte';
+	import ProjectPickDialog from '../../src/lib/ProjectPickDialog.svelte';
+	import { matches } from '../../src/lib/shortcuts';
 	import SettingsPage from '../../src/lib/settings/SettingsPage.svelte';
 	import { SIDEBAR_RAIL_WIDTH } from '../../src/lib/shell/sidebarState';
 	import { SAMPLE_PLAIN_IDS } from '../../src/lib/models/catalogSample';
@@ -167,6 +173,7 @@
 	let rowMenu = $state<{ sid: string; x: number; y: number } | null>(null);
 	const menuSession = $derived(rowMenu ? (store.allSessions.find((s) => s.id === rowMenu!.sid) ?? null) : null);
 	const session = store.allSessions.find((s) => s.id === first.sessions[0].id)!;
+	let picking = $state(false);
 	store.activeId = session.id;
 	// ?claudeChat: a Claude Code conversation that has started (ticket #40:
 	// it can go on in a new LynShen conversation).
@@ -617,6 +624,12 @@
 	});
 </script>
 
+<!-- ?pick: ⌘N asks the project first (+page.svelte's askProject). -->
+<svelte:window onkeydown={(e) => mode.has('pick') && matches(e, 'newSession') && (e.preventDefault(), (picking = true))} />
+{#if picking}
+	<ProjectPickDialog projects={store.codeProjects} current={first.id} onPick={(p) => opened.push(`pick:${p?.name ?? ''}`)} onOpenFolder={() => opened.push('pick-folder')} onClose={() => (picking = false)} />
+{/if}
+
 {#snippet chat()}
 	<ChatPane
 		{session}
@@ -687,7 +700,7 @@
 			/>
 			<div class="canvas" data-testid="canvas">
 				{#if home}
-					<HomePage projects={store.userProjects} onStart={() => {}} onOpenSession={() => {}} onOpenProject={() => {}} onAddProject={() => {}} onOpenAgent={() => {}} />
+					<HomePage projects={store.userProjects} onStart={(text, _model, project) => opened.push(`start:${project?.name ?? ''}:${text}`)} onOpenSession={() => {}} onOpenProject={() => {}} onAddProject={() => {}} onOpenAgent={() => {}} />
 				{:else if mode.has('preview') || toolPanel}
 					<Mosaic
 						hideSoloBar
