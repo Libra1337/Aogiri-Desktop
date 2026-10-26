@@ -11,7 +11,7 @@
 	import Switch from '$lib/ui/Switch.svelte';
 	import Chip from '$lib/ui/Chip.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { agentDirectory } from '$lib/agents.svelte';
+	import { useAgents } from '$lib/agentScope';
 	import { engineHas } from '$lib/engineVersion.svelte';
 	import { toDraft, validate, WEEK, type Repeat, type Schedule, type ScheduleDraft } from '$lib/schedules';
 	import { t } from '$lib/i18n';
@@ -26,6 +26,7 @@
 		schedule?: Schedule;
 		onClose: () => void;
 	} = $props();
+	const agentDirectory = useAgents();
 
 	const pad = (n: number) => String(n).padStart(2, '0');
 	const tomorrow = new Date(Date.now() + 86_400_000);

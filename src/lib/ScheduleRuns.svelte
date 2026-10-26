@@ -100,7 +100,7 @@
 	}
 	.run {
 		display: grid;
-		grid-template-columns: 9.5em 8em 1fr;
+		grid-template-columns: 9.5em 11em 1fr;
 		align-items: center;
 		gap: 10px;
 		width: 100%;
@@ -151,6 +151,7 @@
 		background: var(--accent-bright);
 	}
 	.at {
+		white-space: nowrap;
 		font-variant-numeric: tabular-nums;
 		color: var(--dim);
 	}

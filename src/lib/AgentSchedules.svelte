@@ -17,7 +17,7 @@
 	import ScheduleUsage from '$lib/ScheduleUsage.svelte';
 	import ScheduleRuns from '$lib/ScheduleRuns.svelte';
 	import Notice from '$lib/ui/Notice.svelte';
-	import { agentDirectory } from '$lib/agents.svelte';
+	import { useAgents } from '$lib/agentScope';
 	import { runGoing, runStatusKey, stoppedByFailures, summary, type Schedule } from '$lib/schedules';
 	import { t } from '$lib/i18n';
 
@@ -31,6 +31,7 @@
 		/** Replaces the section title (the page names the agent instead). */
 		heading?: Snippet;
 	} = $props();
+	const agentDirectory = useAgents();
 
 	const schedules = $derived(
 		agentDirectory.schedules.filter((s) => s.agent === agentId).sort((a, b) => a.created_at - b.created_at)

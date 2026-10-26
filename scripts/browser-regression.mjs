@@ -4407,6 +4407,93 @@ try {
     await shot(page, 'desk-drop-anywhere');
     await page.close();
   }
+  // B12 (upstream port): the workbench's 定时任务 page on a daemon with
+  // `schedule_runs` (?scheduleBoard): each task's latest run (后台任务运行中),
+  // its worktree and cost-limit tags, the run records (status, time, length,
+  // cost, worktree branch, a follow-up) opening their sessions, a task the
+  // daemon switched off after 3 failures with its last error and 重新开启,
+  // 立即运行 off while a run goes, and the dialog's worktree switch and cost
+  // limit (checked, sent); on an older daemon none of these.
+  {
+    const SHOTS = process.env.B12_SHOTS;
+    const shot = async (p, name, loc) => { if (SHOTS) await (loc ?? p).screenshot({path: `${SHOTS}/${name}.png`}); };
+    for (const theme of ['dark', 'light']) {
+      const page = await browser.newPage({viewport: {width: 1100, height: 900}});
+      page.setDefaultTimeout(30000);
+      page.on('pageerror', (e) => errors.push(e.message));
+      const ops = () => page.evaluate(() => window.__scheduleOps.map((o) => ({...o, id: undefined})));
+      await page.goto(base + `?scheduleBoard&theme=${theme}`);
+      const tasks = page.locator('.task');
+      await expect(tasks).toHaveCount(3, {timeout: 60000});
+      const patrol = tasks.filter({hasText: '每日巡检'});
+      await expect(patrol.locator('.state')).toHaveText('后台任务运行中');
+      await expect(patrol.locator('.tag')).toHaveText(['在独立 worktree 中运行', '单次花费上限 20']);
+      await expect(patrol.getByRole('button', {name: '「每日巡检」正在运行'}), 'no second run while one goes').toBeDisabled();
+      // The run records, newest first.
+      await page.locator('details.usage summary', {hasText: '运行记录'}).first().click();
+      const runs = page.locator('.runs li');
+      await expect(runs).toHaveCount(5);
+      await expect(runs.locator('.status')).toHaveText(['后台任务运行中', '完成', '失败', '完成', '完成']);
+      await expect(runs.nth(0)).toContainText('实际 3.2000 积分');
+      await expect(runs.nth(0)).toContainText('worktree task/sch-a-1026-0900');
+      await expect(runs.nth(1)).toContainText('7 分钟');
+      await expect(runs.nth(2).locator('.error')).toHaveText('运行超过 2 小时，已停止。');
+      await expect(runs.nth(3)).toContainText('之后你继续聊过');
+      const box = await runs.nth(0).locator('.at').boundingBox();
+      assert.ok(box.height < 22, `a run's time stays on one line (${box.height})`);
+      await runs.nth(1).locator('button').click();
+      assert.equal(await page.evaluate(() => window.__opened), 's-86400');
+      // Switched off after 3 failures: said where it is listed, with its last
+      // error, and 重新开启 turns it on again.
+      const build = tasks.filter({hasText: '夜间构建'});
+      await expect(build).toContainText('连续失败 3 次，已自动停用');
+      const stopped = page.locator('.stopped');
+      await expect(stopped).toContainText('「夜间构建」连续失败 3 次，已自动停用。');
+      await expect(stopped).toContainText('最后一次：花费 5.2100 点，超过上限 5，已停止。');
+      await page.waitForTimeout(300);
+      await shot(page, `desk-schedules-${theme}`);
+      await stopped.getByRole('button', {name: '重新开启'}).click();
+      await expect.poll(async () => (await ops()).filter((o) => o.op === 'schedule_save').at(-1)?.schedule).toEqual({id: 'sch-b', enabled: true});
+      await expect(page.locator('.stopped')).toHaveCount(0);
+      await expect(build.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.getByText('已重新开启「夜间构建」')).toBeVisible();
+      // The dialog: the worktree switch and the cost limit, checked and sent.
+      await page.goto(base + `?scheduleBoard&dialog=new&theme=${theme}`);
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByRole('switch', {name: '在独立 worktree 中运行'})).toHaveAttribute('aria-checked', 'false');
+      await dialog.getByPlaceholder('例如：每日巡检').fill('依赖巡检');
+      await dialog.locator('textarea').fill('看一下有没有要升级的依赖');
+      await dialog.getByRole('switch', {name: '在独立 worktree 中运行'}).click();
+      await dialog.getByPlaceholder('不限').fill('0');
+      await dialog.getByRole('button', {name: '保存'}).click();
+      await expect(dialog).toContainText('花费上限要大于 0');
+      await dialog.getByPlaceholder('不限').fill('2.5');
+      await page.waitForTimeout(200);
+      await shot(page, `desk-schedule-dialog-${theme}`, dialog);
+      await dialog.getByRole('button', {name: '保存'}).click();
+      await expect.poll(async () => (await ops()).filter((o) => o.op === 'schedule_save').at(-1)?.schedule).toMatchObject({name: '依赖巡检', worktree: true, budget: 2.5});
+      await page.close();
+    }
+    // An older daemon (no schedule_runs): no run records, tags or stop
+    // notice, and the dialog neither offers nor sends worktree or budget.
+    const old = await browser.newPage({viewport: {width: 1100, height: 900}});
+    old.setDefaultTimeout(30000);
+    old.on('pageerror', (e) => errors.push(e.message));
+    await old.goto(base + '?scheduleBoard&oldSchedules&dialog=new');
+    await expect(old.locator('.task')).toHaveCount(3, {timeout: 60000});
+    await expect(old.locator('details.usage summary', {hasText: '运行记录'})).toHaveCount(0);
+    await expect(old.locator('.task .tag, .task .state, .stopped')).toHaveCount(0);
+    await expect(old.locator('.task').filter({hasText: '夜间构建'})).toContainText('已停用');
+    const oldDialog = old.getByRole('dialog');
+    await expect(oldDialog.getByRole('switch', {name: '在独立 worktree 中运行'})).toHaveCount(0);
+    await expect(oldDialog.getByPlaceholder('不限')).toHaveCount(0);
+    await oldDialog.getByPlaceholder('例如：每日巡检').fill('旧版任务');
+    await oldDialog.locator('textarea').fill('x');
+    await oldDialog.getByRole('button', {name: '保存'}).click();
+    const saved = await old.evaluate(() => window.__scheduleOps.filter((o) => o.op === 'schedule_save').at(-1)?.schedule);
+    assert.ok(saved && !('worktree' in saved) && !('budget' in saved), JSON.stringify(saved));
+    await old.close();
+  }
   assert.deepEqual(errors, []);
-  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel, the queue tray (into the turn after the running tool, stop and send, take back with its file, delete, reorder by key and drag, ⌘↵ and ⌘⇧↵, Claude Code\'s fixed rows, an old daemon\'s single 插入), files and videos sent as attachments (and listed in the text for an old daemon), a Read row opening its file at its line, an unfinished turn and 继续, files dragged over the window.');
+  console.log('Browser regressions passed: reactive drafts, one new conversation per place until its first message (新对话, a project\'s +), account authorization, logout, API key label, provider OAuth, a custom provider (the form checks, per model the window, output cap, thinking, effort tiers and input kinds, editing it; a text-only model in the composer), mounted tabs, home model, title bar menu, skills, marketplace, plugins, sidebar fold and archive, welcome and approval menu click-away, menu click-away under glass, long reasoning and reply, steered reply, plan menu click-away, conversation width setting and column, the plan and subagents cards (beside the column at 1440 × 900, title lines and popovers at 1100 × 760, 1040 × 680 and beside a tool leaf, collapse, keyboard, opening and stopping a subagent, a failed or waiting step opening the plan, chips and a sheet on the phone page; in Chromium and WebKit the wheel over the cards, the navigator\'s sub-agents and 工作组 never scrolls the conversation, and an errored sub-agent shows as failed with its error (the whole error on its line) after its worktree was discarded, a discarded finished one grey), window frost default and migration, light theme surfaces, attached files as chips (sent, history, copy, quote, resend, queue, rewind, phone page), sandbox card and settings (Windows 沙箱（预览） on a Windows page), the shell setting (versions, choices written, PowerShell 7 install, an older daemon), reply styles (the default written, a built-in viewed and copied, a personal style edited and deleted, an older daemon, the composer + menu sending set_style, a deleted style), product name, sent files previewed in a tab beside the conversation, first-use trial claim (grant card once, final after a grant, a refusal asked again once per start, the card asking whether this device pays with the trial), the short account card, who pays this device (the plan or the balance, under a slow gateway, an ended plan; a plan new to the device shown once, paying by default with 改用余额), a turn the plan stopped (the window and its recovery, waiting, the balance until it recovers and 已恢复使用套餐, 改用余额继续, renewing, a model outside the plan; the pickers marking 套餐外 on the plan, nothing on the balance; who pays at the composer foot, a fourth device, the windows read again after requests), Settings → 账户 (read without a logged-out flash, its groups, the plan windows, 购买套餐 and 充值 in the app), Settings → 套餐与充值 (who pays, devices in use, a gateway before contract v1.2, a plan bought paying by default with 改用余额 and its end date, renewal from the current end, an upgrade at the quoted price, no downgrade, the scope line, plans with windows in words, packs, a custom amount, a WeChat QR code checked until paid, the replace notice, the Alipay page, continuing a payment, a refused payment and a network failure retried safely, a gateway without the store), the first run (sign-in first, trial claimed at once, the optional agent page, the skippable walkthrough, the one-time greeting after it: name, mark, opening, focus, once, keys, reduced motion), the five composer modes (order, wrapping in zh and en, narrow windows, Shift+Tab, number keys), the model pickers (quick switcher: rows, keys, pin; browser: typing, an input method, Chinese words, aliases, folding, an unavailable model, a long name; the fallback without a catalog; the settings pickers; dark and light at 1040 × 680), the chat connectors page (state, a binding code closed by its binding, the chat limits, adding a bot with its checks, unbinding, phones only on 远程访问, an older daemon; Discord and QQ: invite, QQ note, bind command, their add fields), Settings → 导入 (Codex prompts, opening what a run imported), mermaid diagrams in a reply (theme colours in both themes, the source copied, a bad block left as code), file links in a reply (a path that names no file as plain text, the file menu, the external editor there and in the title bar, a file the editor cannot show), output speed under a reply and in its setting (off by default), the interface, conversation and code fonts (installed ones only, applied, kept), the sounds setting (both sounds played, turned off and kept), interface zoom (kept, the title bar at its size and on the canvas edge), a mouse wheel handed over by the app (a wheel event, then a glide; a cancelled one kept; reduced motion steps), a canvas tab\'s 关闭其他 and 关闭全部, a finished turn folded into one line and opened again, the turn\'s changed files listed under its reply, background commands in the subagents card and a session with background work marked, not running, a subscription\'s usage limit (which limit, used, reset, 重置后自动继续 and calling it off), a colour scheme shown live, refused without contrast, kept per theme and back to the default, no Changes, Turns or Diagnostics panel, the queue tray (into the turn after the running tool, stop and send, take back with its file, delete, reorder by key and drag, ⌘↵ and ⌘⇧↵, Claude Code\'s fixed rows, an old daemon\'s single 插入), files and videos sent as attachments (and listed in the text for an old daemon), a Read row opening its file at its line, an unfinished turn and 继续, files dragged over the window, scheduled tasks (run records opening their sessions, 后台任务运行中, a task switched off after failures with 重新开启, the worktree switch and cost limit, an older daemon without them).');
 } finally { await browser.close(); await server.close(); }
