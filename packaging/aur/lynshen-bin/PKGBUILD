@@ -33,7 +33,7 @@ optdepends=(
 provides=('lynshen-desktop')
 conflicts=('lynshen-desktop')
 options=('!strip' '!debug')
-source=("LynShen_${pkgver}_amd64.deb::https://github.com/Libra1337/LynShen_Agent/releases/download/v${pkgver}/LynShen_${pkgver}_amd64.deb")
+source=("LynShen_${pkgver}_amd64.deb::https://github.com/Libra1337/Aogiri-Desktop/releases/download/v${pkgver}/LynShen_${pkgver}_amd64.deb")
 noextract=("LynShen_${pkgver}_amd64.deb")
 sha256sums=('8cdc7bc4c87402bc6f6ea6bdd77a55b97ac3220302efcce7380070c57e0a14a9')
 

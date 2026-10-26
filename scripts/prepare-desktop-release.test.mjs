@@ -92,7 +92,7 @@ test('takes a release under the product name Aogiri, as tauri-action names its f
     for (const [platform, name] of Object.entries(files)) {
       writeFileSync(path.join(assets, name), name);
       writeFileSync(path.join(assets, name + '.sig'), 'signature\n');
-      platforms[platform] = { url: `https://github.com/Libra1337/LynShen_Agent/releases/download/v1.2.3/${name}`, signature: 'signature' };
+      platforms[platform] = { url: `https://github.com/Libra1337/Aogiri-Desktop/releases/download/v1.2.3/${name}`, signature: 'signature' };
     }
     for (const arch of ['aarch64', 'x64']) writeFileSync(path.join(assets, `Aogiri_1.2.3_${arch}.dmg`), arch);
     writeFileSync(path.join(assets, 'latest.json'), JSON.stringify({ version: '1.2.3', platforms }));

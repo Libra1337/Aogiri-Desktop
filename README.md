@@ -8,8 +8,8 @@
 
   <p>
     <a href="https://www.lynshen.org/download">官网下载</a> ·
-    <a href="https://github.com/Libra1337/LynShen_Agent/releases">全部版本</a> ·
-    <a href="https://github.com/Libra1337/LynShen_Agent/issues">问题反馈</a>
+    <a href="https://github.com/Libra1337/Aogiri-Desktop/releases">全部版本</a> ·
+    <a href="https://github.com/Libra1337/Aogiri-Desktop/issues">问题反馈</a>
   </p>
 
   <p><strong>简体中文</strong> · <a href="README.en-US.md">English</a></p>
@@ -89,19 +89,19 @@ macOS 使用 `⌘`，Windows 和 Linux 使用 `Ctrl`。
 
 ## 遇到问题
 
-先在[安装指南](docs/install.md)查看系统拦截、Linux 依赖和权限相关说明。其他问题可通过「设置 → 通用 → 反馈问题」提交，或前往 [GitHub Issues](https://github.com/Libra1337/LynShen_Agent/issues)；请附上系统、应用版本、所用智能体和错误信息，不要粘贴 API Key 或访问令牌。
+先在[安装指南](docs/install.md)查看系统拦截、Linux 依赖和权限相关说明。其他问题可通过「设置 → 通用 → 反馈问题」提交，或前往 [GitHub Issues](https://github.com/Libra1337/Aogiri-Desktop/issues)；请附上系统、应用版本、所用智能体和错误信息，不要粘贴 API Key 或访问令牌。
 
 ## 从源码运行
 
-本仓库只包含桌面端；智能体引擎与后台服务位于 [LynShen-CLI](https://github.com/Libra1337/LynShen-CLI)。开发需要 Node.js 22、pnpm、Rust 稳定版和 [Tauri 系统依赖](https://v2.tauri.app/start/prerequisites/)。
+本仓库只包含桌面端；智能体引擎与后台服务位于 [Aogiri CLI](https://github.com/Libra1337/Aogiri-CLI)。开发需要 Node.js 22、pnpm、Rust 稳定版和 [Tauri 系统依赖](https://v2.tauri.app/start/prerequisites/)。
 
 将两个仓库放在同一目录，构建 CLI 后启动桌面端：
 
 ```sh
-git clone --recurse-submodules https://github.com/Libra1337/LynShen-CLI.git
-(cd LynShen-CLI && cargo build)
-git clone https://github.com/Libra1337/LynShen_Agent.git
-cd LynShen_Agent
+git clone --recurse-submodules https://github.com/Libra1337/Aogiri-CLI.git
+(cd Aogiri-CLI && cargo build)
+git clone https://github.com/Libra1337/Aogiri-Desktop.git
+cd Aogiri-Desktop
 pnpm install
 pnpm tauri dev
 ```

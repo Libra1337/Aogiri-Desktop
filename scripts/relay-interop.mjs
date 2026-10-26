@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Interop check of the PWA's Noise initiator (src/lib/relay/noise.ts) against
-// the daemon's Rust responder, LynShen-CLI crates/daemon/examples/noise_peer.rs
+// the daemon's Rust responder, Aogiri-CLI crates/daemon/examples/noise_peer.rs
 // (docs/relay-protocol.md §6): handshake, then one frame larger than a chunk
 // sent and echoed back.
 //
-//   node scripts/relay-interop.mjs                     # cargo run in ../LynShen-CLI
-//   LYNSHEN_CLI=/path/to/LynShen-CLI node scripts/relay-interop.mjs
+//   node scripts/relay-interop.mjs                     # cargo run in ../Aogiri-CLI (or ../LynShen-CLI)
+//   LYNSHEN_CLI=/path/to/Aogiri-CLI node scripts/relay-interop.mjs
 //   NOISE_PEER=/path/to/target/debug/examples/noise_peer node scripts/relay-interop.mjs
 //
 // Needs Node >= 23.6 (imports the .ts module directly) and, without
@@ -13,12 +13,14 @@
 // key (hex) as its last argument and speaks hex lines over stdio.
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { FrameReader, Initiator, generateKeyPair, sealFrame } from '../src/lib/relay/noise.ts';
 
-const cli = process.env.LYNSHEN_CLI ?? fileURLToPath(new URL('../../LynShen-CLI', import.meta.url));
+const sibling = (name) => fileURLToPath(new URL(`../../${name}`, import.meta.url));
+const cli = process.env.LYNSHEN_CLI ?? [sibling('Aogiri-CLI'), sibling('LynShen-CLI')].find((dir) => existsSync(dir)) ?? sibling('Aogiri-CLI');
 const peer =
 	process.env.NOISE_PEER ??
 	`cargo run -q --manifest-path "${cli}/Cargo.toml" -p lynshen-daemon --example noise_peer --`;

@@ -111,7 +111,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = $env:NEW_TAG.TrimStart('v')
-          gh release download $env:NEW_TAG --repo Libra1337/LynShen_Agent --dir new `
+          gh release download $env:NEW_TAG --repo Libra1337/Aogiri-Desktop --dir new `
             --pattern "Aogiri_${version}_x64-setup.exe*" --pattern "Aogiri_${version}_x64_en-US.msi*"
           "NEW_VERSION=$version" >> $env:GITHUB_ENV
           Get-ChildItem new | ForEach-Object Name
@@ -121,11 +121,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download $env:OLD_TAG --repo Libra1337/LynShen_Agent --dir old `
+          gh release download $env:OLD_TAG --repo Libra1337/Aogiri-Desktop --dir old `
             --pattern "LynShen_${env:OLD_VERSION}_x64-setup.exe" --pattern "LynShen_${env:OLD_VERSION}_x64_en-US.msi"
           # What machines updated to first under the new name.
           if ($env:NEW_TAG -eq '') {
-            gh release download $env:MID_TAG --repo Libra1337/LynShen_Agent --dir mid --pattern "Aogiri_${env:MID_VERSION}_x64-setup.exe"
+            gh release download $env:MID_TAG --repo Libra1337/Aogiri-Desktop --dir mid --pattern "Aogiri_${env:MID_VERSION}_x64-setup.exe"
           }
           # The files the release and the download server publish.
           $expected = @{
@@ -213,7 +213,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "$NEW_TAG" --repo Libra1337/LynShen_Agent --dir new --pattern 'Aogiri_aarch64.app.tar.gz'
+          gh release download "$NEW_TAG" --repo Libra1337/Aogiri-Desktop --dir new --pattern 'Aogiri_aarch64.app.tar.gz'
           mv new/Aogiri_aarch64.app.tar.gz new/Aogiri.app.tar.gz
           echo "NEW_VERSION=${NEW_TAG#v}" >> "$GITHUB_ENV"
 
@@ -221,9 +221,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "$OLD_TAG" --repo Libra1337/LynShen_Agent --dir old --pattern "LynShen_${OLD_VERSION}_aarch64.dmg"
+          gh release download "$OLD_TAG" --repo Libra1337/Aogiri-Desktop --dir old --pattern "LynShen_${OLD_VERSION}_aarch64.dmg"
           if [ -z "$NEW_TAG" ]; then
-            gh release download "$MID_TAG" --repo Libra1337/LynShen_Agent --dir mid --pattern 'Aogiri_aarch64.app.tar.gz'
+            gh release download "$MID_TAG" --repo Libra1337/Aogiri-Desktop --dir mid --pattern 'Aogiri_aarch64.app.tar.gz'
           fi
           # The file the release and the download server publish.
           echo "5b9fc27a9fe69d0836994197307da5395c412591c9ea008927608f7ecc27e921  old/LynShen_${OLD_VERSION}_aarch64.dmg" | shasum -a 256 -c
@@ -274,7 +274,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "$OLD_TAG" --repo Libra1337/LynShen_Agent --dir old \
+          gh release download "$OLD_TAG" --repo Libra1337/Aogiri-Desktop --dir old \
             --pattern "LynShen_${OLD_VERSION}_amd64.deb" --pattern "LynShen-${OLD_VERSION}-1.x86_64.rpm"
           # The files the release and the download server publish.
           sha256sum --check <<EOF
