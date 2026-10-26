@@ -4688,7 +4688,7 @@ mod tests {
         // The source goes on after the fork point; the fork does not see it.
         std::fs::write(dir.join("a.txt"), "v3").unwrap();
         // As the UI gets it (`worktree_base`): no `\\?\` prefix on Windows.
-        let container = PathBuf::from(super::worktree_base(repo.clone()).unwrap());
+        let container = std::path::PathBuf::from(super::worktree_base(repo.clone()).unwrap());
         let path = container.join("fork-one").to_string_lossy().to_string();
         let base = super::git_fork_worktree(
             repo.clone(),
