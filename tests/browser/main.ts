@@ -317,8 +317,10 @@ Object.assign(window, {
         case 'create_chat_dir': return `${args.root}/${args.name}`;
         // 审阅 (the editor) on a Markdown file (tickets #44, #53).
         // A source file a Read row opens (?shell&editor): 200 numbered lines.
-        case 'read_text': return String(args.path).endsWith('.md') ? '# 交接说明\n\n- 第一条\n- 第二条\n\n一段很长的说明文字，'.padEnd(400, '长') + '\n\n```ts\nconst x = 1;\n```\n' : String(args.path).endsWith('/cache.ts') ? Array.from({length: 200}, (_, i) => `export const line${i + 1} = ${i + 1};`).join('\n') + '\n' : '';
+        case 'read_text': return String(args.path).endsWith('.md') ? '# 交接说明\n\n- 第一条\n- 第二条\n\n一段很长的说明文字，'.padEnd(400, '长') + '\n\n```ts\nconst x = 1;\n```\n' : String(args.path).endsWith('/cache.ts') ? Array.from({length: 200}, (_, i) => i === 10 ? 'export const extra = 11;' : `export const line${i + 1} = ${i + 1};`).join('\n') + '\n' : '';
         case 'stat_text': return {mtime_ms: 1, size: 10};
+        // The file at git HEAD (?repo): cache.ts before any turn changed it.
+        case 'git_head_text': if (!params0.has('repo')) throw 'not a repository'; return String(args.path).endsWith('/cache.ts') ? Array.from({length: 199}, (_, i) => `export const v${i + 1} = ${i + 1};`).join('\n') + '\n' : '';
         case 'plugin:opener|reveal_item_in_dir': return null;
         // A file a reply names (?shell&files): the files the fixture project
         // has, under the first root that has them; anything else is missing.

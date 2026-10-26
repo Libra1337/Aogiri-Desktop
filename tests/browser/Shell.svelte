@@ -426,6 +426,23 @@
 			feed({ type: 'prompt_suggestion', text: recapMode === 'long' ? '提交并推送，然后在 PR 描述里写清楚缓存键的新格式、旧缓存的迁移方式和回滚办法，再请两位同事评审' : '提交并推送' });
 	}
 
+	// ?shell&turnedit (with &openfile): a third turn that changed cache.ts
+	// (the 200 numbered lines main.ts reads for it): line 5 was rewritten and
+	// a line was added after line 9. Its change pill lists the file; a row
+	// opens it with the turn's changes (D20). &turnedit=lost: the edit's diff
+	// no longer matches the file (changed since): compared with git HEAD.
+	const turnEdit = mode.get('turnedit');
+	if (turnEdit !== null && !mode.has('empty')) {
+		const diff = turnEdit === 'lost' ? '-export const gone = 0;\n+export const renamed = 5;' : ['--- a/src/lib/cache.ts', '+++ b/src/lib/cache.ts', '@@ -4,3 +4,3 @@', ' export const line4 = 4;', '-export const five = 5;', '+export const line5 = 5;', ' export const line6 = 6;', '@@ -9,2 +9,3 @@', ' export const line9 = 9;', '+export const line10 = 10;', ' export const extra = 11;'].join('\n');
+		feed({ type: 'user_message', content: '把常量改成按行号命名。' });
+		feed({ type: 'connecting' });
+		feed({ type: 'status', message: 'streaming' });
+		feed({ type: 'tool_start', call_id: 'te1', name: 'edit' });
+		feed({ type: 'tool_output', call_id: 'te1', name: 'edit', output: JSON.stringify({ path: '/Users/me/code/lynshen-desktop/src/lib/cache.ts', diff }) });
+		feed({ type: 'assistant_delta', delta: '改好了：第 5 行改名，第 9 行后加了一个常量。' });
+		feed({ type: 'status', message: 'ready' });
+	}
+
 	// ?shell&deliver: a third turn that ends with deliverables (an image, a
 	// video, a page), a proposed scheduled task and a conversation it started
 	// (answered meanwhile). &deliver=old: a daemon before the origin of a

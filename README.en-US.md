@@ -41,7 +41,9 @@ When signing in with a LynShen account, the app receives credentials for the cur
 
 - **Control permissions:** Press `Shift+Tab` to change approval mode. For an approval request, press `1` to allow once, `2` to always allow, or `3` or `Esc` to deny.
 - **See what the agent is doing:** Each tool call shows its status and how long it took, and a light passes over the step that is running. A run of calls and the thinking between them is one line; edits read "Edited N files +a −b". Dividers mark where you stopped a turn, the engine restarted or the model changed, and the status line ends with the turn's time so far.
-- **Work with your project:** When a turn ends, its work folds into one line with how long it took and which files it changed; open it to go through them. Files the agent delivers show as cards, with images and videos in the conversation; a scheduled task it proposes exists only once you click Create; conversations it started open with one click. All changes in the working tree are in the Git panel, with diff, staging, commit, pull, and push. Install GitHub CLI to work with pull requests. Independent Git worktrees are available for parallel tasks.
+- **Work with your project:** When a turn ends, its work folds into one line with how long it took and which files it changed; open it to go through them. Files the agent delivers show as cards, with images and videos in the conversation; a scheduled task it proposes exists only once you click Create; conversations it started open with one click. All changes in the working tree are in the Git panel, with diff, staging, commit, pull, and push. Install GitHub CLI to work with pull requests. Independent Git worktrees are available for parallel tasks. A file opened from a turn's list of changes shows what that turn changed, or its changes since git HEAD. The project menu in the title bar shows the current branch and the uncommitted line counts, and opens the folder, switches branches, commits, pushes and pulls.
+- **Pick the project first:** `⌘N` asks which project a new conversation belongs to (`⌘1`–`9` pick one directly), or none. In a Git repository a new conversation can start in a new worktree; a worktree setup script on the project page (installing dependencies, for example) runs first in each new worktree.
+- **Fork from any turn:** Click Fork from here under a turn's reply: a new conversation goes on from the turns up to there, and the original stays as it is. A fork stays in the same folder or gets a new worktree with the files as that turn left them; the sidebar names where it came from, and Bring back writes up what the fork found and puts it in the original's input box. Needs a LynShen CLI that can fork.
 - **Stay in one window:** Open a terminal or the built-in browser and bring web elements into the conversation. When an agent starts a dev server, a notice in the corner offers to open it. You can also switch to the agent's own terminal interface.
 - **Extend your setup:** Manage models, skills, MCP servers, voice input, and image-generation models in Settings; switch deliverables, task proposals and messages between conversations in Settings → App tools; or import conversations and configuration from other coding tools.
 - **Keep talking while the agent works:** Messages sent during a turn wait in a queue in the message box. Each can be added to the running turn (it goes in after the running tool, which keeps running), sent now by stopping the turn, taken back to edit, deleted, or reordered. Attachments go with the message as files; drop files anywhere on the window to attach them.
@@ -56,7 +58,7 @@ Use `⌘` on macOS and `Ctrl` on Windows and Linux.
 | Shortcut | Action |
 | --- | --- |
 | `⌘K` | Command palette |
-| `⌘N` | New session |
+| `⌘N` | New session (pick its project first; `⌘1`–`9` pick directly) |
 | `⌘P` | Quick file open |
 | `⌘F` | Find in conversation |
 | `` Ctrl+` `` | Open terminal |
