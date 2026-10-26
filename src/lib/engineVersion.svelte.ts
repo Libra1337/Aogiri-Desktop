@@ -23,9 +23,11 @@ export const UNQUEUE_SINCE = '0.4.27';
 /** What a daemon takes beyond its protocol version, by its hello's
  *  `features`: `queue`, queued messages picked by place (steer, take back,
  *  drop, move, interrupt and send, on every engine); `files`, a message's
- *  attachments other than images as `files`. A daemon from before sends
- *  none. */
-export type EngineFeature = 'queue' | 'files';
+ *  attachments other than images as `files`; `tool_providers`, Claude Code's
+ *  and Codex's custom providers; `acp_presets`, the built-in ACP agents the
+ *  daemon starts by id; `term_attach`, a session's TUI that any client views
+ *  and a view that leaves only detaches. A daemon from before sends none. */
+export type EngineFeature = 'queue' | 'files' | 'tool_providers' | 'acp_presets' | 'term_attach';
 
 /** The daemon this page talks to has `feature` (see `EngineFeature`). */
 export function engineHas(feature: EngineFeature): boolean {
