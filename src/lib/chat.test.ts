@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ChatState, countDiffLines, shownTitle, UNTITLED } from './chat.svelte';
+import { ChatState, countDiffLines, shownTitle, uniqueCommands, UNTITLED } from './chat.svelte';
 import { setLocale } from './i18n';
 import { liveText } from './liveText';
 import type { AgentEvent } from './protocol';
@@ -955,6 +955,33 @@ describe('approval flow (engine-enforced)', () => {
 	});
 });
 
+describe('command list', () => {
+	it('keeps each command name once, the first of a name (ticket #60)', () => {
+		const list = [
+			{ command: '/review', marker: null, description: 'Review changes' },
+			{ command: '/fmt', marker: 'SKILL', description: 'codex root' },
+			{ command: '/fmt', marker: 'SKILL', description: 'agents root' },
+			{ command: '/review', marker: 'SKILL', description: 'My review skill' }
+		];
+		expect(uniqueCommands(list).map((c) => `${c.command}:${c.description}`)).toEqual(['/review:Review changes', '/fmt:codex root']);
+		const c = new ChatState('codex');
+		c.handle({ type: 'command_list', commands: list } as never);
+		expect(c.commands.map((x) => x.command)).toEqual(['/review', '/fmt']);
+	});
+
+	it('drops a name twice from a profile saved by an earlier version', () => {
+		const profile = { codex: { commands: [{ command: '/fmt', marker: 'SKILL' }, { command: '/fmt', marker: 'SKILL' }] } };
+		vi.stubGlobal('localStorage', { getItem: () => JSON.stringify(profile), setItem: () => {}, removeItem: () => {} });
+		try {
+			const c = new ChatState('codex');
+			c.seedFromProfile();
+			expect(c.commands.map((x) => x.command)).toEqual(['/fmt']);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+});
+
 describe('send state and turn stats', () => {
 	const user = (c: ChatState) => c.messages.find((m) => m.kind === 'user') as { state?: string };
 
@@ -976,6 +1003,17 @@ describe('send state and turn stats', () => {
 		c.handle({ type: 'connecting' });
 		c.handle({ type: 'error', message: 'HTTP 400' });
 		expect(user(c).state).toBe('failed');
+	});
+
+	it('does not mark a message undelivered when the model received it and declined (ticket #67)', () => {
+		const c = new ChatState();
+		c.optimisticUser('继续');
+		c.handle({ type: 'connecting' });
+		c.handle({ type: 'thinking_start' });
+		c.handle({ type: 'error', message: '模型拒绝回答了这个请求。 (stop reason refusal, 2440 output tokens)' });
+		expect(user(c).state).toBeUndefined();
+		expect(c.messages.at(-1)).toMatchObject({ kind: 'error' });
+		expect(c.lastError).toContain('stop reason refusal');
 	});
 
 	it('flags a cache miss during a running turn only', () => {

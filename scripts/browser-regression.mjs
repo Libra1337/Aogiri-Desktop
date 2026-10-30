@@ -568,6 +568,34 @@ try {
   });
   await expect(page.getByText('图片 #1')).toBeVisible();
   await expect(page.locator('.fbtn.effort')).toHaveText('High');
+  // "/" with a command list naming a command twice (ticket #60: Codex lists
+  // every skill it finds, two folders can hold one of the same name, and a
+  // skill can be named like a built-in): the list opens, each name once,
+  // and the conversation keeps showing (Svelte threw each_key_duplicate).
+  // A page of its own: the one above has an image in the composer.
+  await page.goto(base + '?shell&textOnly');
+  await page.waitForFunction(() => window.__chat, null, {timeout:30000});
+  await page.evaluate(() => window.__chat.handle({type:'command_list', commands:[
+    {command:'/model', marker:null, args:'', description:'Choose the model'},
+    {command:'/review', marker:null, args:'[instructions]', description:'Review uncommitted changes'},
+    {command:'/fmt', marker:'SKILL', args:'', description:'Format code (codex root)'},
+    {command:'/fmt', marker:'SKILL', args:'', description:'Format code (agents root)'},
+    {command:'/review', marker:'SKILL', args:'', description:'My review skill'}
+  ]}));
+  const slashErrors = errors.length;
+  const editor = page.locator('.composer .rich');
+  await editor.click();
+  await page.keyboard.type('/');
+  const slashTray = page.locator('#cmp-tray');
+  await expect(slashTray.getByRole('option')).toHaveCount(3);
+  await expect(slashTray.getByRole('option')).toContainText(['/model', '/review', '/fmt']);
+  await expect(slashTray.getByRole('option', {name: /\/fmt/})).toContainText('codex root');
+  await expect(page.getByText('这个对话显示出错了')).toHaveCount(0);
+  await page.keyboard.type('f');
+  await expect(slashTray.getByRole('option')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+  await expect(editor).toHaveText('/fmt ');
+  assert.equal(errors.length, slashErrors, `the "/" list threw: ${errors.slice(slashErrors).join(' | ')}`);
   // Opening a panel beside a tab mounted the tab again (a TUI went blank).
   await page.goto(base + '?mosaic');
   const probe = page.locator('[data-probe="t0"]');

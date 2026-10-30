@@ -41,6 +41,13 @@ export interface ErrorInfo {
 // The engines append their own sign-in hint to a 401; ours replaces it.
 const ENGINE_HINT = /\s*\((?:Codex|Claude Code) needs to sign in again:[^)]*\)\s*$/;
 
+/** The model answered the request (it reached the model) but the answer has
+ *  no text: the LynShen engine names the stop reason the model gave
+ *  (`(stop reason refusal, 2440 output tokens)`, `max_tokens`, …). */
+export function modelAnswered(raw: string): boolean {
+	return /\(stop reason [a-z_]+/.test(raw);
+}
+
 /** The raw text without the engine's appended sign-in hint. */
 export function stripEngineHint(raw: string): string {
 	return raw.replace(ENGINE_HINT, '');
@@ -84,6 +91,12 @@ export function describeError(raw: string, backend = '', provider = ''): ErrorIn
 		return info('foreignHistory');
 	if (/model provider `?([^`\s]+)`? not found/i.test(text))
 		return info('providerMissing', undefined, /model provider `?([^`\s]+)`?/i.exec(text)?.[1]);
+	// The model (or its provider's safety check) declined to answer: the
+	// LynShen engine's words for a reply that stopped on `refusal` (Claude)
+	// or `content_filter` (OpenAI-style). Sending the same again gets the
+	// same answer and is billed again; rewording or another model is the way
+	// on (ticket #67).
+	if (/模型拒绝回答了这个请求|\(stop reason (refusal|content_filter)\b/.test(text)) return info('refusal', 'model');
 
 	if (/not logged in to lynshen|lynshen session expired|run \/login/i.test(text)) return info('lynshenLogin', 'login');
 	// The gateway's hardware binding (gateway AD-H6, AD-L1): the device key

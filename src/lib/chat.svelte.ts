@@ -28,6 +28,7 @@ import {
 	type SandboxState
 } from './sandbox/request';
 import { t } from './i18n';
+import { modelAnswered } from './errorInfo';
 import { AFTER_RUN, runState } from './agentTrace';
 import { costUsd } from './pricing';
 import { pendingCost, sumCosts, type BillingCost } from './sessionCost';
@@ -284,6 +285,16 @@ export interface CommandItem {
 	marker: string | null;
 	args?: string;
 	description?: string;
+}
+
+/** The commands with each name once, the first of a name kept (the one the
+ *  engine runs: built-ins come before skills). An engine can list a name
+ *  twice: Codex lists every skill it finds, and two folders can hold a skill
+ *  of the same name, or a skill can be named like a built-in. The "/" list
+ *  and the command palette key their rows by name (ticket #60). */
+export function uniqueCommands(commands: CommandItem[]): CommandItem[] {
+	const seen = new Set<string>();
+	return commands.filter((c) => typeof c?.command === 'string' && !seen.has(c.command) && !!seen.add(c.command));
 }
 export interface PlanStep {
 	step: string;
@@ -1810,7 +1821,8 @@ export class ChatState {
 		this.contextWindow = p.contextWindow ?? 0;
 		this.modelCatalog = p.catalog ?? [];
 		this.modelCatalogEffort = p.catalogEffort ?? '';
-		this.commands = p.commands ?? [];
+		// A profile saved before 0.11.1 can hold a name twice.
+		this.commands = uniqueCommands(p.commands ?? []);
 		if (this.backendId === 'acp') {
 			this.engineCaps = p.caps ?? null;
 			this.effortDefault = p.effortDefault ?? '';
@@ -2597,7 +2609,7 @@ export class ChatState {
 				break;
 			}
 			case 'command_list':
-				this.commands = arr<CommandItem>(ev.commands);
+				this.commands = uniqueCommands(arr<CommandItem>(ev.commands));
 				this.#remember({ commands: this.commands });
 				break;
 			case 'usage': {
@@ -3097,7 +3109,10 @@ export class ChatState {
 				const last = this.messages[this.messages.length - 1];
 				this.lastError = str(ev.message);
 				this.#clearApprovals();
-				this.#setSend('failed');
+				// A reply the model ended without an answer (a refusal, the output
+				// limit) was delivered: the message is not marked undelivered
+				// (ticket #67), the error says what happened.
+				this.#setSend(modelAnswered(str(ev.message)) ? null : 'failed');
 				this.#sending = null;
 				// The engines can report one failure twice (the item, then the turn).
 				if (!(last?.kind === 'error' && last.text === str(ev.message)))

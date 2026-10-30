@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeError, stripEngineHint } from './errorInfo';
+import { describeError, modelAnswered, stripEngineHint } from './errorInfo';
 
 describe('describeError', () => {
 	it('reads a gateway 401 as the session credential running out, not a codex login', () => {
@@ -45,6 +45,21 @@ describe('describeError', () => {
 		['API Error: 400 请求参数有误，请检查后重试', 'badRequest']
 	])('%s → %s', (raw, kind) => {
 		expect(describeError(raw)?.kind).toBe(kind);
+	});
+
+	it('reads a refusal as the model declining, with another model as the way on (ticket #67)', () => {
+		const raw = '模型拒绝回答了这个请求。 (stop reason refusal, 2440 output tokens)';
+		expect(describeError(raw, 'lynshen', 'monoize')).toEqual({ kind: 'refusal', actions: ['model'] });
+		expect(describeError('模型拒绝回答了这个请求。 (stop reason content_filter)', 'lynshen')?.kind).toBe('refusal');
+		// Not a 400, not a network failure: no automatic retry (autoRetry.ts).
+		expect(describeError(raw)?.kind).not.toMatch(/badRequest|network|upstream/);
+	});
+
+	it('tells a reply the model ended without an answer from a request that never got there', () => {
+		expect(modelAnswered('模型拒绝回答了这个请求。 (stop reason refusal, 2440 output tokens)')).toBe(true);
+		expect(modelAnswered('模型只输出了思考，没有给出回答：输出上限用完了。 (stop reason max_tokens, 8192 output tokens)')).toBe(true);
+		expect(modelAnswered('stream disconnected before completion: error sending request')).toBe(false);
+		expect(modelAnswered('HTTP 400')).toBe(false);
 	});
 
 	it('offers a top-up when the balance is short', () => {
