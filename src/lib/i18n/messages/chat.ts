@@ -543,6 +543,10 @@ const chat = {
 			network: { title: '网络连接中断', hint: '请求没有完成。检查网络或代理后重试。' },
 			forbidden: { title: '没有权限', hint: '当前账号不能使用这个模型或功能。' },
 			badRequest: { title: '请求被服务拒绝', hint: '服务不接受这次请求。反复出现的话，把原始信息发给我们排查。' },
+			refusal: {
+				title: '模型拒绝回答这个请求',
+				hint: '这是模型自己的判断，原样再发一次通常还会被拒绝，而且每次都按用量计费。换个说法、拆小一点再发，或换一个模型。'
+			},
 			foreignHistory: {
 				title: '对话历史属于另一个账号',
 				hint: '这段对话含有只有原账号能验证的内容，当前账号无法继续。在历史会话里重新导入即可，导入会清理这些内容。'
@@ -1235,6 +1239,10 @@ const chat = {
 			network: { title: 'Connection lost', hint: 'The request did not finish. Check your network or proxy and retry.' },
 			forbidden: { title: 'Not permitted', hint: 'Your account cannot use this model or feature.' },
 			badRequest: { title: 'Request rejected', hint: 'The service did not accept the request. If it repeats, send us the raw message.' },
+			refusal: {
+				title: 'The model declined this request',
+				hint: 'The model decided not to answer. Sending the same again usually gets the same answer, and each attempt is billed. Reword it or split it up, or switch to another model.'
+			},
 			foreignHistory: {
 				title: 'History belongs to another account',
 				hint: 'Parts of this conversation can only be verified by the account that wrote them. Re-import it from session history, which removes those parts.'
