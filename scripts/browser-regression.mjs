@@ -572,6 +572,9 @@ try {
   // every skill it finds, two folders can hold one of the same name, and a
   // skill can be named like a built-in): the list opens, each name once,
   // and the conversation keeps showing (Svelte threw each_key_duplicate).
+  // A page of its own: the one above has an image in the composer.
+  await page.goto(base + '?shell&textOnly');
+  await page.waitForFunction(() => window.__chat, null, {timeout:30000});
   await page.evaluate(() => window.__chat.handle({type:'command_list', commands:[
     {command:'/model', marker:null, args:'', description:'Choose the model'},
     {command:'/review', marker:null, args:'[instructions]', description:'Review uncommitted changes'},
