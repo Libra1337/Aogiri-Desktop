@@ -23,6 +23,7 @@ import { telemetry } from './telemetry.svelte';
 import { normalizeColor, parseTabIcon, type TabIcon } from './workbench/tabChrome';
 import { CHATS_ENABLED, lastActive, type Project, type Session, type WorktreeMeta } from './types';
 import { modelEfforts } from '$lib/settings/providerFields';
+import { unanswered } from './errorInfo';
 
 /** Optional per-tab chrome persisted alongside the session id + title. */
 export interface SavedTabChrome {
@@ -1503,6 +1504,10 @@ export class SessionStore {
 		const s = this.allSessions.find((x) => x.id === id);
 		if (!s || s.dormant || s.draft || s.chat.busy) return;
 		const c = s.chat;
+		// The model answered without an answer (a refusal, an empty reply):
+		// the same conversation gets the same reply, billed again. Nothing is
+		// sent; the error card stays and says what to change.
+		if (c.lastError && unanswered(c.lastError)) return;
 		c.clearFailure();
 		const last = c.lastUserTurn();
 		const output = c.turnHadOutput();
