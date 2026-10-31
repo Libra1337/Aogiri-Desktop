@@ -199,7 +199,8 @@ jobs:
 
       # Every release says what changed: release-notes/<version>.md (Chinese
       # 更新公告) becomes the release body, which also lands in latest.json as
-      # the notes the update prompt shows.
+      # the notes the update prompt shows. The Windows checkout has CRLF
+      # (text=auto), so CR is dropped: every leg writes the same LF notes.
       - name: Read the release notes
         id: notes
         shell: bash
@@ -209,7 +210,7 @@ jobs:
           test -s "$file" || { echo "missing $file"; exit 1; }
           {
             echo 'body<<LYNSHEN_NOTES_EOF'
-            cat "$file"
+            tr -d '\r' < "$file"
             echo 'LYNSHEN_NOTES_EOF'
           } >> "$GITHUB_OUTPUT"
 
