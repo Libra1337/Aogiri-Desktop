@@ -48,6 +48,15 @@ export function modelAnswered(raw: string): boolean {
 	return /\(stop reason [a-z_]+/.test(raw);
 }
 
+/** The model answered, but gave no answer: a refusal (`refusal`,
+ *  `content_filter`) or an empty reply. Sending the same conversation again
+ *  gets the same, billed again (Anthropic: "Attempting to continue without
+ *  resetting will result in continued refusals"), so nothing re-sends it
+ *  unchanged (SessionStore.retryTurn, autoRetry). */
+export function unanswered(raw: string): boolean {
+	return /模型拒绝回答了这个请求|模型没有给出回答|\(stop reason (refusal|content_filter)\b/.test(raw);
+}
+
 /** The raw text without the engine's appended sign-in hint. */
 export function stripEngineHint(raw: string): string {
 	return raw.replace(ENGINE_HINT, '');

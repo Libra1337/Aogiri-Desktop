@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeError, modelAnswered, stripEngineHint } from './errorInfo';
+import { describeError, modelAnswered, stripEngineHint, unanswered } from './errorInfo';
 
 describe('describeError', () => {
 	it('reads a gateway 401 as the session credential running out, not a codex login', () => {
@@ -108,6 +108,14 @@ describe('describeError', () => {
 
 	it('leaves errors it does not know alone', () => {
 		expect(describeError('the tool crashed in an odd way')).toBeNull();
+	});
+
+	it('names the replies a re-send would only repeat: a refusal or an empty reply, not a dropped connection', () => {
+		expect(unanswered('模型拒绝回答了这个请求。 (stop reason refusal)')).toBe(true);
+		expect(unanswered('模型拒绝回答了这个请求。 (stop reason content_filter, 12 output tokens)')).toBe(true);
+		expect(unanswered('模型没有给出回答。')).toBe(true);
+		expect(unanswered('io error: connection reset by peer')).toBe(false);
+		expect(unanswered('LLM API returned HTTP 503: {"error":"no_available_provider"}')).toBe(false);
 	});
 
 	it('maps the gateway hardware binding refusals (AD-H6, AD-L1) to cards with a way on', () => {

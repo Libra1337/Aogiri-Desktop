@@ -94,6 +94,20 @@ describe('auto retry', () => {
 		expect(chat.autoRetry).toBeNull();
 	});
 
+	it('nothing re-sends a turn the model refused or left empty: not a plan wait, a cut-short retry or a limit resume', async () => {
+		for (const message of ['模型拒绝回答了这个请求。 (stop reason refusal)', '模型没有给出回答。']) {
+			const { chat, id, store } = await started('lynshen');
+			chat.handle({ type: 'error', message });
+			chat.handle({ type: 'status', message: 'ready' });
+			// Every in-place retry path goes through retryTurn.
+			await store.retryTurn(id, 'note', true);
+			await flush();
+			expect(sent(id)).toEqual([]);
+			// The error card stays, so the user sees what to change.
+			expect(chat.messages.some((m) => m.kind === 'error')).toBe(true);
+		}
+	});
+
 	it('a new message from the user calls the waiting retry off', async () => {
 		const { chat, id, retry } = await started('lynshen');
 		chat.handle({ type: 'error', message: 'API Error: Connection error.' });
