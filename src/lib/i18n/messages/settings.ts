@@ -462,7 +462,6 @@ const settings = {
 			keyPlaceholder: '请输入 API Key',
 			loading: '正在读取账户…',
 			readFailed: '无法读取账户信息：{msg}',
-			groupUnresolved: '分组未确定',
 			oauthLogin: '在浏览器中授权 {provider}',
 			oauthHint: '使用订阅账户授权。授权在浏览器中完成；API Key 也可单独配置。',
 			reopenBrowser: '重新打开授权页面',
@@ -747,7 +746,11 @@ const settings = {
 			square: '模型广场',
 			squareTitle: '模型广场',
 			modelCount: '{count} 个模型',
+			unavailableCount: '，另有 {count} 个不可用',
 			syncModels: '同步到模型列表',
+			// A model the gateway lists without a route for this account, and why.
+			squareWhy: '{model}（{reason}）',
+			squareReason: { planInactive: '套餐未生效', notInPlan: '不在套餐内', unpriced: '未定价', unavailable: '暂不可用' }
 		},
 		voice: {
 			groupLabel: '语音识别',
@@ -1900,7 +1903,6 @@ const settings = {
 			keyPlaceholder: 'Enter API Key',
 			loading: 'Reading your account…',
 			readFailed: 'Could not read your account: {msg}',
-			groupUnresolved: 'Group unresolved',
 			oauthLogin: 'Authorize {provider} in browser',
 			oauthHint: 'Authorize your subscription account in the browser, or configure an API key separately.',
 			reopenBrowser: 'Reopen authorization page',
@@ -2183,7 +2185,10 @@ const settings = {
 			square: 'Model square',
 			squareTitle: 'Model square',
 			modelCount: '{count} models',
+			unavailableCount: ', {count} more unavailable',
 			syncModels: 'Sync to model list',
+			squareWhy: '{model} ({reason})',
+			squareReason: { planInactive: 'plan not active', notInPlan: 'not in your plan', unpriced: 'not priced', unavailable: 'unavailable now' }
 		},
 		voice: {
 			groupLabel: 'Speech recognition',

@@ -52,12 +52,24 @@ export function monoizeEntries(
 	/** The gateway's model catalog, where it has one: names, efforts, windows. */
 	described: (id: string) => GatewayModel | undefined = () => undefined
 ): MonoizeModelEntry[] {
+	// On the plan, a model outside it (or every model, the plan having
+	// ended) is still listed: the balance can run it, and the pickers mark
+	// it rather than hide it (gateway contract 4.2).
+	return listedEntries(list.filter(isRoutable), known, described);
+}
+
+/** The gateway routes the model for this key now (or the plan marks it). */
+const isRoutable = (m: MonoizeModel) => !m.routing_status || ROUTABLE.has(m.routing_status);
+
+/** Every model the gateway lists, routable now or not, as monoizeEntries
+ *  describes them. */
+function listedEntries(
+	list: MonoizeModel[],
+	known: { name: string }[],
+	described: (id: string) => GatewayModel | undefined
+): MonoizeModelEntry[] {
 	const stored = new Map(known.map((m) => [m.name, m]));
 	return list
-		// On the plan, a model outside it (or every model, the plan having
-		// ended) is still listed: the balance can run it, and the pickers mark
-		// it rather than hide it (gateway contract 4.2).
-		.filter((m) => !m.routing_status || ROUTABLE.has(m.routing_status))
 		.map((m) => {
 			const previous = stored.get(m.id) as Partial<MonoizeModelEntry> | undefined;
 			const catalog = catalogModel(m.id);
@@ -87,27 +99,47 @@ export function monoizeEntries(
 		});
 }
 
-/** Update labels from the current key's routes, retaining model configuration. */
-export async function refreshMonoizeCatalog() {
+/**
+ * Update labels from the current key's routes, retaining model configuration.
+ * Answers whether the list changed (models, routes, names, windows) or
+ * config.json did: running sessions then re-read theirs from config.json.
+ */
+export async function refreshMonoizeCatalog(): Promise<boolean> {
 	const template = PROVIDER_CATALOG.providers.find((p) => p.id === 'monoize');
-	if (!template) return;
+	if (!template) return false;
 	// The plain list routes; the catalog (a newer gateway) names the models
 	// and recommends the plan's default.
 	const [list, described] = await Promise.all([fetchMonoizeModels(), gatewayCatalog.refresh().catch(() => null)]);
+	// An empty answer is far more likely a gateway hiccup than an account
+	// without a single model: the list, the user's picks and routes stay.
+	if (!list.length) return false;
 	const index = catalogIndex(described);
+	const lookup = (id: string) => index.get(id.toLowerCase());
 	const custom = JSON.parse(localStorage.getItem('lynshen-custom-providers') || '[]');
 	const existing = custom.find((p: { id: string }) => p.id === 'monoize');
-	const models = monoizeEntries(list, existing?.models ?? [], (id) => index.get(id.toLowerCase()));
+	const models = monoizeEntries(list, existing?.models ?? [], lookup);
 	const entry = { ...existing, id: 'monoize', name: template.name, base_url: template.base_url,
 		format: template.protocol, builtin: false, source: 'catalog', models };
+	let changed = JSON.stringify(existing?.models ?? null) !== JSON.stringify(models);
 	localStorage.setItem('lynshen-custom-providers', JSON.stringify([...custom.filter((p: { id: string }) => p.id !== 'monoize'), entry]));
 	// An engine on the gateway reads its windows (and compacts by them) from
 	// config.json: keep them current there too, not only when Settings is open.
 	const cfg = await readConfig().catch(() => null);
 	if (cfg) {
-		const patch = pickedMonoizeModels(models, cfg, described);
-		if (Object.keys(patch).length) await writeConfig(patch);
+		const listed = listedEntries(list, existing?.models ?? [], lookup);
+		const patch = unchanged(pickedMonoizeModels(models, cfg, described, listed), cfg);
+		if (Object.keys(patch).length) {
+			await writeConfig(patch);
+			changed = true;
+		}
 	}
+	return changed;
+}
+
+/** The part of `patch` that changes `cfg`: the list is read again often,
+ *  and config.json is rewritten only when something in it moved. */
+function unchanged(patch: Record<string, unknown>, cfg: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(patch).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(cfg[key])));
 }
 
 /** The limits a gateway model's saved entry follows from the gateway. */
@@ -129,48 +161,66 @@ function monoizeSaved(m: MonoizeModelEntry): Record<string, unknown> {
 }
 
 /** What config.json keeps of the gateway list: the models chosen to show
- *  (`lynshen_models`) that the key can still reach — one whose group was
+ *  (`lynshen_models`) that the gateway still lists — one whose group was
  *  taken away is dropped — and, on the gateway, the engine's model list:
- *  those picks in their order, or every model when nothing was picked. */
+ *  those picks the key can route now, in their order, or every such model
+ *  when nothing was picked. */
 export function pickedMonoizeModels(
 	models: MonoizeModelEntry[],
 	cfg: Record<string, unknown>,
 	/** The gateway's catalog: a new user starts on the plan's recommendation. */
-	described: GatewayCatalog | null = null
+	described: GatewayCatalog | null = null,
+	/** Every model the gateway lists, `models` and those it cannot route for
+	 *  the key at the moment (a Channel cooling down, a stale binding). The
+	 *  pickers leave those out, but the user's choices for them (picked,
+	 *  hidden, the Provider pinned) stay until the gateway stops listing the
+	 *  model or the Provider: the list is read again often, and a minute's
+	 *  cooldown must not undo them. Default: `models`. */
+	listed: MonoizeModelEntry[] = models
 ): Record<string, unknown> {
 	const live = new Map(models.map((m) => [m.name, m]));
+	const known = new Map([...listed, ...models].map((m) => [m.name, m]));
 	const saved = Array.isArray(cfg.lynshen_models) ? (cfg.lynshen_models as { name?: unknown }[]) : [];
 	// Kept picks take the gateway's current window and output limit: stored
 	// once, they otherwise kept whatever the gateway said back then.
 	const kept = saved
-		.filter((m) => live.has(String(m.name)))
-		.map((m) => ({ ...m, ...limitsOf(monoizeSaved(live.get(String(m.name))!)) }));
-	// Put on sale since the last look: shown at once (see newlyOffered).
+		.filter((m) => known.has(String(m.name)))
+		.map((m) => ({ ...m, ...limitsOf(monoizeSaved(known.get(String(m.name))!)) }));
+	// Put on sale since the last look: shown at once (see newlyOffered). A
+	// model the key cannot route yet is not offered, so not seen either; one
+	// seen before stays seen while the gateway lists it (a model the user
+	// hid is not offered again after a cooldown).
 	const offer = newlyOffered(models.map((m) => m.name), cfg);
+	const before = Array.isArray(cfg.lynshen_models_seen) ? (cfg.lynshen_models_seen as unknown[]).map(String) : [];
+	const seen = [...offer.seen, ...before.filter((name) => known.has(name) && !live.has(name))];
 	const fresh = kept.length
 		? offer.fresh.filter((name) => !kept.some((m) => m.name === name)).map((name) => monoizeSaved(live.get(name)!))
 		: [];
 	const picked = [...kept, ...fresh];
 	const patch: Record<string, unknown> = {};
 	if (JSON.stringify(picked) !== JSON.stringify(saved)) patch.lynshen_models = picked;
-	if (JSON.stringify(offer.seen) !== JSON.stringify(cfg.lynshen_models_seen)) patch.lynshen_models_seen = offer.seen;
+	if (JSON.stringify(seen) !== JSON.stringify(cfg.lynshen_models_seen)) patch.lynshen_models_seen = seen;
 	// A Provider pinned for a model that no longer serves it would be refused
 	// (provider_unavailable): the gateway picks again once the pin is gone.
 	const pins = (cfg.monoize_providers ?? {}) as Record<string, string>;
 	const keptPins = Object.fromEntries(
-		Object.entries(pins).filter(([model, route]) => live.get(model)?.routes.some((r) => r.id === route))
+		Object.entries(pins).filter(([model, route]) => known.get(model)?.routes.some((r) => r.id === route))
 	);
 	if (Object.keys(keptPins).length !== Object.keys(pins).length) patch.monoize_providers = keptPins;
 	if (cfg.provider === 'monoize') {
-		const shown = picked.length ? picked.map((m) => live.get(String(m.name))!) : models;
+		const routable = picked.filter((m) => live.has(String(m.name)));
+		const shown = routable.length ? routable.map((m) => live.get(String(m.name))!) : models;
 		patch.models = shown;
 		// An image model cannot chat: one left as the chat model draws images
 		// instead, and the chat takes a model that can: the plan's
 		// recommendation (the catalog's), else the first one.
 		const chats = shown.filter((m) => !isImageModel(m.name));
 		const current = String(cfg.model ?? '');
+		// A model shown, or one the user shows that the gateway cannot route
+		// at the moment: the model in use stays.
+		const showing = new Set([...shown.map((m) => m.name), ...(picked.length ? picked.map((m) => String(m.name)) : known.keys())]);
 		if (isImageModel(current) && !cfg.image_model) patch.image_model = current;
-		if (chats.length && (isImageModel(current) || !shown.some((m) => m.name === current))) {
+		if (chats.length && (isImageModel(current) || !showing.has(current))) {
 			const pick = defaultModel(described, chats.map((m) => m.name));
 			const names = pick ? [pick.id, pick.requestModel, ...pick.aliases].map((n) => n.toLowerCase()) : [];
 			// An older gateway recommends nothing: the curated menu's order stands in.

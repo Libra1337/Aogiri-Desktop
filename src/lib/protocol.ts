@@ -1,4 +1,3 @@
-import { t } from '$lib/i18n';
 import { invoke } from '@tauri-apps/api/core';
 import type { McpServerEntry } from './mcp';
 import type { PreviewFacts } from './preview/kinds';
@@ -957,7 +956,8 @@ export async function fetchMonoizeLiveUsage(): Promise<LiveUsage | null> {
 	return { rpm: v.rpm, tpm: v.tpm, cache_hit_rate: typeof v.cache_hit_rate === 'number' ? v.cache_hit_rate : null };
 }
 /** 模型广场：登录用户各分组内可调用的模型（服务端已按分组过滤）。
- *  `groups` 是该模型出现的分组；跨分组同名模型以 `模型@分组` 区分。 */
+ *  `providers` are the routes the key may pick (DA-8a); a model without one
+ *  says why in `routing_status`. settings/squareRows.ts lays the rows out. */
 export type MonoizeMarketplaceModel = {
 	model_id: string;
 	models_dev_provider?: string | null;
@@ -970,11 +970,6 @@ export type MonoizeMarketplaceModel = {
 	routing_status?: string;
 	providers?: MonoizeRoute[];
 };
-/** Group labels are presentation only; model_id remains the request identifier. */
-export function monoizeModelEntries(m: MonoizeMarketplaceModel): string[] {
-	const groups = m.groups ?? [];
-	return groups.length ? groups.map((g) => `${m.model_id}（${g}）`) : [`${m.model_id}（${t('settings.account.groupUnresolved')}）`];
-}
 export async function monoizeMarketplace(): Promise<MonoizeMarketplaceModel[]> {
 	const v = await invoke<MonoizeMarketplaceModel[] | { data?: MonoizeMarketplaceModel[] }>('monoize_marketplace');
 	return Array.isArray(v) ? v : Array.isArray((v as { data?: unknown }).data) ? (v as { data: MonoizeMarketplaceModel[] }).data : [];

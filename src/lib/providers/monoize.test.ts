@@ -174,3 +174,53 @@ describe('with the gateway catalog', () => {
 		expect(pickedMonoizeModels(live, { provider: 'monoize', model: 'gpt-6-sol' }, described).model).toBeUndefined();
 	});
 });
+
+describe('a model the gateway cannot route at the moment', () => {
+	const route = (id: string) => ({ id, name: id, group: '海外', account_class: 'private' });
+	const list = [
+		{ id: 'glm-5.3', routing_status: 'ready', providers: [route('p-glm')] },
+		// A Channel cooling down, or the current gateway's stale binding.
+		{ id: 'claude-opus-5-5', routing_status: 'channel_selection_required', providers: [route('p-cc'), route('p-cc2')] }
+	];
+	const models = monoizeEntries(list);
+	const listed = monoizeEntries(list.map((m) => ({ ...m, routing_status: 'ready' })));
+	const cfg = {
+		provider: 'monoize',
+		model: 'claude-opus-5-5',
+		lynshen_models: [{ name: 'claude-opus-5-5' }, { name: 'glm-5.3' }],
+		lynshen_models_seen: ['claude-opus-5-5', 'glm-5.3', 'kimi-k3'],
+		monoize_providers: { 'claude-opus-5-5': 'p-cc2' }
+	};
+
+	it('stays out of the picker, as before', () => {
+		expect(models.map((m) => m.name)).toEqual(['glm-5.3']);
+	});
+
+	it('keeps the user’s pick, pinned Provider and model until the gateway stops listing it', () => {
+		const patch = pickedMonoizeModels(models, cfg, null, listed);
+		expect((patch.lynshen_models as { name: string }[]).map((m) => m.name)).toEqual(['claude-opus-5-5', 'glm-5.3']);
+		expect(patch.monoize_providers).toBeUndefined();
+		expect(patch.model).toBeUndefined();
+		// The engine's list: what routes now.
+		expect((patch.models as { name: string }[]).map((m) => m.name)).toEqual(['glm-5.3']);
+		// kimi-k3 is gone from the gateway: no longer remembered as seen.
+		expect(patch.lynshen_models_seen).toEqual(['glm-5.3', 'claude-opus-5-5']);
+	});
+
+	it('is not offered as new while it cannot route, nor once it can again if it was seen', () => {
+		const fresh = { ...cfg, lynshen_models: [{ name: 'glm-5.3' }], lynshen_models_seen: ['glm-5.3'] };
+		const patch = pickedMonoizeModels(models, fresh, null, listed);
+		expect(patch.lynshen_models_seen).toBeUndefined();
+		expect((patch.lynshen_models as { name: string }[]).map((m) => m.name)).toEqual(['glm-5.3']);
+		const seen = { ...cfg, lynshen_models: [{ name: 'glm-5.3' }] };
+		const back = pickedMonoizeModels(monoizeEntries(list.map((m) => ({ ...m, routing_status: 'ready' }))), seen);
+		expect((back.lynshen_models as { name: string }[]).map((m) => m.name)).toEqual(['glm-5.3']);
+	});
+
+	it('loses its pick and pin once the gateway no longer lists it (the old behaviour without `listed`)', () => {
+		const patch = pickedMonoizeModels(models, cfg);
+		expect((patch.lynshen_models as { name: string }[]).map((m) => m.name)).toEqual(['glm-5.3']);
+		expect(patch.monoize_providers).toEqual({});
+		expect(patch.model).toBe('glm-5.3');
+	});
+});
