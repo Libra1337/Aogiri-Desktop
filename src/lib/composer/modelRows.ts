@@ -121,7 +121,7 @@ export function splitRoute(command: string): { command: string; route?: string }
 }
 
 /** A Provider row's second line: account class and Provider, "私有 · 新科研". */
-function routeLineOf(route: ModelRoute, labels: ModelGroupLabels): string {
+export function routeLineOf(route: ModelRoute, labels: Pick<ModelGroupLabels, 'accountClass'>): string {
 	const scope = route.account_class && labels.accountClass ? labels.accountClass(route.account_class) : '';
 	return [scope, route.name].filter(Boolean).join(' · ');
 }

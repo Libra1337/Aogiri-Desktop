@@ -67,10 +67,10 @@
 		type AccountInfo,
 		type DeepseekBalance,
 		type MonoizeUser,
-		type MonoizeMarketplaceModel,
-		monoizeModelEntries
+		type MonoizeMarketplaceModel
 	} from '$lib/protocol';
 	import { monoizeEntries } from '$lib/providers/monoize';
+	import { squareRows } from '$lib/settings/squareRows';
 	import { account } from '$lib/accountSession.svelte';
 	import { dispatch } from '$lib/backends/router';
 	import { caps } from '$lib/backends';
@@ -805,6 +805,14 @@
 	let squareModels = $state<MonoizeMarketplaceModel[] | null>(null);
 	let squareBusy = $state(false);
 	let squareSyncMsg = $state('');
+	// One row per route, as the model menu names it; a model without one says why.
+	const square = $derived(
+		squareRows(squareModels ?? [], {
+			accountClass: (accountClass) => t(`chat.accountClass.${accountClass}`),
+			routeGroup: (group) => t('chat.routeGroup', { group })
+		})
+	);
+	let squareLoad = 0;
 
 	async function loadMonoizeSession() {
 		await account.read();
@@ -819,6 +827,7 @@
 		}
 		monoizeLogoutError = '';
 		account.signedOut();
+		squareLoad++;
 		squareModels = null;
 		keyed = (await readAuthProviders()) ?? [];
 		loadBalances();
@@ -838,19 +847,26 @@
 		onAuthChange?.();
 	}
 
+	// Read again at every open (the model market changes on the gateway); the
+	// list read before stays on screen until the new one arrives, and stays
+	// when the read fails (the error is logged, not shown over it).
 	async function openMonoizeSquare() {
 		squareOpen = true;
 		squareSyncMsg = '';
-		if (!squareModels) {
-			squareBusy = true;
-			try {
-				squareModels = await monoizeMarketplace();
-			} catch (e) {
+		const load = ++squareLoad;
+		squareBusy = true;
+		try {
+			const models = await monoizeMarketplace();
+			if (load === squareLoad) squareModels = models;
+		} catch (e) {
+			if (load !== squareLoad) return;
+			console.warn('Model square read failed', e);
+			if (!squareModels?.length) {
 				squareModels = [];
 				squareSyncMsg = String(e);
-			} finally {
-				squareBusy = false;
 			}
+		} finally {
+			if (load === squareLoad) squareBusy = false;
 		}
 	}
 
@@ -1548,28 +1564,29 @@
 				{#if squareOpen}
 					<Modal title={t('settings.monoize.squareTitle')} width={620} padded={false} onClose={() => (squareOpen = false)}>
 						<div class="square">
-							{#if squareBusy}
+							{#if squareBusy && !squareModels?.length}
 								<p class="mfhint">{t('settings.account.refreshing')}</p>
 							{:else if squareModels?.length}
 								<div class="sqhead">
-									<span>{t('settings.monoize.modelCount', { count: squareModels.reduce((n, m) => n + monoizeModelEntries(m).length, 0) })}</span>
+									<span>
+										{t('settings.monoize.modelCount', { count: square.usable })}{#if square.unavailable}{t('settings.monoize.unavailableCount', { count: square.unavailable })}{/if}{#if squareBusy} · {t('settings.account.refreshing')}{/if}
+									</span>
 									<span class="sqactions">
 										<Button variant="secondary" size="sm" onclick={syncSquareModels}>{t('settings.monoize.syncModels')}</Button>
 									</span>
 								</div>
 								<div class="sqgrid">
-									{#each squareModels as m (m.model_id)}
-										{#each monoizeModelEntries(m) as name}
-											<div class="sqrow">
-												<span class="sqname"><Vendor model={m.model_id} size={14} /> {name}</span>
-												<span class="sqmeta">
-													{#if m.max_input_tokens}{fmt(m.max_input_tokens)}{/if}
-													{#if m.input_cost_per_token_nano != null && m.output_cost_per_token_nano != null}
-														 · ${(Number(m.input_cost_per_token_nano) / 1e9 * 1e6).toFixed(2)} / ${(Number(m.output_cost_per_token_nano) / 1e9 * 1e6).toFixed(2)} /M
-													{/if}
-												</span>
-											</div>
-										{/each}
+									{#each square.rows as row (row.key)}
+										{@const m = row.entry}
+										<div class="sqrow">
+											<span class="sqname"><Vendor model={row.model} size={14} /> {row.route ? `${row.model} · ${row.route}` : t('settings.monoize.squareWhy', { model: row.model, reason: t(`settings.monoize.squareReason.${row.reason}`) })}</span>
+											<span class="sqmeta">
+												{#if m.max_input_tokens}{fmt(m.max_input_tokens)}{/if}
+												{#if m.input_cost_per_token_nano != null && m.output_cost_per_token_nano != null}
+													 · ${(Number(m.input_cost_per_token_nano) / 1e9 * 1e6).toFixed(2)} / ${(Number(m.output_cost_per_token_nano) / 1e9 * 1e6).toFixed(2)} /M
+												{/if}
+											</span>
+										</div>
 									{/each}
 								</div>
 							{:else}

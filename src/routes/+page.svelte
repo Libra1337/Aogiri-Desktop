@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { refreshMonoizeCatalog } from '$lib/providers/monoize';
+	import { catalogRefresher } from '$lib/providers/catalogRefresh';
 	import { DaemonSync } from '$lib/daemonSync.svelte';
 	import { onMount, tick, untrack } from 'svelte';
 	import { crossfade } from '$lib/ui/viewTransition';
@@ -497,12 +498,38 @@
 	// model picker can list every provider's models — not just the active one's.
 	let providersList = $state<ProviderOption[]>([]);
 	let providerLoad = 0;
-	function loadProviders() {
+	// The gateway's model list, read again while the app runs (the model
+	// market changes there; a signed-in desktop follows without signing in
+	// again): with the provider list, when the window gains focus (at most
+	// once a minute) and every 10 minutes. Signed out, or failing: quiet.
+	const gatewayModels = catalogRefresher({
+		refresh: async () => (await readAuthProviders()).includes('monoize') && (await refreshMonoizeCatalog()),
+		// Running conversations re-read config.json's list.
+		onChanged: reloadModelLists
+	});
+	/** Reads the gateway's list unless it was read in the last minute; a
+	 *  change rebuilds the pickers' provider list. */
+	function refreshGatewayModels() {
+		void gatewayModels.run().then((changed) => {
+			if (changed) loadProviders(false);
+		});
+	}
+	/** Running LynShen sessions re-read config.json's model list (their
+	 *  /model reload, answered without opening the menu). One already asked
+	 *  reads the file as it is when it answers. */
+	function reloadModelLists() {
+		for (const s of store.allSessions)
+			if (s.backendId === 'lynshen' && !s.draft && !s.dormant && s.chat.silentModelView === 0) {
+				s.chat.silentModelView++;
+				dispatch(s.id, { op: 'command', input: '/model' });
+			}
+	}
+	/** `gateway`: read the gateway's model list first (default). */
+	function loadProviders(gateway = true) {
 		const generation = ++providerLoad;
 		listProviders()
 			.then(async (bs) => {
-				const auth = await readAuthProviders();
-				if (auth.includes('monoize')) await refreshMonoizeCatalog().catch(e => console.error('Model route refresh failed', e));
+				if (gateway) await gatewayModels.run(true);
 				if (generation !== providerLoad) return;
 				let custom: ProviderOption[] = [];
 				try {
@@ -1701,8 +1728,12 @@
 			const updateEvery = setInterval(() => {
 				void updater.check(true, true);
 				void teamSwitch.refresh();
+				refreshGatewayModels();
 			}, 10 * 60 * 1000);
 			cleanups.push(() => clearTimeout(updateTimer), () => clearInterval(updateEvery));
+			// Back to the app: the gateway's model list again (at most once a minute).
+			window.addEventListener('focus', refreshGatewayModels);
+			cleanups.push(() => window.removeEventListener('focus', refreshGatewayModels));
 			loadProviders();
 			readAuthProviders()
 				.then(async (p) => {
@@ -2156,11 +2187,7 @@
 				loadProviders();
 				// Running LynShen sessions re-read config.json's list (their /model
 				// reload): the menu shows what was just checked, on every platform.
-				for (const s of store.allSessions)
-					if (s.backendId === 'lynshen' && !s.draft && !s.dormant) {
-						s.chat.silentModelView++;
-						dispatch(s.id, { op: 'command', input: '/model' });
-					}
+				reloadModelLists();
 			}}
 		/>
 	{/if}
