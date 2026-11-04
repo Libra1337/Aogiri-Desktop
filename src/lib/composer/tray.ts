@@ -76,3 +76,12 @@ export function answerStep(
 	const step = flow.step + 1;
 	return { flow: { step, answers }, done: step >= questions.length };
 }
+
+/** Each row id once per section, the first kept. The tray keys its rows by
+ *  id, and a list an engine sent with a name twice threw Svelte's
+ *  each_key_duplicate and blanked the whole conversation pane (tickets #60,
+ *  #69). Whatever a list holds, the tray shows it. */
+export function uniqueRows<T extends { id: string }>(items: T[]): T[] {
+	const seen = new Set<string>();
+	return items.filter((item) => !seen.has(item.id) && !!seen.add(item.id));
+}
