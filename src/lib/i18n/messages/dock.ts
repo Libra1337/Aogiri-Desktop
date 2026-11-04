@@ -48,7 +48,10 @@ const dock = {
 			open: '查看追踪',
 			result: '结果',
 			openAgent: '查看子智能体会话',
-			noTranscript: '这个引擎还不能读取子智能体的会话'
+			noTranscript: '这个引擎还不能读取子智能体的会话',
+			unlistable: '引擎读不出这个子智能体的会话，已停止刷新。',
+			pollStopped: '连续几次读取失败，已停止刷新。',
+			retry: '重试'
 		},
 		dock: {
 			empty: '没有打开的面板',
@@ -245,7 +248,10 @@ const dock = {
 			open: 'View trace',
 			result: 'Result',
 			openAgent: 'View the subagent’s conversation',
-			noTranscript: "This engine can't read a subagent's conversation yet"
+			noTranscript: "This engine can't read a subagent's conversation yet",
+			unlistable: "The engine can't list this subagent's conversation; stopped refreshing.",
+			pollStopped: 'Reading failed several times in a row; stopped refreshing.',
+			retry: 'Retry'
 		},
 		dock: {
 			empty: 'No open panels',

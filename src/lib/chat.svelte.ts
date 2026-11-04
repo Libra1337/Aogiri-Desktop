@@ -1123,7 +1123,10 @@ export class ChatState {
 	/** Claude's Workflows and Task subagents (agent_runs), oldest first. */
 	agentRuns = $state<{ workflows: WorkflowRun[]; agents: AgentRun[] }>({ workflows: [], agents: [] });
 	/** A subagent's own conversation by agent id: its task, then its messages. */
-	subagentTranscripts = $state<Record<string, { task: string; messages: Msg[]; error: string }>>({});
+	subagentTranscripts = $state<Record<string, { task: string; messages: Msg[]; error: string; seq?: number }>>({});
+	/** Answers to `subagent_transcript` so far: the poll tells a new answer
+	 *  from the last one it saw (agents/transcriptPoll.ts). */
+	#transcriptSeq = 0;
 	/** The subagent the agent trace panel shows (null: the run list). */
 	agentFocus = $state<string | null>(null);
 	/** Claude's permission rules (list_permission_rules), once asked for. */
@@ -2898,7 +2901,7 @@ export class ChatState {
 				const kept = Object.keys(this.subagentTranscripts).filter((k) => k !== id && k !== this.agentFocus);
 				for (const old of kept.slice(0, Math.max(0, kept.length - SUBAGENT_TRANSCRIPTS_KEPT + 1)))
 					delete this.subagentTranscripts[old];
-				this.subagentTranscripts[id] = { task, messages, error: str(ev.error) };
+				this.subagentTranscripts[id] = { task, messages, error: str(ev.error), seq: ++this.#transcriptSeq };
 				break;
 			}
 			case 'permission_rules':
@@ -3063,7 +3066,7 @@ export class ChatState {
 				if (refused) {
 					if (refused[1] === 'context_usage') this.contextBreakdown = { error: str(ev.message) };
 					if (refused[1] === 'subagent_transcript' && this.agentFocus && !this.subagentTranscripts[this.agentFocus])
-						this.subagentTranscripts[this.agentFocus] = { task: '', messages: [], error: t('dock.agents.noTranscript') };
+						this.subagentTranscripts[this.agentFocus] = { task: '', messages: [], error: t('dock.agents.noTranscript'), seq: ++this.#transcriptSeq };
 					// An engine before the agent team: the merges sent are not coming.
 					if (refused[1] === 'merge_agent' || refused[1] === 'pick_attempt') {
 						for (const a of Object.values(this.team))
