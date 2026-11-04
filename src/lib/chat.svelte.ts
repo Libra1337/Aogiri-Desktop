@@ -1235,6 +1235,15 @@ export class ChatState {
 	#live = new Set<Msg>();
 	/** The live per-request timer (see CallTiming); null between requests. */
 	call = $state<CallTiming | null>(null);
+	/** The request in flight was answered: the gateway's first byte
+	 *  (`thinking_start`), reasoning, text or a tool call came for it. The
+	 *  work line then says 正在思考 until a new request or a retry, whatever
+	 *  the engine state or the last message is (owner report: the line went
+	 *  back and forth between 正在连接模型 and 正在思考 while it thought). */
+	requestAnswered = $state(false);
+	/** The last event was a transcript: a `connecting` right after it is the
+	 *  watch snapshot restating the running turn, not a new request. */
+	#restated = false;
 	/** This session's total running time: the sum of its turns, ms. Kept per
 	 *  session in localStorage under `#runKey` (see bindRunKey). */
 	runMs = $state(0);
@@ -1436,6 +1445,7 @@ export class ChatState {
 		this.#collapseReasoning();
 		if (this.#sending?.state !== 'failed') this.#setSend(null);
 		this.call = null;
+		this.requestAnswered = false;
 		if (this.#turnStart === null) return;
 		const now = Date.now();
 		this.#closeSegment(now);
@@ -1499,6 +1509,7 @@ export class ChatState {
 		const now = Date.now();
 		if (this.#firstOutput === null && this.#turnStart !== null) this.#firstOutput = now;
 		if (this.call?.phase !== 'output') this.call = { phase: 'output', since: now };
+		this.requestAnswered = true;
 		if (this.#genStart === null && this.#turnStart !== null) this.#genStart = now;
 		this.#setSend(null);
 	}
@@ -1511,6 +1522,7 @@ export class ChatState {
 		this.#closeSegment(now);
 		this.#segStart = now;
 		this.call = { phase: this.backendId === 'lynshen' ? 'connect' : 'ttft', since: now };
+		this.requestAnswered = false;
 	}
 
 	/** The open reply segment ends (its tool call, a new request, the turn's
@@ -1697,7 +1709,10 @@ export class ChatState {
 		// generating, regardless of a stale 'connecting' engine state.
 		if ((last?.kind === 'assistant' || last?.kind === 'reasoning') && last.text.length > 0)
 			return 'generating';
-		if (this.engineState === 'connecting') return 'connecting';
+		// Connecting only until the request is answered: a status note, an
+		// empty reasoning block or a plan draft at the tail must not send the
+		// line back to 正在连接模型 while the model thinks.
+		if (this.engineState === 'connecting' && !this.requestAnswered) return 'connecting';
 		return 'waiting';
 	}
 
@@ -2003,6 +2018,8 @@ export class ChatState {
 	handle(ev: AgentEvent) {
 		// The engine has spoken — the child is up, so the boot animation ends.
 		this.booting = false;
+		const restated = this.#restated;
+		this.#restated = false;
 		switch (ev.type) {
 			case 'startup':
 				// An engine that recovered from a failed resume in-process (codex
@@ -2171,6 +2188,9 @@ export class ChatState {
 				// lynshen: the gateway answered; the first token is on its way.
 				if (this.#sending?.state === 'connecting' || this.#sending?.state === 'sending') this.#setSend('waiting');
 				if (this.call) this.call = { phase: 'ttft', since: Date.now() };
+				this.requestAnswered = true;
+				// A retried request that is answered is no longer retrying.
+				this.retry = null;
 				break;
 			case 'reasoning_delta': {
 				this.#outputStarted();
@@ -2409,6 +2429,7 @@ export class ChatState {
 				break;
 			}
 			case 'transcript': {
+				this.#restated = true;
 				// A claude conversation reopened under this chat (restart, yolo,
 				// gateway switch, rewind): the replay is plain text without tool
 				// cards or message uuids, so the messages held here stay.
@@ -2482,6 +2503,9 @@ export class ChatState {
 					this.messages.pop();
 				}
 				this.#resetCurrent();
+				// The request goes out again: not answered until it is.
+				this.requestAnswered = false;
+				if (this.call) this.call = { phase: this.backendId === 'lynshen' ? 'connect' : 'ttft', since: Date.now() };
 				// Shown live at the end of the transcript (RetryNotice), not as a log line.
 				this.retry = {
 					attempt: num(ev.attempt),
@@ -2948,6 +2972,10 @@ export class ChatState {
 				this.engineState = 'connecting';
 				this.suggestion = '';
 				this.#startTurn();
+				// The watch snapshot (a reconnect, another window) restates the
+				// running turn as transcript + connecting: the request this chat
+				// already follows goes on, it is not sent again.
+				if (restated && this.call) break;
 				this.#requestStarted();
 				if (this.#sending?.state === 'sending') this.#setSend('connecting');
 				break;
