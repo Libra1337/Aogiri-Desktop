@@ -3,6 +3,42 @@
 
 export type AtEntry = { path: string; dir: boolean };
 
+/** The folder the @ menu lists: the engine's working directory once it has
+ *  reported one, else the project's folder (a new conversation has no engine
+ *  before its first message, ticket #75). A conversation whose folder is made
+ *  from its first message (`newFolder`) has none yet: ''. */
+export function mentionRoot(cwd: string, project?: { path: string; newFolder?: boolean } | null): string {
+	if (cwd) return cwd;
+	if (!project || project.newFolder) return '';
+	return project.path;
+}
+
+/** A listed path with '/' separators (Windows lists `src\\lib\\a.ts`). */
+export const toSlash = (p: string) => p.replace(/\\/g, '/');
+
+/** Loads the @ menu's file list once per folder, the first time the menu
+ *  opens for it. '' lists nothing (and never the app's own directory). A
+ *  late answer for a folder the menu has left is dropped. */
+export class MentionFiles {
+	#root: string | null = null;
+	constructor(
+		private readonly list: (root: string) => Promise<string[]>,
+		private readonly set: (files: string[]) => void
+	) {}
+
+	open(root: string) {
+		if (this.#root === root) return;
+		this.#root = root;
+		this.set([]);
+		if (!root) return;
+		this.list(root)
+			.then((files) => {
+				if (this.#root === root) this.set(files.map(toSlash));
+			})
+			.catch(() => {});
+	}
+}
+
 const base = (p: string) => p.replace(/\/+$/, '').split('/').pop() || p;
 
 /** Files plus every parent folder derived from their paths (deduped). */

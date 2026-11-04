@@ -38,7 +38,7 @@
 	import { fileUris, imageExt, MAX_PASTE_BYTES, pasteRoute, type PasteData } from '$lib/composer/paste';
 	import { VoiceRecorder } from '$lib/audio';
 	import VoiceWave from '$lib/composer/VoiceWave.svelte';
-	import { buildEntries, mentionMatches, type AtEntry } from '$lib/mention';
+	import { buildEntries, mentionMatches, MentionFiles, type AtEntry } from '$lib/mention';
 	import { t } from '$lib/i18n';
 	import { matches, shortcutLabel, withShortcut } from '$lib/shortcuts';
 	import { convertFileSrc } from '@tauri-apps/api/core';
@@ -82,6 +82,7 @@
 		gateway = null,
 		gitBranch = '',
 		gitCwd = '',
+		filesRoot,
 		repoName = '',
 		onBranchChanged,
 		onBackend,
@@ -142,6 +143,8 @@
 		gitBranch?: string;
 		/** Where the branch chip's picker runs git; '' leaves the chip read-only. */
 		gitCwd?: string;
+		/** The folder the @ menu lists (mention.ts `mentionRoot`). */
+		filesRoot?: string;
 		repoName?: string;
 		/** A branch was switched to or created from the chip. */
 		onBranchChanged?: () => void;
@@ -703,8 +706,8 @@
 	// (cached per cwd) the first time an @-token is typed. Matching logic lives in
 	// $lib/mention (pure + unit-tested).
 	let atFiles = $state<string[]>([]);
-	let atCwd = $state('');
 	let atIdx = $state(0);
+	const atLoader = new MentionFiles(listFiles, (files) => (atFiles = files));
 
 	const atQuery = $derived.by(() => {
 		const m = input.match(/(?:^|\s)@([^\s@]*)$/);
@@ -712,15 +715,7 @@
 	});
 	$effect(() => {
 		if (atQuery === null) return;
-		if (atCwd !== chat.cwd) {
-			atCwd = chat.cwd;
-			atFiles = [];
-			listFiles(chat.cwd || undefined)
-				.then((f) => {
-					if (atCwd === chat.cwd) atFiles = f;
-				})
-				.catch(() => {});
-		}
+		atLoader.open(filesRoot ?? chat.cwd);
 	});
 
 	const atEntries = $derived(buildEntries(atFiles));
