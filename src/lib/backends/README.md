@@ -158,7 +158,7 @@ never test `backendId` directly.
 - **Agent trace** (`AgentRunsPanel.svelte`, `agentTrace.ts`): each Workflow
   as a timeline of its agents by phase (state, model, time, tokens, tool
   calls), the Task subagents below, and a picked subagent's conversation,
-  read-only (`subagent_transcript`, re-read every 2.5 s while it runs).
+  read-only (`subagent_transcript`, re-read while it runs: every 2.5 s, slower while nothing changes (5, 10, 30 s), and not at all once the engine cannot list it or fails 3 times in a row; transcriptPoll.ts).
   `chat.agentFocus` says which subagent it shows. The desktop opens it as a
   workbench panel, the web page as a full-screen sheet.
 - **Background tasks** (`agents/BackgroundCommands.svelte` in the subagents card; `sessionStatus` `background`): `background_tasks` is the live

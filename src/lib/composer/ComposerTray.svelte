@@ -27,7 +27,7 @@
 
 <script lang="ts">
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
-	import { trayNav, type TrayTab } from './tray';
+	import { trayNav, uniqueRows, type TrayTab } from './tray';
 
 	// The composer's in-box selection list, shared by the "+" menu, "/" command
 	// completion and agent questions. It renders inside the composer card above
@@ -36,7 +36,7 @@
 		label,
 		heading = '',
 		meta = '',
-		sections,
+		sections: given,
 		selected = $bindable(0),
 		tab = 'none',
 		onClose
@@ -52,6 +52,8 @@
 		onClose?: () => void;
 	} = $props();
 
+	// Rows are keyed by id: one id twice would blank the pane (uniqueRows).
+	const sections = $derived(given.map((s) => ({ ...s, items: uniqueRows(s.items) })));
 	const flat = $derived(sections.flatMap((s) => s.items));
 	const offsets = $derived(sections.map((_, i) => sections.slice(0, i).reduce((n, s) => n + s.items.length, 0)));
 

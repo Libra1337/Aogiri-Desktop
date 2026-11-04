@@ -504,6 +504,7 @@ const chat = {
 			thisTool: '该工具',
 			action: {
 				restart: '重启会话',
+				restartEngine: '重启引擎',
 				login: '去登录',
 				account: '查看账户',
 				compact: '压缩对话',
@@ -550,6 +551,10 @@ const chat = {
 			foreignHistory: {
 				title: '对话历史属于另一个账号',
 				hint: '这段对话含有只有原账号能验证的内容，当前账号无法继续。在历史会话里重新导入即可，导入会清理这些内容。'
+			},
+			engineConflict: {
+				title: '另一个 {subject} 进程正在写这段对话',
+				hint: '引擎打不开或继续不了这段对话，因为另一个进程（{subject} 应用、终端里的 {subject}，或没退出的旧引擎）占着它。先关掉那边，再点「重启引擎」。对话内容不会丢。'
 			},
 			providerMissing: {
 				title: 'Codex 找不到模型服务商 {subject}',
@@ -1200,6 +1205,7 @@ const chat = {
 			thisTool: 'the tool',
 			action: {
 				restart: 'Restart session',
+				restartEngine: 'Restart engine',
 				login: 'Sign in',
 				account: 'View account',
 				compact: 'Compact',
@@ -1246,6 +1252,10 @@ const chat = {
 			foreignHistory: {
 				title: 'History belongs to another account',
 				hint: 'Parts of this conversation can only be verified by the account that wrote them. Re-import it from session history, which removes those parts.'
+			},
+			engineConflict: {
+				title: 'Another {subject} process is writing this conversation',
+				hint: 'The engine cannot open or continue this conversation while another process holds it (the {subject} app, {subject} in a terminal, or an old engine that did not exit). Close it there, then press Restart engine. Nothing in the conversation is lost.'
 			},
 			providerMissing: {
 				title: 'Codex cannot find provider {subject}',

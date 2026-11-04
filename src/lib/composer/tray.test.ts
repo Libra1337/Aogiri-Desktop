@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { answerStep, startFlow, togglePick, trayNav } from './tray';
+import { answerStep, startFlow, togglePick, trayNav, uniqueRows } from './tray';
 import type { Question } from '$lib/approval';
 
 const none = (n: number) => Array(n).fill(false);
@@ -57,5 +57,16 @@ describe('answerStep', () => {
 		const r = answerStep(qs.slice(0, 1), startFlow(), 'sqlite, actually');
 		expect(r.done).toBe(true);
 		expect(r.flow.answers).toEqual({ 'Which DB?': 'sqlite, actually' });
+	});
+});
+
+describe('uniqueRows (tickets #60, #69)', () => {
+	it('keeps each id once, the first of it', () => {
+		const rows = [
+			{ id: '/fmt', title: 'a' },
+			{ id: '/review', title: 'b' },
+			{ id: '/fmt', title: 'c' }
+		];
+		expect(uniqueRows(rows).map((r) => r.title)).toEqual(['a', 'b']);
 	});
 });

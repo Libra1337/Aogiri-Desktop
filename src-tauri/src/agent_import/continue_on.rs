@@ -163,6 +163,8 @@ pub(super) fn codex_turns(rows: impl Iterator<Item = Value>) -> Vec<(u64, Turn)>
                     .collect::<Vec<_>>()
                     .join("\n");
                 let text = text.trim();
+                // Another conversation's message: what it says (ticket #71).
+                let text = crate::native_import::session_message_body(text).unwrap_or(text);
                 // Codex adds AGENTS.md and its environment as user messages.
                 if text.is_empty() || text.starts_with('<') || text.starts_with("# AGENTS.md") {
                     continue;

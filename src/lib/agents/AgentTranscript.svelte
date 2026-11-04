@@ -11,6 +11,7 @@
 	import MessageList from '$lib/MessageList.svelte';
 	import type { ChatState } from '$lib/chat.svelte';
 	import type { Op } from '$lib/protocol';
+	import { TranscriptPoll, type PollStop } from './transcriptPoll';
 
 	let {
 		chat,
@@ -28,15 +29,39 @@
 		onOp: (op: Op) => void;
 	} = $props();
 
-	const POLL_MS = 2500;
 	const transcript = $derived(chat.subagentTranscripts[agentId]);
+	// Read again while it runs: slower while nothing changes, and not at all
+	// once the engine cannot list it or keeps failing (transcriptPoll.ts).
+	let stopped = $state<PollStop | null>(null);
+	let retries = $state(0);
 	$effect(() => {
 		const id = agentId;
 		const poll = live;
-		untrack(() => onOp({ op: 'subagent_transcript', agent_id: id }));
+		const retried = retries > 0;
+		const read = () => onOp({ op: 'subagent_transcript', agent_id: id });
+		// A retry asks the engine again even for a conversation it said it
+		// cannot list.
+		untrack(() => (retried ? onOp({ op: 'subagent_transcript', agent_id: id, retry: true }) : read()));
+		stopped = null;
 		if (!poll) return;
-		const timer = setInterval(() => onOp({ op: 'subagent_transcript', agent_id: id }), POLL_MS);
-		return () => clearInterval(timer);
+		const pacer = new TranscriptPoll(untrack(() => chat.subagentTranscripts[id]?.seq ?? -1));
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		const schedule = () => {
+			const last = untrack(() => chat.subagentTranscripts[id]);
+			const wait = pacer.next(last && { seq: last.seq ?? 0, error: last.error, size: last.messages.length });
+			if (wait === null) {
+				stopped = pacer.stopped;
+				return;
+			}
+			timer = setTimeout(() => {
+				read();
+				schedule();
+			}, wait);
+		};
+		schedule();
+		return () => {
+			if (timer !== null) clearTimeout(timer);
+		};
 	});
 
 	let taskOpen = $state(false);
@@ -48,7 +73,13 @@
 	const lastRunning = $derived(transcript?.messages.at(-1)?.kind === 'tool' && (transcript.messages.at(-1) as { running?: boolean }).running);
 </script>
 
-{#if transcript?.error}
+{#if stopped}
+	<p class="empty-line stopped" role="status">
+		{stopped === 'unlistable' ? t('dock.agents.unlistable') : t('dock.agents.pollStopped')}
+		<button class="retry" onclick={() => retries++}>{t('dock.agents.retry')}</button>
+	</p>
+	{#if transcript?.error}<p class="empty-line raw">{transcript.error}</p>{/if}
+{:else if transcript?.error}
 	<p class="empty-line">{transcript.error}</p>
 {:else if !transcript}
 	<p class="empty-line"><CircleNotchIcon size={13} class="spin" /> {t('dock.agents.loading')}</p>
@@ -124,5 +155,22 @@
 		margin: 8px 18px;
 		font-size: var(--fs-xs);
 		color: var(--dim2);
+	}
+	.empty-line.raw {
+		margin-top: -4px;
+		font-family: var(--font-mono);
+		overflow-wrap: anywhere;
+	}
+	.retry {
+		padding: 1px 8px;
+		border: 1px solid var(--hairline);
+		border-radius: 6px;
+		background: none;
+		color: var(--text);
+		font-size: var(--fs-xs);
+		cursor: pointer;
+	}
+	.retry:hover {
+		background: var(--surface2);
 	}
 </style>

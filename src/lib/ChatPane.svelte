@@ -418,7 +418,7 @@
 
 	// An error notice's fix button.
 	function fixError(action: ErrorAction, info: ErrorInfo) {
-		if (action === 'restart') store.restartSession(session.id, true);
+		if (action === 'restart' || action === 'restartEngine') store.restartSession(session.id, true);
 		else if (action === 'login' || action === 'account') onOpenSettings?.('account');
 		else if (action === 'purchase' || action === 'renew' || action === 'topUp') onOpenSettings?.('purchase');
 		else if (action === 'useBalance') void payWithBalance(info);
