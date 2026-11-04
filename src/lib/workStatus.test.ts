@@ -82,3 +82,81 @@ describe('workElapsed', () => {
 		expect(workElapsed(-5)).toBe('0s');
 	});
 });
+
+// Owner report: 「一直在连接模型和正在思考来回切换，实际上一直在思考」. The line is
+// workStep(chat.phase, chat.call, chat.messages); it read the engine state and
+// the tail message, which flip while the model thinks: a status note pushed
+// after the reasoning, or the watch snapshot (reconnect, another window)
+// restating the running turn as transcript + connecting.
+describe('the work line once the request is answered (connecting/thinking flip)', () => {
+	const line = (c: ChatState) => workStep(c.phase, c.call, c.messages)?.verb ?? null;
+	const turn = () => {
+		const c = new ChatState();
+		c.handle({ type: 'user_message', content: 'q' } as never);
+		c.handle({ type: 'assistant_start' } as never);
+		c.handle({ type: 'status', message: 'streaming' } as never);
+		c.handle({ type: 'connecting' } as never);
+		return c;
+	};
+
+	it('says connecting only until the gateway answers', () => {
+		const c = turn();
+		expect(line(c)).toBe('connecting');
+		c.handle({ type: 'thinking_start' } as never);
+		expect(line(c)).toBe('thinking');
+	});
+
+	it('stays on thinking when a note lands below the reasoning', () => {
+		const c = turn();
+		c.handle({ type: 'thinking_start' } as never);
+		c.handle({ type: 'reasoning_delta', delta: 'Let me look' } as never);
+		expect(line(c)).toBe('thinking');
+		// An engine note (info, a background task, a model fallback) becomes the tail.
+		c.handle({ type: 'info', message: 'mcp server ready' } as never);
+		c.handle({ type: 'context_usage', tokens: 1200 } as never);
+		expect(line(c)).toBe('thinking');
+		c.handle({ type: 'reasoning_delta', delta: ' at the file' } as never);
+		expect(line(c)).toBe('thinking');
+		c.handle({ type: 'info', message: 'another note' } as never);
+		expect(line(c)).toBe('thinking');
+	});
+
+	it('stays on thinking when the watch snapshot restates the running turn', () => {
+		const c = turn();
+		c.handle({ type: 'thinking_start' } as never);
+		c.handle({ type: 'reasoning_delta', delta: 'hmm' } as never);
+		// A reconnect: startup state, the transcript so far (no live reasoning), then connecting.
+		for (let i = 0; i < 3; i++) {
+			c.handle({ type: 'model_status', model: 'm', state: 'streaming' } as never);
+			c.handle({ type: 'transcript', items: [{ role: 'user', content: 'q' }] } as never);
+			c.handle({ type: 'connecting' } as never);
+			expect(line(c)).toBe('thinking');
+			c.handle({ type: 'reasoning_delta', delta: '…' } as never);
+			expect(line(c)).toBe('thinking');
+		}
+	});
+
+	it('goes back to connecting only for a new request or a retry, and shows the retry', () => {
+		const c = turn();
+		c.handle({ type: 'thinking_start' } as never);
+		c.handle({ type: 'reasoning_delta', delta: 'plan' } as never);
+		c.handle({ type: 'tool_start', call_id: 't1', name: 'read' } as never);
+		c.handle({ type: 'tool_output', call_id: 't1', name: 'read', output: 'x' } as never);
+		// The next model request of the turn.
+		c.handle({ type: 'connecting' } as never);
+		expect(line(c)).toBe('connecting');
+		c.handle({ type: 'thinking_start' } as never);
+		expect(line(c)).toBe('thinking');
+		// The request fails and is sent again: the retry notice shows, the
+		// line says connecting for the new attempt, then thinking once answered.
+		c.handle({ type: 'retrying', attempt: 1, max_attempts: 3, reason: 'HTTP 502', delay_ms: 1000 } as never);
+		expect(c.retry).toMatchObject({ attempt: 1, max: 3 });
+		expect(line(c)).toBe('connecting');
+		c.handle({ type: 'thinking_start' } as never);
+		expect(c.retry).toBeNull();
+		expect(line(c)).toBe('thinking');
+		c.handle({ type: 'status', message: 'ready' } as never);
+		expect(line(c)).toBeNull();
+		expect(c.requestAnswered).toBe(false);
+	});
+});

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildEntries, fuzzyScore, fuzzyPositions, mentionMatches } from './mention';
+import { buildEntries, fuzzyScore, fuzzyPositions, mentionMatches, mentionRoot, MentionFiles } from './mention';
 
 const FILES = [
 	'src/lib/Composer.svelte',
@@ -87,5 +87,65 @@ describe('mentionMatches', () => {
 
 	it('is case-insensitive', () => {
 		expect(mentionMatches(entries, 'COMPOSER')[0].path).toBe('src/lib/Composer.svelte');
+	});
+});
+
+// Ticket #75: a new conversation in a project (a draft: no engine, so no cwd
+// yet) showed an empty @ menu; Windows lists paths with backslashes.
+describe('mentionRoot', () => {
+	it('uses the project folder before the engine reports its directory', () => {
+		expect(mentionRoot('', { path: 'C:\\Users\\me\\proj' })).toBe('C:\\Users\\me\\proj');
+	});
+	it("prefers the engine's directory once it is known", () => {
+		expect(mentionRoot('/repo/.lynshen-worktrees/repo/task', { path: '/repo' })).toBe('/repo/.lynshen-worktrees/repo/task');
+	});
+	it('lists nothing for a conversation whose folder is not made yet', () => {
+		expect(mentionRoot('', { path: '/Users/me/Documents/LynShen', newFolder: true })).toBe('');
+		expect(mentionRoot('', undefined)).toBe('');
+	});
+});
+
+describe('MentionFiles', () => {
+	const flush = () => new Promise((r) => setTimeout(r, 0));
+
+	it('loads the project of a draft conversation the first time @ is typed', async () => {
+		const asked: string[] = [];
+		let shown: string[] = ['stale'];
+		const files = new MentionFiles(
+			async (root) => (asked.push(root), ['README.md', 'src\\lib\\a.ts']),
+			(f) => (shown = f)
+		);
+		files.open(mentionRoot('', { path: 'C:\\proj' }));
+		await flush();
+		expect(asked).toEqual(['C:\\proj']);
+		// Backslashes become '/', so folders are derived and drill-down works.
+		expect(shown).toEqual(['README.md', 'src/lib/a.ts']);
+		expect(mentionMatches(buildEntries(shown), '').map((e) => e.path)).toEqual(['src', 'README.md']);
+		expect(mentionMatches(buildEntries(shown), 'src/lib/').map((e) => e.path)).toEqual(['src/lib/a.ts']);
+		// The same folder again: no second walk.
+		files.open('C:\\proj');
+		expect(asked).toHaveLength(1);
+	});
+
+	it('reloads when the folder changes and drops a late answer for the old one', async () => {
+		const pending: Record<string, (f: string[]) => void> = {};
+		let shown: string[] = [];
+		const files = new MentionFiles(
+			(root) => new Promise((resolve) => (pending[root] = resolve)),
+			(f) => (shown = f)
+		);
+		files.open('/a');
+		files.open('/b');
+		pending['/b']!(['b.ts']);
+		pending['/a']!(['a.ts']);
+		await flush();
+		expect(shown).toEqual(['b.ts']);
+	});
+
+	it("never walks the app's own directory for an unknown folder", () => {
+		const asked: string[] = [];
+		const files = new MentionFiles(async (root) => (asked.push(root), []), () => {});
+		files.open('');
+		expect(asked).toEqual([]);
 	});
 });

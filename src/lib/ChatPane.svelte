@@ -148,6 +148,7 @@
 	import RequirementStart, { beginRequirement } from '$lib/requirements/RequirementStart.svelte';
 	import { telemetry } from '$lib/telemetry.svelte';
 	import { teamSwitch } from '$lib/agents/teamSwitch.svelte';
+	import { mentionRoot } from '$lib/mention';
 
 	// One full conversation (transcript + composer + approvals + pickers) for a
 	// single session, extracted from the page so several chats can tile side by
@@ -2250,6 +2251,7 @@
 				: undefined}
 			{gitBranch}
 			gitCwd={project?.path || chat.cwd}
+			filesRoot={mentionRoot(chat.cwd, project)}
 			repoName={project?.name ?? ''}
 			onBranchChanged={refreshGitBranch}
 			onBackend={(b, acpAgent) => store.switchBackend(session.id, b, acpAgent)}
