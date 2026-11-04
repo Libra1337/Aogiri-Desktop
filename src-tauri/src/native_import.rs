@@ -579,12 +579,22 @@ pub(crate) fn codex_first_prompt(path: &Path) -> String {
             }
             None => continue,
         };
-        let t = text.trim();
+        // Another conversation's message (a helper Aogiri started): titled
+        // by what it says, not by its `<session_message …>` wrapper (ticket #71).
+        let t = session_message_body(text.trim()).unwrap_or(text.trim());
         if !t.is_empty() && !t.starts_with('<') && !t.starts_with("# AGENTS.md") {
             return truncate_chars(t.lines().next().unwrap_or(""), MAX_TITLE_CHARS);
         }
     }
     String::new()
+}
+
+/// The message inside the daemon's `<session_message from=… title=… hop=…>`
+/// wrapper (LynShen-CLI session_messages.rs `wrap`); None for other text.
+pub(crate) fn session_message_body(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix("<session_message ")?;
+    let body = &rest[rest.find('>')? + 1..];
+    Some(body.split("</session_message>").next().unwrap_or(body).trim())
 }
 
 /// The provider Codex uses by default: `model_provider` of the selected
@@ -883,6 +893,26 @@ mod tests {
 
     fn read_lines(path: &Path) -> Vec<Value> {
         fs::read_to_string(path).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+    }
+
+    #[test]
+    fn a_helper_thread_is_titled_by_the_message_not_its_wrapper() {
+        // Ticket #71: Codex threads Aogiri started for another conversation.
+        let wrapped = "<session_message from=\"s6ae7455\" title=\"主会话\" hop=\"1\">\n生成本地安装包\n</session_message>\n(From the AI of another conversation)";
+        assert_eq!(session_message_body(wrapped), Some("生成本地安装包"));
+        assert_eq!(session_message_body("plain"), None);
+        let dir = std::env::temp_dir().join(format!("lynshen-t71-{}", std::process::id()));
+        let path = dir.join("rollout-2026-11-02T10-00-00-t71.jsonl");
+        write_lines(
+            &path,
+            &[
+                json!({"type": "session_meta", "payload": {"id": "t71", "cwd": "/w"}}),
+                json!({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<environment_context>x</environment_context>"}]}}),
+                json!({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": wrapped}]}}),
+            ],
+        );
+        assert_eq!(codex_first_prompt(&path), "生成本地安装包");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

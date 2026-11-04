@@ -833,8 +833,16 @@ export interface RetryState {
 export const UNTITLED = 'New session';
 
 /** A session title as the UI shows it: the stored placeholder (or none) reads
- *  in the interface language. */
-export const shownTitle = (title: string) => (!title || title === UNTITLED ? t('shell.newChat') : title);
+ *  in the interface language, and a title that is another conversation's
+ *  raw `<session_message …>` wrapper (an engine titled a helper by its
+ *  first message; ticket #71) reads as the message it carries. */
+export const shownTitle = (title: string) => {
+	if (!title || title === UNTITLED) return t('shell.newChat');
+	const wrapped = /^\s*<session_message\b[^>]*>\s*([^\n<]*)/.exec(title);
+	if (wrapped) return wrapped[1].trim() || t('shell.newChat');
+	if (/^\s*<session_message\b/.test(title)) return t('shell.newChat');
+	return title;
+};
 
 /** The context by category (`context_breakdown`): `kind` is `used`,
  *  `deferred` (tools loaded only when called), `buffer` (kept free for
