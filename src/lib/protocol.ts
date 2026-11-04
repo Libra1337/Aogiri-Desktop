@@ -103,7 +103,7 @@ export type Op =
 	| { op: 'permission_rules' }
 	// claude: the agent trace (Workflows, Task subagents) and one subagent's conversation.
 	| { op: 'agent_runs' }
-	| { op: 'subagent_transcript'; agent_id: string }
+	| { op: 'subagent_transcript'; agent_id: string; retry?: boolean }
 	// lynshen agent team: merge a subagent's worktree into the project, or drop
 	// it; answered with `merge_result`.
 	| { op: 'merge_agent'; target: string; action: 'apply' | 'discard' }

@@ -135,3 +135,12 @@ describe('describeError', () => {
 		});
 	});
 });
+
+describe('another Codex process writing the conversation (ticket #72)', () => {
+	it('is an engine error with 重启引擎, not a request error', () => {
+		const raw =
+			'Codex could not open this conversation: another Codex process is writing it (the Codex app, a terminal, or an engine that did not exit). Close it there, then restart the engine. Codex said: thread-store conflict: thread 01a1 already has an active writer';
+		expect(describeError(raw, 'codex')).toMatchObject({ kind: 'engineConflict', actions: ['restartEngine'], subject: 'Codex' });
+		expect(describeError('thread 01a1 already has an active writer', 'codex')?.kind).toBe('engineConflict');
+	});
+});

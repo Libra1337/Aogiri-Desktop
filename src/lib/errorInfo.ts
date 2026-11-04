@@ -11,6 +11,8 @@ import { planStopOf, type PlanStop } from './planStop';
  *  the window recovers (planStop.ts). */
 export type ErrorAction =
 	| 'restart'
+	/** The same restart, named for the engine (重启引擎). */
+	| 'restartEngine'
 	| 'login'
 	| 'account'
 	| 'compact'
@@ -94,6 +96,12 @@ export function describeError(raw: string, backend = '', provider = ''): ErrorIn
 	});
 	const tool = backend === 'claude' ? 'Claude Code' : backend === 'codex' ? 'Codex' : '';
 
+	// Another Codex process writes this conversation (the Codex app, a
+	// terminal, an engine that did not exit): the engine cannot open or
+	// continue it until that process lets go; restarting the engine opens it
+	// again (ticket #72). Not a network or request error.
+	if (/already has an active writer|already has a live local writer|thread-store conflict/i.test(text))
+		return info('engineConflict', 'restartEngine', tool || undefined);
 	// History written by another account: its signed / encrypted parts do not
 	// verify here (before the generic 400 below).
 	if (/invalid[ `'"]*signature|signature.*thinking|encrypted content.*(verif|decrypt)|could not be verified/i.test(text))

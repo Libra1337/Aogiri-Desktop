@@ -37,9 +37,11 @@
 	$effect(() => {
 		const id = agentId;
 		const poll = live;
-		void retries;
+		const retried = retries > 0;
 		const read = () => onOp({ op: 'subagent_transcript', agent_id: id });
-		untrack(read);
+		// A retry asks the engine again even for a conversation it said it
+		// cannot list.
+		untrack(() => (retried ? onOp({ op: 'subagent_transcript', agent_id: id, retry: true }) : read()));
 		stopped = null;
 		if (!poll) return;
 		const pacer = new TranscriptPoll();
