@@ -31,8 +31,14 @@ export class TranscriptPoll {
 	step = 0;
 	errors = 0;
 	stopped: PollStop | null = null;
-	#seq = -1;
+	#seq: number;
 	#size = -1;
+
+	/** `seen`: the answer already shown when polling starts (a retry after
+	 *  an error), which is not taken for the answer to the next read. */
+	constructor(seen = -1) {
+		this.#seq = seen;
+	}
 
 	/** Takes the latest answer; returns the wait before the next read, or
 	 *  null when reading stops (`stopped` says why). */
@@ -40,9 +46,10 @@ export class TranscriptPoll {
 		if (this.stopped) return null;
 		const fresh = answer !== undefined && answer.seq !== this.#seq;
 		if (!fresh) {
-			// No answer yet: ask again later, never faster.
+			// No answer yet: ask again after this step, then slower.
+			const wait = POLL_STEPS_MS[this.step];
 			this.#slower();
-			return POLL_STEPS_MS[this.step];
+			return wait;
 		}
 		this.#seq = answer.seq;
 		if (answer.error) {

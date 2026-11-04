@@ -12,12 +12,21 @@ describe('subagent transcript polling (ticket #72)', () => {
 		expect(p.next({ seq: 6, error: '', size: 4 })).toBe(2500);
 	});
 
-	it('a read with no answer yet never speeds the poll up', () => {
+	it('a read with no answer yet slows the poll down', () => {
 		const p = new TranscriptPoll();
+		expect(p.next(undefined)).toBe(2500);
 		expect(p.next(undefined)).toBe(5000);
-		expect(p.next(undefined)).toBe(10_000);
+		expect(p.next({ seq: 1, error: '', size: 1 })).toBe(2500);
+		// The same answer again (the read's answer not in yet): the step, then slower.
 		expect(p.next({ seq: 1, error: '', size: 1 })).toBe(2500);
 		expect(p.next({ seq: 1, error: '', size: 1 })).toBe(5000);
+	});
+
+	it('a retry does not take the error already shown for its answer', () => {
+		const p = new TranscriptPoll(7);
+		expect(p.next({ seq: 7, error: 'list_turns is not supported yet', size: 0 })).toBe(2500);
+		expect(p.stopped).toBeNull();
+		expect(p.next({ seq: 8, error: '', size: 2 })).toBe(2500);
 	});
 
 	it("stops at once on Codex's -32601 for a thread it cannot list", () => {

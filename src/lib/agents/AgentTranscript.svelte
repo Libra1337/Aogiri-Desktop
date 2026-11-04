@@ -44,7 +44,7 @@
 		untrack(() => (retried ? onOp({ op: 'subagent_transcript', agent_id: id, retry: true }) : read()));
 		stopped = null;
 		if (!poll) return;
-		const pacer = new TranscriptPoll();
+		const pacer = new TranscriptPoll(untrack(() => chat.subagentTranscripts[id]?.seq ?? -1));
 		let timer: ReturnType<typeof setTimeout> | null = null;
 		const schedule = () => {
 			const last = untrack(() => chat.subagentTranscripts[id]);
