@@ -979,10 +979,9 @@ export class ChatState {
 	billingError = $state('');
 	#billingTurns: Record<string, BillingCost> = {};
 	#turnBillingIds: string[] = [];
-	/** How the current turn's last model request travelled (`transport`). */
+	/** How the current turn's last model request travelled (`transport`):
+	 *  the reply footer's duration tooltip names it (turnStats.ts). */
 	#turnTransport: TransportInfo | null = null;
-	/** How the last model request travelled, for the connection details. */
-	transport = $state<TransportInfo | null>(null);
 	pendingMessages = $state<string[]>([]);
 	/** Claude Code: the first `pendingFixed` queued messages are with the CLI
 	 *  already (steered, or taken as the next turn started): they can no
@@ -2208,7 +2207,7 @@ export class ChatState {
 			case 'transport': {
 				// lynshen: how the request that just connected travels.
 				const info = parseTransportEvent(ev);
-				if (info) this.transport = this.#turnTransport = info;
+				if (info) this.#turnTransport = info;
 				break;
 			}
 			case 'thinking_start':
