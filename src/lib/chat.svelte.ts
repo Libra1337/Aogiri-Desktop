@@ -2,6 +2,7 @@ import type { AgentEvent, SessionOption, SessionToolProvider } from './protocol'
 import { loadProfile, profileKey, rememberProfile, type BackendProfile } from '$lib/backendProfile';
 import { isBackendId, type BackendCaps, type BackendId } from './backends/types';
 import { caps } from './backends';
+import { parseTransportEvent, type TransportInfo } from '$lib/settings/transport';
 import {
 	EDIT_TOOLS,
 	MODE_LABEL_KEYS,
@@ -75,6 +76,9 @@ export interface TurnStats {
 	model: string;
 	/** Reply segments (assistant messages split by tool calls) in the turn. */
 	segments: number;
+	/** How the turn's model requests travelled (lynshen, Responses models):
+	 *  the last request's transport, and why HTTPS if `auto` fell back. */
+	transport?: TransportInfo;
 }
 
 /** A plan usage limit the engine reported (Claude Code, Codex subscriptions):
@@ -975,6 +979,10 @@ export class ChatState {
 	billingError = $state('');
 	#billingTurns: Record<string, BillingCost> = {};
 	#turnBillingIds: string[] = [];
+	/** How the current turn's last model request travelled (`transport`). */
+	#turnTransport: TransportInfo | null = null;
+	/** How the last model request travelled, for the connection details. */
+	transport = $state<TransportInfo | null>(null);
 	pendingMessages = $state<string[]>([]);
 	/** Claude Code: the first `pendingFixed` queued messages are with the CLI
 	 *  already (steered, or taken as the next turn started): they can no
@@ -1479,7 +1487,8 @@ export class ChatState {
 			billingTurns: [...this.#turnBillingIds],
 			billing: this.#turnBilling(this.#turnBillingIds),
 			model: this.model,
-			segments: this.#turnSegments
+			segments: this.#turnSegments,
+			...(this.#turnTransport ? { transport: this.#turnTransport } : {})
 		};
 		this.#turnStart = null;
 		this.#firstOutput = null;
@@ -1596,6 +1605,7 @@ export class ChatState {
 		this.#turnIn = this.#turnOut = this.#turnTools = this.#turnSegments = 0;
 		this.#turnCostStart = this.cost;
 		this.#turnBillingIds = [];
+		this.#turnTransport = null;
 		this.#lastTurn = null;
 	}
 
@@ -2193,6 +2203,12 @@ export class ChatState {
 				this.#collapseReasoning();
 				this.#closeSegment(Date.now());
 				this.call = null;
+				break;
+			}
+			case 'transport': {
+				// lynshen: how the request that just connected travels.
+				const info = parseTransportEvent(ev);
+				if (info) this.transport = this.#turnTransport = info;
 				break;
 			}
 			case 'thinking_start':

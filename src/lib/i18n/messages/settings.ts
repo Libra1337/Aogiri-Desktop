@@ -423,7 +423,10 @@ const settings = {
 			proxyTitle: '代理',
 			proxy: '网络代理',
 			proxyHint: 'HTTP 代理，如 http://127.0.0.1:7890。网页抓取、本地搜索和智能体运行的命令（git、npm、curl 等）走这个代理；模型请求不走。留空则不用代理。需要 LynShen CLI 0.7.8 或更新',
-			proxyInvalid: '格式不对：要写 http://主机:端口 或 主机:端口（暂不支持 socks5）'
+			proxyInvalid: '格式不对：要写 http://主机:端口 或 主机:端口（暂不支持 socks5）',
+			transport: '连接方式',
+			transportHint: '只影响 OpenAI Responses / Codex 类模型。自动：优先 WebSocket，连不上时自动改用 HTTPS。',
+			transportMode: { auto: '自动（推荐）', http: 'HTTPS', websocket: 'WebSocket' }
 		},
 		page: {
 			back: '返回',
@@ -1864,7 +1867,10 @@ const settings = {
 			proxyTitle: 'Proxy',
 			proxy: 'Network proxy',
 			proxyHint: 'An HTTP proxy, e.g. http://127.0.0.1:7890. Web fetches, the local search and the commands the agent runs (git, npm, curl…) go through it; model requests do not. Empty: no proxy. Needs LynShen CLI 0.7.8 or later',
-			proxyInvalid: 'Not a proxy address: write http://host:port or host:port (socks5 is not supported yet)'
+			proxyInvalid: 'Not a proxy address: write http://host:port or host:port (socks5 is not supported yet)',
+			transport: 'Connection',
+			transportHint: 'Only affects OpenAI Responses / Codex models. Auto: WebSocket first, HTTPS when WebSocket cannot connect.',
+			transportMode: { auto: 'Auto (recommended)', http: 'HTTPS', websocket: 'WebSocket' }
 		},
 		page: {
 			back: 'Back',

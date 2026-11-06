@@ -17,4 +17,17 @@ describe('turn stats', () => {
 		expect(turnParts(turn, ['tps'])).toEqual([]);
 		expect(turnParts({ ...turn, genMs: TPS_MIN_MS }, ['tps'])).toHaveLength(1);
 	});
+
+	it('names the connection a turn used under its duration, and why HTTPS', () => {
+		setLocale('zh');
+		const turn = { elapsed: 9000, model: 'gpt-6.1-sol' } as TurnStats;
+		expect(turnParts(turn, ['elapsed'])[0].title).toBe('本轮总耗时 · gpt-6.1-sol');
+		const ws = { ...turn, transport: { transport: 'websocket', reused: true, incremental: true, fallback: null } } as TurnStats;
+		expect(turnParts(ws, ['elapsed'])[0].title).toBe('本轮总耗时 · gpt-6.1-sol\n连接方式：WebSocket（复用连接）');
+		const fell = { ...turn, transport: { transport: 'https', reused: false, incremental: false, fallback: 'WebSocket upgrade refused: HTTP 404' } } as TurnStats;
+		expect(turnParts(fell, ['elapsed'])[0].title).toContain('连接方式：HTTPS（WebSocket 未用：WebSocket upgrade refused: HTTP 404）');
+		setLocale('en');
+		expect(turnParts(ws, ['elapsed'])[0].title).toContain('Connection: WebSocket (kept connection)');
+		setLocale('zh');
+	});
 });

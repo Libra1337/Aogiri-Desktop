@@ -1,5 +1,6 @@
 import { t } from '$lib/i18n';
 import type { TurnStats } from '$lib/chat.svelte';
+import type { TransportInfo } from '$lib/settings/transport';
 import type { TurnStatKey } from '$lib/prefs.svelte';
 import { costText } from './sessionCost';
 import { fmtTokens } from '$lib/usageStats';
@@ -10,6 +11,14 @@ export const fmtDur = (ms: number) =>
 		: ms < 60000
 			? `${(ms / 1000).toFixed(1)}s`
 			: `${Math.floor(ms / 60000)}m${Math.round((ms % 60000) / 1000)}s`;
+
+/** How a turn's model requests travelled, in a line: "WebSocket（复用连接）",
+ *  or "HTTPS（WebSocket 未用：…）" after a fallback. */
+export function transportText(info: TransportInfo): string {
+	if (info.transport === 'websocket')
+		return t(info.reused ? 'chat.stat.transportWsReused' : 'chat.stat.transportWs');
+	return info.fallback ? t('chat.stat.transportFallback', { reason: info.fallback }) : t('chat.stat.transportHttps');
+}
 
 /** One figure of a turn. `change`: the files the turn changed, which the
  *  reply footer shows as a change pill. */
@@ -23,7 +32,8 @@ export const TPS_MIN_MS = 1000;
 export function turnParts(s: TurnStats, keys: readonly TurnStatKey[]): TurnPart[] {
 	const out: TurnPart[] = [];
 	// The duration's tooltip names the model when the model is not shown.
-	const elapsedTitle = s.model && !keys.includes('model') ? t('chat.stat.elapsedBy', { model: s.model }) : t('chat.stat.elapsed');
+	const base = s.model && !keys.includes('model') ? t('chat.stat.elapsedBy', { model: s.model }) : t('chat.stat.elapsed');
+	const elapsedTitle = s.transport ? `${base}\n${transportText(s.transport)}` : base;
 	for (const k of keys) {
 		if (k === 'elapsed') out.push({ text: fmtDur(s.elapsed), title: elapsedTitle, mono: true });
 		else if (k === 'ttft' && s.ttft !== undefined)

@@ -77,6 +77,7 @@
 	import { prefs, TURN_STAT_KEYS, BACKGROUND_STRENGTHS, vibrancySupported } from '$lib/prefs.svelte';
 	import { CHAT_WIDTH_MODES, isChatWidthMode } from '$lib/chatWidth';
 	import { proxySetting, proxyValid } from '$lib/settings/networkProxy';
+	import { TRANSPORT_MODES, transportMode } from '$lib/settings/transport';
 	import { turnParts } from '$lib/turnStats';
 	import { themeState, setTheme, type ThemePref } from '$lib/theme.svelte';
 	import type { ChatState, TurnStats } from '$lib/chat.svelte';
@@ -498,6 +499,9 @@
 			// The proxy for web fetches and commands (ticket #50; LynShen CLI
 			// 0.7.8 reads it): what was typed, once it reads as http://host:port.
 			network_proxy: proxySetting(cfg.network_proxy ?? ''),
+			// How Responses / Codex requests travel (LynShen CLI 0.8.6+);
+			// absent reads as auto.
+			transport: transportMode(cfg.transport),
 			include_project_instructions: !!cfg.include_project_instructions,
 			// The agent picks its subagents' models itself now (no list to keep).
 			subagent_models: [],
@@ -1502,6 +1506,15 @@
 						{/if}
 					</SettingsSection>
 					<SettingsSection title={t('settings.page.requests')}>
+						<SettingsRow id="model-transport" title={t('settings.network.transport')} description={t('settings.network.transportHint')}>
+							<div class="w-md">
+								<Select
+									value={transportMode(cfg.transport)}
+									options={TRANSPORT_MODES.map((mode) => ({ value: mode, label: t(`settings.network.transportMode.${mode}`) }))}
+									onChange={(v) => (cfg.transport = transportMode(v))}
+								/>
+							</div>
+						</SettingsRow>
 						<SettingsRow id="retry-attempts" title={t('settings.behavior.retryAttempts')} description={t('settings.behavior.retryAttemptsHint', { max: RETRY_ATTEMPTS_MAX })}>
 							<div class="w-num"><TextField bind:value={cfg.retry_attempts} type="number" align="right" /></div>
 						</SettingsRow>

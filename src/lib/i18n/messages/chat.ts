@@ -231,6 +231,10 @@ const chat = {
 		stat: {
 			elapsed: '本轮总耗时',
 			elapsedBy: '本轮总耗时 · {model}',
+			transportWs: '连接方式：WebSocket',
+			transportWsReused: '连接方式：WebSocket（复用连接）',
+			transportHttps: '连接方式：HTTPS',
+			transportFallback: '连接方式：HTTPS（WebSocket 未用：{reason}）',
 			ttft: '首个输出的等待时间',
 			ttftShort: '首字 {t}',
 			tokens: '输入 / 输出 Token',
@@ -938,6 +942,10 @@ const chat = {
 		stat: {
 			elapsed: 'Total time of this turn',
 			elapsedBy: 'Total time of this turn · {model}',
+			transportWs: 'Connection: WebSocket',
+			transportWsReused: 'Connection: WebSocket (kept connection)',
+			transportHttps: 'Connection: HTTPS',
+			transportFallback: 'Connection: HTTPS (WebSocket not used: {reason})',
 			ttft: 'Wait for the first output',
 			ttftShort: 'first token {t}',
 			tokens: 'Input / output tokens',
