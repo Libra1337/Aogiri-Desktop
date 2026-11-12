@@ -2766,6 +2766,50 @@ try {
   await expect(phone.locator('.composer textarea')).toHaveValue('对比这三份文件，列出口径不一致的地方');
   await expect(phone.locator('.composer .att-name')).toHaveText(['2026 Q3 经营分析.pdf', '销售明细.xlsx', 'metrics.md']);
   await phone.close();
+  // A plan's usage limit on the remote page (a PWA on Windows next to the
+  // desktop on the computer): it names the engine the session runs on, not
+  // this page's default (LynShen), and sits in no scroll box, where a
+  // fraction of a pixel of rounding drew both of Windows' scrollbars around
+  // the one-line strip.
+  for (const [query, who] of [['&engine=claude', 'Claude Code'], ['', 'LynShen']]) {
+    const wide = await browser.newPage({viewport: {width: 1280, height: 720}, deviceScaleFactor: 1.25});
+    wide.on('pageerror', e => errors.push(e.message));
+    await wide.goto(base + '?remote' + query);
+    await expect(wide.locator('.row.user')).toHaveCount(3, {timeout: 30000});
+    await wide.evaluate(() => window.__remoteFrame({ type: 'rate_limit', level: 'warning', message: '', resets_at: Date.now() + 31 * 3_600_000, window: 'seven_day', used: 95, overage: false }));
+    const strip = wide.locator('.limit');
+    await expect(strip.locator('.title')).toHaveText(`${who} 本周额度已用 95%`);
+    await expect(strip.getByRole('button', {name: '忽略'})).toBeVisible();
+    assert.deepEqual(await strip.evaluate((el) => {
+      const boxes = [];
+      for (let node = el.parentElement; node && !node.classList.contains('bottom'); node = node.parentElement) {
+        const style = getComputedStyle(node);
+        boxes.push([style.overflowX, style.overflowY]);
+      }
+      return boxes;
+    }), [['visible', 'visible']]);
+    // The strip rises in: measure where it comes to rest.
+    await wide.locator('.limit-wrap').evaluate((el) => Promise.all(el.getAnimations({subtree: true}).map((a) => a.finished)));
+    // Compact: no fill of its own over the composer, as wide as the composer
+    // with its text where the composer's text starts, 8px above the box, and
+    // a 64px meter on the title's line.
+    const geo = await wide.evaluate(() => {
+      const box = (s) => document.querySelector(s).getBoundingClientRect();
+      const strip = box('.limit'), composer = box('.composer'), title = box('.limit .title'), meter = box('.limit .meter');
+      const pad = parseFloat(getComputedStyle(document.querySelector('.composer')).paddingLeft);
+      return {
+        fill: getComputedStyle(document.querySelector('.limit')).backgroundColor,
+        edges: [Math.round(strip.left - composer.left), Math.round(strip.right - composer.right)],
+        textStart: Math.round(title.left - (composer.left + pad)),
+        gap: Math.round(composer.top - strip.bottom),
+        meter: [Math.round(meter.width), meter.top >= title.top && meter.bottom <= title.bottom, meter.left > title.right]
+      };
+    });
+    assert.deepEqual(geo, {fill: 'rgba(0, 0, 0, 0)', edges: [0, 0], textStart: 0, gap: 8, meter: [64, true, true]});
+    await strip.getByRole('button', {name: '忽略'}).click();
+    await expect(strip).toHaveCount(0);
+    await wide.close();
+  }
   // The LynShen sandbox: a new session in 自动, the note when commands are
   // not isolated, a 越界记录 line, the card's answers from the engine's
   // scopes (a must-ask request gets once and deny only), deny with what to

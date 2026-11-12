@@ -7,6 +7,7 @@
 	//   ?remote                 a conversation with messages sent with files
 	//   &cards                  and a turn at work with a plan and subagents
 	//                           (their chips under the header, a sheet a tap away)
+	//   &engine=claude          the session runs on another engine (the daemon's `engine`)
 	import { onMount } from 'svelte';
 	import RemoteSession from '../../src/lib/RemoteSession.svelte';
 	import Toaster from '../../src/lib/ui/Toaster.svelte';
@@ -79,7 +80,7 @@
 
 <Toaster />
 <div class="remote">
-	<RemoteSession title="对比口径" chat {register} />
+	<RemoteSession title="对比口径" chat {register} engine={mode.get('engine') ?? undefined} />
 </div>
 
 <style>

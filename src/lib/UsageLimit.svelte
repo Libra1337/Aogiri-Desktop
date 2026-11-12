@@ -17,6 +17,7 @@
 		limit,
 		backend,
 		resumeArmed,
+		compact = false,
 		onResume,
 		onCancelResume,
 		onDismiss
@@ -24,6 +25,9 @@
 		limit: UsageLimit;
 		backend: string;
 		resumeArmed: boolean;
+		/** The remote page: one line on the canvas with no fill of its own,
+		 *  the meter short and after the title (design.md, the usage limit). */
+		compact?: boolean;
 		/** Absent (the phone page): the notice offers no wait for the reset. */
 		onResume?: () => void;
 		onCancelResume?: () => void;
@@ -65,11 +69,20 @@
 	});
 	const fill = $derived(limit.level === 'limited' ? 100 : Math.min(100, Math.max(0, limit.used ?? 0)));
 	const canResume = $derived(!!onResume && limit.level === 'limited' && !!limit.resetsAt && limit.resetsAt > now);
+	const showMeter = $derived(limit.used !== null || limit.level === 'limited');
 </script>
 
-<div class="limit" class:hit={limit.level === 'limited'} role="status">
+{#snippet meter()}
+	<div class="meter" role="meter" aria-label={which} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fill)}><span style:width="{fill}%"></span></div>
+{/snippet}
+
+<div class="limit" class:hit={limit.level === 'limited'} class:compact role="status">
 	<div class="text">
-		<span class="title">{title}</span>
+		{#if compact}
+			<span class="head"><span class="title">{title}</span>{#if showMeter}{@render meter()}{/if}</span>
+		{:else}
+			<span class="title">{title}</span>
+		{/if}
 		{#if reset}<span class="dim">{reset}</span>{:else if limit.message}<span class="dim">{limit.message}</span>{/if}
 		{#if limit.overage}<span class="dim">{t('shell.limit.overage')}</span>{/if}
 		{#if resumeArmed}<span class="dim">{t('shell.limit.resumeArmed')}</span>{/if}
@@ -82,9 +95,7 @@
 		{/if}
 	{/if}
 	<IconButton size="sm" label={t('shell.rlDismiss')} title={t('shell.rlDismiss')} onclick={onDismiss}><XIcon size={14} /></IconButton>
-	{#if limit.used !== null || limit.level === 'limited'}
-		<div class="meter" role="meter" aria-label={which} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fill)}><span style:width="{fill}%"></span></div>
-	{/if}
+	{#if showMeter && !compact}{@render meter()}{/if}
 </div>
 
 <style>
@@ -137,5 +148,25 @@
 	}
 	.hit .meter > span {
 		background: var(--err);
+	}
+	/* Compact (the remote page): no fill or box of its own over the canvas,
+	   so nothing stacks on the composer's box under it; the text starts
+	   where the composer's text does, and a short meter follows the title
+	   on its line. On a narrow screen the reset wraps under the title. */
+	.compact {
+		margin: 0 0 8px;
+		padding: 0 4px 0 16px;
+		border-radius: 0;
+		background: none;
+	}
+	.head {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		white-space: nowrap;
+	}
+	.compact .meter {
+		flex: 0 0 64px;
+		width: 64px;
 	}
 </style>
