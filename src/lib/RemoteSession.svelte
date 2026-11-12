@@ -497,6 +497,10 @@
 	const bcaps = $derived(
 		caps({ backendId: engine ?? view?.engine ?? 'lynshen', acpOpencode: builtinId === 'opencode', engineCaps: chat.engineCaps })
 	);
+	/** The engine the session runs on. This page's chat never learns it
+	 *  (`chat.backendId` stays 'lynshen'), so a Claude Code or Codex usage
+	 *  limit names the engine from here. */
+	const engineId = $derived(engine ?? view?.engine ?? 'lynshen');
 
 	// Its own TUI, run by the computer and shown here in place of the
 	// conversation while it lasts (`chat.terminal`, for every client). This
@@ -1012,7 +1016,10 @@
 				<p class="interm">{t('chat.inTerminal')}</p>
 			{/if}
 			{#if chat.rateLimit}
-				<div class="approval"><UsageLimit limit={chat.rateLimit} backend={chat.backendId} resumeArmed={false} onDismiss={() => (chat.rateLimit = null)} /></div>
+				<!-- Not in .approval: that box scrolls (a long card), and on a
+				     scrollbar that takes room (Windows) a fraction of a pixel of
+				     rounding drew both scrollbars around the one-line strip. -->
+				<div class="limit-wrap"><UsageLimit compact limit={chat.rateLimit} backend={engineId} resumeArmed={false} onDismiss={() => (chat.rateLimit = null)} /></div>
 			{/if}
 			{#if recap && !chat.pendingApproval}
 				<!-- The end of a turn hands control back, as on the desktop: the
@@ -1438,6 +1445,14 @@
 		white-space: nowrap;
 		font-size: var(--fs-2xs);
 		font-variant-numeric: tabular-nums;
+	}
+	/* The usage strip lines up with the composer under it (its box and its
+	   text), not with the cards above. */
+	.limit-wrap {
+		max-width: 920px;
+		margin: 0 auto;
+		padding: 0 12px;
+		animation: rise var(--t-med) var(--ease-out);
 	}
 	.composer-wrap {
 		max-width: 920px;
