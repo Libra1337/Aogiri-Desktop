@@ -116,8 +116,24 @@ describe('gatewayEfforts', () => {
 	});
 
 	it('gives Auto its target\'s efforts and keeps the gateway\'s own when it sends them', () => {
-		expect(gatewayEfforts({ id: 'auto', auto_target: 'kimi-k3' })).toEqual(['low', 'medium', 'high']);
+		expect(gatewayEfforts({ id: 'auto', auto_target: 'kimi-k3' })).toEqual(['low', 'high', 'max']);
 		expect(gatewayEfforts({ id: 'kimi-k3', reasoning_efforts: ['high'] })).toEqual(['high']);
+	});
+
+	it('takes the list the gateway\'s catalog states before every other source', () => {
+		const ladder = ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+		expect(gatewayEfforts({ id: 'gpt-6.1-sol' }, ['low', 'medium', 'high'], ladder)).toEqual(ladder);
+		expect(gatewayEfforts({ id: 'gpt-6.1-sol', reasoning_efforts: ['high'] }, undefined, ladder)).toEqual(ladder);
+		// A catalog that says nothing ([] or only "none") leaves the other sources.
+		expect(gatewayEfforts({ id: 'not-in-catalog' }, ['low', 'high'], [])).toEqual(['low', 'high']);
+		expect(gatewayEfforts({ id: 'not-in-catalog' }, ['low', 'high'], ['none'])).toEqual(['low', 'high']);
+	});
+
+	it('runs a saved effort the new model lacks at its nearest tier', async () => {
+		readConfig.mockResolvedValue({ provider: 'lynshen', model: 'gone', reasoning_effort: 'max', lynshen_models: [] });
+		fetchLynShenModels.mockResolvedValue([{ id: 'private-model', reasoning_efforts: ['low', 'medium', 'high'] }]);
+		expect(await refreshLynShenModels()).toBe(true);
+		expect(writeConfig.mock.calls[0][0]).toMatchObject({ model: 'private-model', reasoning_effort: 'high' });
 	});
 
 	it('keeps a known earlier list, and offers only "none" for a model nobody knows', () => {

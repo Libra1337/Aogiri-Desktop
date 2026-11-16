@@ -69,7 +69,7 @@
 	import { configModelList } from '$lib/configModels';
 	import { confirm } from '$lib/ui/confirm.svelte';
 	import { BACKEND_LABELS, caps } from '$lib/backends';
-	import { defaultEffort } from '$lib/composer/effort';
+	import { nearestEffort } from '$lib/composer/effort';
 	import { dispatch } from '$lib/backends/router';
 	import { browser } from '$lib/browser.svelte';
 	import { prefs } from '$lib/prefs.svelte';
@@ -1350,7 +1350,10 @@
 			if (entry?.reasoning === false) chat.efforts = [];
 			else if (entry?.reasoning_efforts?.length) {
 				chat.efforts = entry.reasoning_efforts;
-				if (!chat.efforts.includes(chat.effort) && chat.effort !== chat.effortDefault) chat.effort = defaultEffort(chat.efforts, chat.effortDefault);
+				// A saved effort the new model lacks runs at its nearest tier
+				// ("max" on a model that stops at "high": "high"), as a live
+				// engine rounds it.
+				if (!chat.efforts.includes(chat.effort) && chat.effort !== chat.effortDefault) chat.effort = nearestEffort(chat.effort, chat.efforts, chat.effortDefault);
 			}
 			if (effort) chat.effort = effort;
 			session.draftPick = { model: name, effort: chat.effort || undefined };

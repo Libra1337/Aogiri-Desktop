@@ -12,6 +12,27 @@ export function defaultEffort(efforts: string[], unset = ''): string {
 	return (['default', 'medium'].find((effort) => efforts.includes(effort)) ?? efforts[0]) || '';
 }
 
+/** Tiers from lowest to highest (agent-core config.rs `EFFORT_ORDER`). */
+const EFFORT_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+
+/** The effort a model offering `efforts` runs a saved or requested
+ *  `effort` at, as the engine rounds it on a switch (agent-core
+ *  `nearest_effort`): the effort itself when offered, else the next higher
+ *  tier, else the model's highest ("max" on a model that stops at "high"
+ *  runs at "high"). Rounding down never lands on "none": a model whose only
+ *  tier is "none" keeps thinking at its start effort. "default", a word
+ *  that is no tier, or nothing to round to: the start effort
+ *  (`defaultEffort`). */
+export function nearestEffort(effort: string, efforts: string[], unset = ''): string {
+	if (!effort || efforts.includes(effort)) return effort || defaultEffort(efforts, unset);
+	const rank = (e: string) => EFFORT_ORDER.indexOf(e);
+	const wanted = rank(effort);
+	const ranked = efforts.filter((e) => rank(e) >= 0).sort((a, b) => rank(a) - rank(b));
+	const up = ranked.find((e) => rank(e) > wanted);
+	const top = ranked.filter((e) => e !== 'none').at(-1);
+	return (wanted >= 0 && (up ?? top)) || defaultEffort(efforts, unset);
+}
+
 /** Display label: "high" → "High", "xhigh" → "XHigh"; "default" (send no
  *  thinking setting: LynShen CLI 0.7.1, or an ACP agent's own level) and an
  *  ACP agent's "auto" in the UI's language. */
