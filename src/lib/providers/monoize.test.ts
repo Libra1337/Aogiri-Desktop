@@ -130,7 +130,7 @@ describe('pickedMonoizeModels', () => {
 });
 
 describe('saved gateway picks', () => {
-	it('follow the gateway\u2019s current window', () => {
+	it('follow the gateway\u2019s current window and efforts', () => {
 		const models = monoizeEntries([{ id: 'claude-opus-5-5', context_window: 1_000_000, max_output_tokens: 128_000 } as never]);
 		const cfg = {
 			provider: 'monoize',
@@ -138,8 +138,9 @@ describe('saved gateway picks', () => {
 			lynshen_models_seen: ['claude-opus-5-5']
 		};
 		const patch = pickedMonoizeModels(models, cfg);
+		// The efforts of the day it was picked give way to the model's own ladder.
 		expect(patch.lynshen_models).toEqual([
-			{ name: 'claude-opus-5-5', context_window: 1_000_000, max_context_window: 0, max_output_tokens: 128_000, reasoning_efforts: ['high'] }
+			{ name: 'claude-opus-5-5', context_window: 1_000_000, max_context_window: 0, max_output_tokens: 128_000, reasoning_efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }
 		]);
 		// Nothing changed since: nothing to write.
 		expect(pickedMonoizeModels(models, { ...cfg, lynshen_models: patch.lynshen_models }).lynshen_models).toBeUndefined();
@@ -155,6 +156,32 @@ describe('with the gateway catalog', () => {
 		[],
 		lookup
 	);
+
+	it('takes the efforts the gateway states over a copy stored before (GPT-6.1 Sol: up to max)', () => {
+		const stated = parseCatalog({
+			...SAMPLE_CATALOG,
+			models: SAMPLE_CATALOG.models.map((m) =>
+				m.id === 'gpt-6.1-sol'
+					? { ...m, capabilities: { ...m.capabilities, effort_levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] } }
+					: m
+			)
+		})!;
+		const statedIndex = catalogIndex(stated);
+		const [sol] = monoizeEntries(
+			[{ id: 'gpt-6.1-sol', groups: ['默认'] }],
+			// What an earlier version stored from the gateway's old list.
+			[{ name: 'gpt-6.1-sol', reasoning_efforts: ['low', 'medium', 'high'] } as { name: string }],
+			(id) => statedIndex.get(id.toLowerCase())
+		);
+		expect(sol.reasoning_efforts).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+		// The gateway states nothing: the stored copy stands.
+		const [kept] = monoizeEntries(
+			[{ id: 'mystery-x-2' }],
+			[{ name: 'mystery-x-2', reasoning_efforts: ['low', 'high'] } as { name: string }],
+			lookup
+		);
+		expect(kept.reasoning_efforts).toEqual(['low', 'high']);
+	});
 
 	it('names the models and takes their efforts and windows', () => {
 		expect(live.find((m) => m.name === 'claude-opus-4-8')).toMatchObject({ display_name: 'Claude Opus 4.8', context_window: 200000 });
@@ -222,5 +249,26 @@ describe('a model the gateway cannot route at the moment', () => {
 		expect((patch.lynshen_models as { name: string }[]).map((m) => m.name)).toEqual(['glm-5.3']);
 		expect(patch.monoize_providers).toEqual({});
 		expect(patch.model).toBe('glm-5.3');
+	});
+});
+
+describe('the saved effort and the model in use', () => {
+	const entry = (name: string, reasoning_efforts: string[]) => ({ name, display_name: name, groups: [], routes: [], reasoning_efforts });
+	const models = [entry('gpt-6.1-sol', ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']), entry('kimi-k3', ['low', 'medium', 'high'])];
+
+	it('rounds an effort the model lacks to its nearest tier, not back to medium', () => {
+		const cfg = { provider: 'monoize', lynshen_models: [{ name: 'gpt-6.1-sol' }, { name: 'kimi-k3' }], lynshen_models_seen: ['gpt-6.1-sol', 'kimi-k3'] };
+		// Max chosen on GPT-6.1 Sol, then Kimi K3 (up to high) in use.
+		expect(pickedMonoizeModels(models, { ...cfg, model: 'kimi-k3', reasoning_effort: 'max' }).reasoning_effort).toBe('high');
+		// An effort the model offers is left alone.
+		expect(pickedMonoizeModels(models, { ...cfg, model: 'gpt-6.1-sol', reasoning_effort: 'max' }).reasoning_effort).toBeUndefined();
+		expect(pickedMonoizeModels(models, { ...cfg, model: 'kimi-k3', reasoning_effort: 'low' }).reasoning_effort).toBeUndefined();
+	});
+
+	it('rounds it for the model that replaces one the gateway stopped serving', () => {
+		const cfg = { provider: 'monoize', model: 'gone', reasoning_effort: 'ultra', lynshen_models: [{ name: 'kimi-k3' }], lynshen_models_seen: ['kimi-k3'] };
+		const patch = pickedMonoizeModels([models[1]], cfg);
+		expect(patch.model).toBe('kimi-k3');
+		expect(patch.reasoning_effort).toBe('high');
 	});
 });

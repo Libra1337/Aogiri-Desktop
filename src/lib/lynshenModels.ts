@@ -7,6 +7,8 @@ import { fetchLynShenModels, readConfig, writeConfig, type LynShenModel } from '
 import { DEFAULT_MODELS } from './defaultModels';
 import { gatewayCatalogModel } from './providers/catalog';
 import { isGatewayProvider } from './configModels';
+import { nearestEffort } from './composer/effort';
+import { gatewayCatalog } from './models/catalogStore.svelte';
 
 /** Models the account is offered that it was not offered before: shown at
  *  once (put on sale since the last look). `lynshen_models_seen` remembers
@@ -27,11 +29,22 @@ export function newlyOffered(ids: string[], cfg: Record<string, unknown>): { fre
 const knownEfforts = (value: unknown): string[] | undefined =>
 	Array.isArray(value) && value.some((e) => typeof e === 'string' && e !== 'none') ? (value as string[]) : undefined;
 
-/** The reasoning efforts a gateway model offers. The gateway's list has none,
- *  so they come from the bundled catalog (Auto: its target's), else from what
- *  was saved before; ["none"] only when neither knows the model. */
-export function gatewayEfforts(m: LynShenModel & { auto_target?: string }, previous?: unknown): string[] {
+/** The efforts the gateway's catalog (as last read) states for a model. */
+const catalogEfforts = (m: LynShenModel & { auto_target?: string }) =>
+	(gatewayCatalog.lookup(m.id) ?? (m.auto_target ? gatewayCatalog.lookup(m.auto_target) : undefined))?.efforts;
+
+/** The reasoning efforts a gateway model offers: the ones the gateway's
+ *  model catalog states (`stated`, by default its last-read copy: the model
+ *  family's full ladder, "max" where the model takes it), else its model
+ *  list's, else the bundled catalog's (Auto: its target's), else what was
+ *  saved before; ["none"] only when none of them knows the model. */
+export function gatewayEfforts(
+	m: LynShenModel & { auto_target?: string },
+	previous?: unknown,
+	stated: unknown = catalogEfforts(m)
+): string[] {
 	return (
+		knownEfforts(stated) ??
 		knownEfforts(m.reasoning_efforts) ??
 		knownEfforts(gatewayCatalogModel(m.auto_target || m.id)?.reasoning_efforts) ??
 		knownEfforts(previous) ?? ['none']
@@ -83,9 +96,11 @@ export async function refreshLynShenModels(): Promise<boolean> {
 		if (JSON.stringify(cfg.models) !== JSON.stringify(next)) patch.models = next;
 		if (!next.some((model) => model.name === cfg.model)) {
 			patch.model = next[0].name;
+			// The saved effort runs at the new model's nearest tier ("max" on
+			// one that stops at "high": "high"), not back at "medium".
 			const efforts = next[0].reasoning_efforts as string[];
 			if (!efforts.includes(String(cfg.reasoning_effort))) {
-				patch.reasoning_effort = efforts.includes('medium') ? 'medium' : efforts[0];
+				patch.reasoning_effort = nearestEffort(String(cfg.reasoning_effort ?? ''), efforts) || efforts[0];
 			}
 		}
 	}

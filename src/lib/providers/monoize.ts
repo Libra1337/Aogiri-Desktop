@@ -1,5 +1,6 @@
 import { fetchMonoizeModels, readConfig, writeConfig, type MonoizeModel, type MonoizeRoute } from '$lib/protocol';
 import { newlyOffered } from '$lib/lynshenModels';
+import { nearestEffort } from '$lib/composer/effort';
 import { DEFAULT_MODELS } from '$lib/defaultModels';
 import { gatewayCatalog } from '$lib/models/catalogStore.svelte';
 import { catalogIndex, defaultModel, type CatalogModel as GatewayModel, type GatewayCatalog } from '$lib/models/gatewayCatalog';
@@ -37,11 +38,15 @@ const ROUTABLE = new Set(['ready', 'model_not_in_plan', 'plan_inactive']);
 const OLD_GUESS = 128_000;
 
 /**
- * Turns the gateway's model list into picker entries. Metadata comes from what
- * the user already configured for that id, else the bundled catalog, so every
- * model keeps its reasoning efforts (a model with none listed would offer only
- * "none" in the picker). The window is the gateway's registered one, else the
- * one already stored, else the catalog's, else 0 (unknown: the engine then
+ * Turns the gateway's model list into picker entries. The reasoning efforts are
+ * the ones the gateway's catalog states for the model (its family's full
+ * ladder: "max" where the model takes it), else the ones stored for that id
+ * before, else the bundled catalog's, so every model keeps its efforts (a model
+ * with none listed would offer only "none" in the picker). The stored copy is
+ * only an earlier answer of the gateway or the bundled catalog: it kept GPT-6.1
+ * Sol at "high" once the gateway offered "max". The window is the gateway's
+ * registered one, else the one already stored, else the catalog's, else 0
+ * (unknown: the engine then
  * compacts when the upstream says a request is too long). A stored 128K is the
  * guess older versions wrote for every unknown model, which capped 1M models
  * at 128K: it counts as unknown.
@@ -74,10 +79,10 @@ function listedEntries(
 			const previous = stored.get(m.id) as Partial<MonoizeModelEntry> | undefined;
 			const catalog = catalogModel(m.id);
 			const live = described(m.id);
-			const efforts = previous?.reasoning_efforts?.length
-				? previous.reasoning_efforts
-				: live?.efforts.length
-					? live.efforts
+			const efforts = live?.efforts.length
+				? live.efforts
+				: previous?.reasoning_efforts?.length
+					? previous.reasoning_efforts
 					: catalog?.reasoning_efforts;
 			const kept = previous?.context_window === OLD_GUESS ? 0 : previous?.context_window;
 			const window = m.context_window || kept || live?.context || catalog?.context_window || 0;
@@ -142,9 +147,18 @@ function unchanged(patch: Record<string, unknown>, cfg: Record<string, unknown>)
 	return Object.fromEntries(Object.entries(patch).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(cfg[key])));
 }
 
-/** The limits a gateway model's saved entry follows from the gateway. */
-function limitsOf(m: Record<string, unknown>) {
-	return { context_window: m.context_window, max_context_window: m.max_context_window, max_output_tokens: m.max_output_tokens };
+/** What a gateway model's saved entry follows from the gateway: its limits,
+ *  and its reasoning efforts when the gateway's list says something (a kept
+ *  pick otherwise kept the efforts of the day it was picked: "high" at most,
+ *  after the gateway learned "max"). */
+function gatewayFieldsOf(m: Record<string, unknown>) {
+	const efforts = m.reasoning_efforts as string[] | undefined;
+	return {
+		context_window: m.context_window,
+		max_context_window: m.max_context_window,
+		max_output_tokens: m.max_output_tokens,
+		...(efforts?.some((e) => e !== 'none') ? { reasoning_efforts: efforts } : {})
+	};
 }
 
 /** A gateway model as `lynshen_models` keeps it (what the engines read). */
@@ -185,7 +199,7 @@ export function pickedMonoizeModels(
 	// once, they otherwise kept whatever the gateway said back then.
 	const kept = saved
 		.filter((m) => known.has(String(m.name)))
-		.map((m) => ({ ...m, ...limitsOf(monoizeSaved(known.get(String(m.name))!)) }));
+		.map((m) => ({ ...m, ...gatewayFieldsOf(monoizeSaved(known.get(String(m.name))!)) }));
 	// Put on sale since the last look: shown at once (see newlyOffered). A
 	// model the key cannot route yet is not offered, so not seen either; one
 	// seen before stays seen while the gateway lists it (a model the user
@@ -226,6 +240,16 @@ export function pickedMonoizeModels(
 			// An older gateway recommends nothing: the curated menu's order stands in.
 			const curated = DEFAULT_MODELS.map((id) => chats.find((m) => m.name.toLowerCase() === id)).find(Boolean);
 			patch.model = (chats.find((m) => names.includes(m.name.toLowerCase())) ?? curated ?? chats[0]).name;
+		}
+		// The saved effort follows the model in use: one it lacks (a new
+		// model, or a list the gateway corrected) runs at its nearest tier,
+		// as the engine rounds a switch; read as it is, the engine would fall
+		// back to "medium".
+		const inUse = shown.find((m) => m.name === String(patch.model ?? current));
+		const efforts = inUse?.reasoning_efforts ?? [];
+		const effort = String(cfg.reasoning_effort ?? '');
+		if (effort && efforts.some((e) => e !== 'none') && !efforts.includes(effort)) {
+			patch.reasoning_effort = nearestEffort(effort, efforts);
 		}
 	}
 	return patch;

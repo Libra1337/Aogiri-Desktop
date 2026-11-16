@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { setLocale } from '$lib/i18n';
-import { defaultEffort, effortLabel, stepStop, stopAt } from './effort';
+import { defaultEffort, effortLabel, nearestEffort, stepStop, stopAt } from './effort';
 
 describe('effort helpers', () => {
 	it('defaults to the provider default, else medium, else the first tier', () => {
@@ -14,7 +14,33 @@ describe('effort helpers', () => {
 		expect(defaultEffort(['minimal', 'low', 'high'], 'auto')).toBe('auto');
 	});
 
+	it('rounds a saved effort to what the new model offers, as the engine does', () => {
+		const gpt = ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+		const kimi = ['low', 'medium', 'high'];
+		const deepseek = ['low', 'medium', 'high', 'max'];
+		// Offered: kept.
+		expect(nearestEffort('max', gpt)).toBe('max');
+		expect(nearestEffort('ultra', gpt)).toBe('ultra');
+		// Above the model's top: its highest tier, not the start effort.
+		expect(nearestEffort('max', kimi)).toBe('high');
+		expect(nearestEffort('ultra', kimi)).toBe('high');
+		expect(nearestEffort('ultra', deepseek)).toBe('max');
+		// Between two tiers: the next higher one.
+		expect(nearestEffort('xhigh', deepseek)).toBe('max');
+		expect(nearestEffort('none', kimi)).toBe('low');
+		// Nothing chosen yet, "default", or an unknown word: the start effort.
+		expect(nearestEffort('', kimi)).toBe('medium');
+		expect(nearestEffort('default', kimi)).toBe('medium');
+		expect(nearestEffort('turbo', deepseek)).toBe('medium');
+		expect(nearestEffort('high', ['default', 'none'])).toBe('default');
+		expect(nearestEffort('high', [])).toBe('');
+		// An ACP agent's unset value stays its own start.
+		expect(nearestEffort('auto', ['low', 'high'], 'auto')).toBe('auto');
+	});
+
 	it('labels efforts', () => {
+		expect(effortLabel('ultra')).toBe('Ultra');
+		expect(effortLabel('max')).toBe('Max');
 		expect(effortLabel('high')).toBe('High');
 		expect(effortLabel('xhigh')).toBe('XHigh');
 		setLocale('en');

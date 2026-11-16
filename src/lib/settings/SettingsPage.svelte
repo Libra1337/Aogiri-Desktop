@@ -783,7 +783,9 @@
 				monoizeModelsMsg = t('settings.account.refreshNeedProvider');
 				return;
 			}
-			entry.models = monoizeEntries(list, entry.models);
+			// The catalog as last read names each model's efforts ("max" where
+			// the model takes it) over the copy stored before.
+			entry.models = monoizeEntries(list, entry.models, gatewayCatalog.lookup);
 			custom = [...custom];
 			persistCustom();
 			if (cfg.provider === 'monoize') cfg.models = entry.models;
