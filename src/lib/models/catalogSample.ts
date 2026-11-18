@@ -90,17 +90,21 @@ export const SAMPLE_CATALOG = {
 		row({ id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', vendor: ['deepseek', 'DeepSeek'], family: 'DeepSeek V4', order: 4100, recommended: true, aliases: ['DeepSeek-V4.1-Flash', 'deepseek-v4.1-flash-0910'], caps: caps(384000, false, true), health: health('ok', 658, 656), price: cny(1, 2), covered: true }),
 		row({ id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', vendor: ['deepseek', 'DeepSeek'], family: 'DeepSeek V4', order: 4000, lifecycle: 'legacy', aliases: ['deepseek-v4-pro-0813'], caps: caps(128000, false, true), health: health('ok'), price: cny(4, 16), covered: true }),
 		row({ id: 'glm-5.3', name: 'GLM-5.3', vendor: ['zhipu', '智谱'], family: 'GLM', order: 5300, recommended: true, request: 'ZhipuAi/GLM-5.3', aliases: ['ZhipuAi/GLM-5.3'], caps: caps(128000, false, true), health: health('ok'), price: cny(4, 16), covered: true }),
-		row({ id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', vendor: ['zhipu', '智谱'], family: 'GLM Flash', order: 5300, caps: caps(128000, false, false), health: health('ok'), price: cny(0.5, 1), covered: true }),
-		row({ id: 'kimi-k3', name: 'Kimi K3', vendor: ['moonshot', 'Kimi'], family: 'Kimi K', order: 3000, recommended: true, caps: caps(256000, true, true), health: health('ok'), price: cny(4, 21), covered: true }),
+		row({ id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', vendor: ['zhipu', '智谱'], family: 'GLM Flash', order: 5300, aliases: ['ZhipuAi/GLM-5.3-flash'], caps: caps(128000, false, false), health: health('ok'), price: cny(0.5, 1), covered: true }),
+		row({ id: 'kimi-k3', name: 'Kimi K3', vendor: ['moonshot', 'Kimi'], family: 'Kimi K', order: 3000, recommended: true, aliases: ['MoonshotAi/Kimi-K3'], caps: caps(256000, true, true), health: health('ok'), price: cny(4, 21), covered: true }),
 		row({ id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', vendor: ['google', 'Google'], family: 'Gemini Flash', order: 3700, caps: caps(1048576, true, true), health: health('unknown', 1, 0), price: cny(2.1, 17.8), covered: false }),
 		row({ id: 'mystery-x-2', name: 'mystery-x-2', vendor: null, family: null, order: 0, caps: caps(32000, false, false), health: health('unknown', 0, 0), price: null, covered: false })
 	]
 };
 
 /** The same account's plain list (`/api/desktop/oauth/models`), as an older
- *  gateway answers: ids only, two spellings of one model, no names. */
+ *  gateway answers: ids only, no names, and two spellings of a model where
+ *  the account's groups name it differently: by case (DeepSeek-V4.1-Flash),
+ *  or by the vendor-prefixed name the catalog keeps as an alias, ahead of the
+ *  catalog's id (ZhipuAi/GLM-5.3, MoonshotAi/Kimi-K3: the gateway's
+ *  enterprise groups and its domestic groups, 2026-11). */
 export const SAMPLE_PLAIN_IDS = [
 	'auto', 'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-sonnet-5-5', 'claude-sonnet-5', 'gpt-6.1-sol',
 	'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-image-2', 'deepseek-v4.1-flash', 'DeepSeek-V4.1-Flash', 'deepseek-v4-pro',
-	'glm-5.3', 'glm-5.3-flash', 'kimi-k3', 'gemini-3.7-flash', 'mystery-x-2'
+	'ZhipuAi/GLM-5.3', 'glm-5.3', 'glm-5.3-flash', 'MoonshotAi/Kimi-K3', 'kimi-k3', 'gemini-3.7-flash', 'mystery-x-2'
 ];

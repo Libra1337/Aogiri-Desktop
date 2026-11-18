@@ -145,6 +145,86 @@ describe('itemsFromRows with the catalog', () => {
 	});
 });
 
+describe('two spellings the catalog knows as one model', () => {
+	// The gateway names some models twice across its groups: the catalog's id
+	// in some (glm-5.3, kimi-k3), the vendor-prefixed alias in others
+	// (ZhipuAi/GLM-5.3, MoonshotAi/Kimi-K3); GLM-5.3 Flash three ways. An
+	// account in both kinds of group lists both. The pickers key a row by the
+	// catalog's id, so each such pair must be one row: two rows with one key
+	// broke the full browser (Svelte each_key_duplicate, 0.8.0 to 0.11.9).
+	const dupes = (keys: string[]) => keys.filter((k, i) => keys.indexOf(k) !== i);
+	const flashSpellings = ['GLM-5.3-Flash', 'ZhipuAi/GLM-5.3-flash'];
+	const ids = [...SAMPLE_PLAIN_IDS, ...flashSpellings];
+	const items = itemsFromRows(gatewayRows(ids), lookup);
+	const byKey = (list: PickItem[], key: string) => list.filter((i) => i.key === key);
+
+	it('is one row, keyed and spelled as the catalog id, the other spellings its aliases', () => {
+		expect(dupes(items.map((i) => i.key))).toEqual([]);
+		const [glm] = byKey(items, 'monoize::glm-5.3');
+		expect(byKey(items, 'monoize::glm-5.3')).toHaveLength(1);
+		// The alias comes first in the list; the row spelled as the catalog's id is kept.
+		expect(glm).toMatchObject({ id: 'glm-5.3', value: '/model glm-5.3', name: 'GLM-5.3' });
+		expect(glm.aliases).toContain('ZhipuAi/GLM-5.3');
+		expect(byKey(items, 'monoize::kimi-k3')).toEqual([expect.objectContaining({ id: 'kimi-k3', value: '/model kimi-k3' })]);
+		const flash = byKey(items, 'monoize::glm-5.3-flash');
+		expect(flash).toHaveLength(1);
+		expect(flash[0].id).toBe('glm-5.3-flash');
+		expect(flash[0].aliases).toEqual(expect.arrayContaining(flashSpellings));
+		expect(flash[0].aliases).not.toContain('glm-5.3-flash');
+	});
+
+	it('gives every line of the full browser its own key, folded, unfolded or searched', () => {
+		const sections = browseSections(items, { trial: true });
+		const families = new Set(sections.flatMap((s) => s.families.map((f) => f.key)));
+		for (const open of [new Set<string>(), families]) expect(dupes(browseLines(sections, open).map((l) => l.key))).toEqual([]);
+		expect(browseLines(sections, families).filter((l) => l.kind === 'model' && l.item.name === 'GLM-5.3')).toHaveLength(1);
+		for (const query of ['glm', 'zhipuai', 'kimi', 'MoonshotAi/Kimi-K3', '国产', '智谱', 'flash']) {
+			const found = searchSections(items, query);
+			expect(dupes(browseLines(found, new Set()).map((l) => l.key)), query).toEqual([]);
+		}
+		expect(searchSections(items, 'zhipuai').flatMap((s) => s.families.map((f) => f.shown[0].name))).toEqual(['GLM-5.3', 'GLM-5.3 Flash']);
+	});
+
+	it('keeps the spelling in use, wherever it is in the list', () => {
+		for (const order of [ids, [...ids].reverse()]) {
+			for (const active of ['ZhipuAi/GLM-5.3', 'glm-5.3']) {
+				const rows = itemsFromRows(gatewayRows(order, active), lookup);
+				expect(dupes(rows.map((i) => i.key))).toEqual([]);
+				expect(byKey(rows, 'monoize::glm-5.3')).toEqual([expect.objectContaining({ id: active, value: `/model ${active}`, active: true, name: 'GLM-5.3' })]);
+			}
+		}
+		// Not in use: the catalog's spelling, whichever comes first.
+		const reversed = itemsFromRows(gatewayRows([...ids].reverse(), 'auto'), lookup);
+		expect(byKey(reversed, 'monoize::glm-5.3')[0]).toMatchObject({ id: 'glm-5.3', active: false });
+		expect(byKey(reversed, 'monoize::glm-5.3-flash')[0]).toMatchObject({ id: 'glm-5.3-flash' });
+	});
+
+	it('lists favorites and recents kept under the catalog id once', () => {
+		const rows = quickList(items, { favorites: ['monoize::glm-5.3', 'monoize::kimi-k3'], recent: ['monoize::kimi-k3', 'monoize::glm-5.3-flash'], limit: 50 });
+		expect(dupes(rows.map((r) => r.item.key))).toEqual([]);
+		expect(rows.slice(0, 3).map((r) => `${r.section}:${r.item.id}`)).toEqual(['favorite:glm-5.3', 'favorite:kimi-k3', 'recent:deepseek-v4.1-flash']);
+	});
+
+	it('does the same in the settings pickers', () => {
+		const options = ['ZhipuAi/GLM-5.3', 'glm-5.3', 'MoonshotAi/Kimi-K3', 'kimi-k3'].map((name) => ({ provider: 'monoize', name }));
+		const inUse = itemsFromOptions(options, 'ZhipuAi/GLM-5.3', lookup);
+		expect(inUse.map((i) => [i.key, i.value, i.active])).toEqual([
+			['monoize::glm-5.3', 'ZhipuAi/GLM-5.3', true],
+			['monoize::kimi-k3', 'kimi-k3', false]
+		]);
+		expect(itemsFromOptions(options, '', lookup).map((i) => i.value)).toEqual(['glm-5.3', 'kimi-k3']);
+	});
+
+	it('leaves the spellings apart where no catalog says they are one model', () => {
+		const derived = itemsFromRows(gatewayRows(ids), none);
+		expect(dupes(derived.map((i) => i.key))).toEqual([]);
+		expect(derived.filter((i) => i.name === 'GLM 5.3' || i.name === 'GLM-5.3').length).toBeLessThanOrEqual(2);
+		const sections = browseSections(derived);
+		const families = new Set(sections.flatMap((s) => s.families.map((f) => f.key)));
+		expect(dupes(browseLines(sections, families).map((l) => l.key))).toEqual([]);
+	});
+});
+
 describe('fallback without a catalog', () => {
 	const items = itemsFromRows(gatewayRows(SAMPLE_PLAIN_IDS), none);
 	it('derives names, vendors and families from the ids', () => {
@@ -285,7 +365,8 @@ describe('search', () => {
 		expect(ids('K3')).toEqual(['kimi-k3']);
 	});
 	it('matches aliases and vendors', () => {
-		expect(ids('zhipuai')).toEqual(['glm-5.3']);
+		expect(ids('zhipuai')).toEqual(['glm-5.3', 'glm-5.3-flash']);
+		expect(ids('MoonshotAi/Kimi-K3')).toEqual(['kimi-k3']);
 		expect(ids('v4.1-flash-0910')).toEqual(['deepseek-v4.1-flash']);
 		expect(ids('智谱')).toEqual(['glm-5.3', 'glm-5.3-flash']);
 		expect(ids('anthropic')).toHaveLength(5);

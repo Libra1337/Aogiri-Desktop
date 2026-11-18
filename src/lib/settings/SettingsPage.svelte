@@ -396,24 +396,18 @@
 	const providerOpts = $derived(allProviders.filter(usable).map((p) => ({ value: p.id, label: p.name ?? cap(p.id) })));
 	// The default provider's models (config.json `models`), for the compaction,
 	// title and image pickers (src/lib/models: the same pickers as the composer).
-	const providerItems = $derived(
-		itemsFromOptions(
-			models.map((m) => ({ provider: cfg.provider ?? '', name: m.name, display_name: m.display_name, context_window: m.context_window, reasoning_efforts: modelEfforts(m), input_modalities: (m as { input_modalities?: string[] }).input_modalities })),
-			'',
-			gatewayCatalog.lookup
-		)
+	const providerOptions = $derived(
+		models.map((m) => ({ provider: cfg.provider ?? '', name: m.name, display_name: m.display_name, context_window: m.context_window, reasoning_efforts: modelEfforts(m), input_modalities: (m as { input_modalities?: string[] }).input_modalities }))
 	);
+	/** The provider's models marked against `value`: two spellings of one
+	 *  model are one row, the spelling set here kept (dedupe). */
+	const providerItems = (value: string) => itemsFromOptions(providerOptions, value, gatewayCatalog.lookup);
 	/** Models that chat (not image makers), marked against `value`; the one
 	 *  set stays listed even when it would not be. Empty for the title model
 	 *  = the main model (the engine's `Config::title`). */
-	const chatItems = (value: string) =>
-		providerItems.filter((i) => !i.drawsImages || i.value === value).map((i) => ({ ...i, active: i.value === value }));
+	const chatItems = (value: string) => providerItems(value).filter((i) => !i.drawsImages || i.active);
 	// Empty = the engine picks the first model named like an image model.
-	const imageItems = $derived(
-		providerItems
-			.filter((i) => i.drawsImages || i.value === (cfg.image_model ?? ''))
-			.map((i) => ({ ...i, active: i.value === (cfg.image_model ?? '') }))
-	);
+	const imageItems = $derived(providerItems(cfg.image_model ?? '').filter((i) => i.drawsImages || i.active));
 	const effortOpts = $derived(efforts.map((e) => ({ value: e, label: cap(e) })));
 	// All providers' models in one list (provider-qualified), so the default-model
 	// picker isn't limited to whichever provider is currently the default.
