@@ -1773,8 +1773,14 @@ try {
         await plan(r, [C, C, C, C, A, P, P]);
         await expect(r.locator('.card.plan .step').nth(3)).toHaveClass(/done/);
         assert.deepEqual(await running(r), [], `${engine}: it plays under reduced motion`);
-        // (app.css gives every transition 0.01ms there: one frame.)
-        await r.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        // (app.css gives every transition 0.01ms there, every property's:
+        // the words' colour still takes a frame or two, two in Chromium from
+        // the class and three in WebKit, so two frames after the class was
+        // seen read the old colour now and then. Wait until nothing runs in
+        // the step, ten frames at most.)
+        await r.locator('.card.plan .step').nth(3).evaluate(async (li) => {
+          for (let f = 0; f < 10 && li.getAnimations({subtree: true}).length; f++) await new Promise((done) => requestAnimationFrame(done));
+        });
         assert.deepEqual(await doneLook(r, 3), {cls: [], disc: '1', check: '0px', line: 'line-through', color: dim, copies: [], was: 0}, `${engine}: reduced motion`);
         await ctx.close();
       }
