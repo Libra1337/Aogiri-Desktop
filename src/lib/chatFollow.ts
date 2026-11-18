@@ -32,6 +32,13 @@ export function shortOfEnd(scroller: HTMLElement, top: number): boolean {
  *    size change lets the layout move the view, so that one is the reader's
  *    too, by a way no input event shows (a scrollbar the page gets no
  *    pointer for, autoscroll, assistive technology).
+ *  - Up with no size change but still within a pixel of the end, no reader
+ *    input: the layout's after all. WebKit lays a content of fractional
+ *    height out again (a card beside the list grew, a row under the view
+ *    changed) and puts the position a pixel lower in its range, with no
+ *    size the page can read changed. Following goes on as it was (it pins
+ *    the end again); taken for the reader's, it stopped under the next
+ *    growth, a pixel from the end.
  *  - Up with a size change, no reader input: the layout moved it. A card
  *    under the list closed (the recap card, an answered approval) or the
  *    content shrank, and the browser brought the position into the new
@@ -48,7 +55,11 @@ export function followAfterScroll(
 ): boolean | null {
 	const end = view.scrollHeight - view.clientHeight;
 	if (end <= 0) return true;
-	if (top < lastTop) return byReader || !resized ? false : end - top <= 1 ? true : null;
+	if (top < lastTop) {
+		if (byReader) return false;
+		if (resized) return end - top <= 1 ? true : null;
+		return end - top <= 1 ? null : false;
+	}
 	return end - top < 60;
 }
 
