@@ -1773,8 +1773,14 @@ try {
         await plan(r, [C, C, C, C, A, P, P]);
         await expect(r.locator('.card.plan .step').nth(3)).toHaveClass(/done/);
         assert.deepEqual(await running(r), [], `${engine}: it plays under reduced motion`);
-        // (app.css gives every transition 0.01ms there: one frame.)
-        await r.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        // (app.css gives every transition 0.01ms there, every property's:
+        // the words' colour still takes a frame or two, two in Chromium from
+        // the class and three in WebKit, so two frames after the class was
+        // seen read the old colour now and then. Wait until nothing runs in
+        // the step, ten frames at most.)
+        await r.locator('.card.plan .step').nth(3).evaluate(async (li) => {
+          for (let f = 0; f < 10 && li.getAnimations({subtree: true}).length; f++) await new Promise((done) => requestAnimationFrame(done));
+        });
         assert.deepEqual(await doneLook(r, 3), {cls: [], disc: '1', check: '0px', line: 'line-through', color: dim, copies: [], was: 0}, `${engine}: reduced motion`);
         await ctx.close();
       }
@@ -4156,7 +4162,23 @@ try {
       await wp.evaluate(async () => { const { installSmoothWheel } = await import('/src/lib/smoothWheel.ts'); installSmoothWheel(() => 1); });
       assert.ok(await wp.evaluate(() => window.__calls.some((c) => c.command === 'smooth_wheel_ready' && c.args.ready === true)));
       const main = wp.locator('.chatpane main');
+      // The code face (Geist Mono) loads after the page shows and makes the
+      // code block taller (56 px). A scroll to the top that came with that
+      // was taken for the layout's (no wheel, key or pointer), so the
+      // conversation went on following its end and the notch below
+      // stopped there (166, not 120). Start once the fonts are in and the
+      // conversation's height has held for a few frames.
+      await main.evaluate(async (m) => {
+        await document.fonts.ready;
+        for (let last = -1, still = 0; still < 5; ) {
+          await new Promise((r) => requestAnimationFrame(r));
+          still = m.scrollHeight === last ? still + 1 : 0;
+          last = m.scrollHeight;
+        }
+      });
       await main.evaluate((m) => (m.scrollTop = 0));
+      await wp.waitForTimeout(100);
+      assert.equal(await main.evaluate((m) => m.scrollTop), 0, 'the conversation went back to its end');
       const box = await main.boundingBox();
       const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
       await wp.evaluate(() => { window.__wheels = []; document.addEventListener('wheel', (e) => window.__wheels.push(e.deltaY), {capture: true}); });

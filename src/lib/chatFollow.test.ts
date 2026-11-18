@@ -67,6 +67,15 @@ describe('followAfterScroll', () => {
 		expect(followAfterScroll(at(518), 694, 696, false, false)).toBe(false);
 	});
 
+	it('keeps following as it was when WebKit lays the content out again a pixel lower in its range, with no size change', () => {
+		// ?shell&cards in WebKit: the end 207 (972.125 - 765), pinned at 207;
+		// ten more subagents beside the list, and the position is 206.
+		expect(followAfterScroll({ scrollHeight: 972, clientHeight: 765 }, 206, 207, false, false)).toBeNull();
+		expect(followAfterScroll(at(518), 695, 696, false, false)).toBeNull();
+		// A pixel by the reader's hand stops it all the same.
+		expect(followAfterScroll(at(518), 695, 696, true, false)).toBe(false);
+	});
+
 	it('follows again once the view moves down near the end, not far from it', () => {
 		expect(followAfterScroll(at(518), 650, 600, true, false)).toBe(true);
 		expect(followAfterScroll(at(518), 696, 650, false, true)).toBe(true);
