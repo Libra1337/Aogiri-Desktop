@@ -47,7 +47,7 @@
     <component name="会话运行时" paths="Aogiri-CLI">
       <responsibility>daemon 持有会话与引擎进程，统一不同引擎的事件协议。</responsibility>
       <lifecycle>窗口关闭后任务继续运行；关闭标签会结束对应 daemon 会话。</lifecycle>
-      <repository>https://github.com/Libra1337/Aogiri-CLI</repository>
+      <repository>https://github.com/LynShen-Team/Aogiri-CLI</repository>
     </component>
 
     <component name="引擎适配" paths="src/lib/backends">
