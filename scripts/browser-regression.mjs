@@ -3637,7 +3637,8 @@ try {
     for (const [query, names] of [
       ['opus 4.8', ['Claude Opus 4.8']],
       ['能看图的国产模型', ['Kimi K3']],
-      ['zhipuai', ['GLM-5.3']],
+      ['zhipuai', ['GLM-5.3', 'GLM-5.3 Flash']],
+      ['MoonshotAi/Kimi-K3', ['Kimi K3']],
       ['DeepSeek-V4.1-Flash', ['DeepSeek V4.1 Flash']],
       ['便宜 国产', ['DeepSeek V4.1 Flash', 'DeepSeek V4 Pro', 'GLM-5.3', 'GLM-5.3 Flash']]
     ]) {
@@ -3673,6 +3674,35 @@ try {
     await mp.getByRole('button',{name:'仍然使用'}).click();
     await expect(dlg).toHaveCount(0);
     assert.equal(await mp.evaluate(() => JSON.parse(localStorage.getItem('lynshen-model-picks')).recent[0]), 'monoize::gpt-6.1-sol');
+    await mp.close();
+  }
+  // 全部模型 on an account whose groups name a model twice: the catalog's id
+  // in some, the vendor-prefixed alias in others (catalogSample.ts:
+  // ZhipuAi/GLM-5.3 and glm-5.3, MoonshotAi/Kimi-K3 and kimi-k3). The browser
+  // opens with one row per model, every line once (0.8.0 to 0.11.9 showed
+  // 这个对话显示出错了 here: Svelte's each_key_duplicate), and a pick is kept
+  // under the catalog's id.
+  {
+    const mp = await browser.newPage({viewport:{width:1040,height:680}});
+    const thrown = [];
+    mp.on('pageerror', e => { thrown.push(e.message); errors.push(e.message); });
+    await mp.goto(base + '?shell&models');
+    await expect(mp.locator('.fbtn.model')).toHaveText('DeepSeek V4.1 Flash', {timeout:30000});
+    await mp.locator('.fbtn.model').click();
+    await mp.getByRole('option', {name:/全部模型/}).click();
+    const dlg = mp.locator('.mb');
+    await expect(dlg.locator('.vhead .vname')).toHaveText(['DeepSeek', '智谱', 'Kimi', 'LynShen', 'Anthropic', 'OpenAI', 'Google', '其他']);
+    await expect(row(dlg, 'GLM-5.3')).toHaveCount(1);
+    await expect(row(dlg, 'Kimi K3')).toHaveCount(1);
+    const lineIds = await dlg.locator('[role=option]').evaluateAll((els) => els.map((el) => el.id));
+    assert.equal(new Set(lineIds).size, lineIds.length, `a line of the model browser twice: ${lineIds.join(' ')}`);
+    await dlg.locator('input').fill('zhipuai');
+    await expect(dlg.locator('.mline .name')).toHaveText(['GLM-5.3', 'GLM-5.3 Flash']);
+    await row(dlg, 'GLM-5.3').click();
+    await expect(dlg).toHaveCount(0);
+    await expect(mp.locator('.fbtn.model.pending')).toHaveCount(1);
+    assert.equal(await mp.evaluate(() => JSON.parse(localStorage.getItem('lynshen-model-picks')).recent[0]), 'monoize::glm-5.3');
+    assert.deepEqual(thrown, []);
     await mp.close();
   }
   // An older gateway (no catalog, 404): names, vendors and families read

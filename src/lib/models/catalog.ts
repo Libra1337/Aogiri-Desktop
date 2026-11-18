@@ -150,23 +150,33 @@ export function modelInfo(m: StoredModel, catalog: ModelInfo | undefined, opts: 
 	};
 }
 
-/** Keeps one row per model of a provider: ids that differ only in case
- *  ("DeepSeek-V4.1-Flash", "deepseek-v4.1-flash") are one model, the other
- *  spelling an alias. The row that is in use is kept. */
+/**
+ * Keeps one row per model of a provider, by the key the pickers list and
+ * remember it under (`provider::id`, the catalog's id when it knows the
+ * model): ids that differ only in case ("DeepSeek-V4.1-Flash",
+ * "deepseek-v4.1-flash") and names the catalog keeps as aliases
+ * ("ZhipuAi/GLM-5.3" for glm-5.3) are one model, the other spellings its
+ * aliases. Kept: the row in use, else the one spelled as the key (the
+ * catalog's id), else the first. Two rows under one key would break the
+ * keyed lists (Svelte's each_key_duplicate).
+ */
 export function dedupe(items: PickItem[]): PickItem[] {
 	const out: PickItem[] = [];
 	const at = new Map<string, number>();
+	const spelledAsKey = (i: PickItem) => i.key === `${i.provider ?? ''}::${i.id}`;
 	for (const item of items) {
-		const id = `${item.provider ?? ''}::${item.id.toLowerCase()}`;
-		const seen = at.get(id);
+		const key = item.key.toLowerCase();
+		const seen = at.get(key);
 		if (seen === undefined) {
-			at.set(id, out.length);
+			at.set(key, out.length);
 			out.push(item);
 			continue;
 		}
 		const kept = out[seen];
-		const [keep, drop] = item.active && !kept.active ? [item, kept] : [kept, item];
-		out[seen] = { ...keep, aliases: [...new Set([...keep.aliases, drop.id])] };
+		const swap = item.active !== kept.active ? item.active : !spelledAsKey(kept) && spelledAsKey(item);
+		const [keep, drop] = swap ? [item, kept] : [kept, item];
+		const aliases = [...new Set([...keep.aliases, drop.id, ...drop.aliases])].filter((a) => a !== keep.id);
+		out[seen] = { ...keep, aliases };
 	}
 	return out;
 }
