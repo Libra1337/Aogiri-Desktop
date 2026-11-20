@@ -1285,6 +1285,25 @@ fn monoize_referrals() -> Result<serde_json::Value, String> {
     monoize_auth::gateway_key_call("GET", "/api/desktop/oauth/referrals", None)
 }
 
+/// The path that names the inviter of `code` (gateway DA-9, RF-B3). A code is
+/// letters and digits; anything else is dropped, so the query needs no escaping.
+fn referral_inviter_path(code: &str) -> String {
+    let code: String = code
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(16)
+        .collect::<String>()
+        .to_ascii_uppercase();
+    format!("/api/desktop/oauth/referrals/inviter?code={code}")
+}
+
+/// Who a code names as the inviter, with their avatar inline (DA-9), for the
+/// confirmation shown before [`monoize_bind_referral`]. Binds nothing.
+#[tauri::command(async)]
+fn monoize_referral_inviter(code: String) -> Result<serde_json::Value, String> {
+    monoize_auth::gateway_key_call("GET", &referral_inviter_path(&code), None)
+}
+
 /// Records the inviter's code for this account (RF-B1, once, within 7 days of
 /// signing up); answers the refreshed invite page.
 #[tauri::command(async)]
@@ -4131,6 +4150,7 @@ pub fn run() {
             fetch_monoize_balance,
             fetch_monoize_live_usage,
             monoize_referrals,
+            monoize_referral_inviter,
             monoize_bind_referral,
             monoize_devices,
             monoize_remove_device,
@@ -4260,6 +4280,19 @@ mod tests {
         FileTarget,
     };
     use std::path::Path;
+
+    #[test]
+    fn the_inviter_lookup_sends_only_letters_and_digits_of_the_code() {
+        assert_eq!(
+            super::referral_inviter_path(" ab cd/2345&x=1 "),
+            "/api/desktop/oauth/referrals/inviter?code=ABCD2345X1"
+        );
+        assert_eq!(
+            super::referral_inviter_path(&"a".repeat(20)),
+            format!("/api/desktop/oauth/referrals/inviter?code={}", "A".repeat(16))
+        );
+        assert_eq!(super::referral_inviter_path(""), "/api/desktop/oauth/referrals/inviter?code=");
+    }
 
     #[test]
     fn the_terminal_panel_opens_only_shells_with_their_own_flags() {

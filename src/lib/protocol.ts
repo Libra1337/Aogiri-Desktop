@@ -872,6 +872,15 @@ export interface ReferralOverview {
 export const fetchReferrals = () => gatewayCall<ReferralOverview>('monoize_referrals');
 export const bindReferral = (code: string) => gatewayCall<ReferralOverview>('monoize_bind_referral', { code });
 
+/** The inviter a code names (gateway DA-9, RF-B3), shown for confirmation before binding. */
+export interface InviterPreview {
+	code: string;
+	username: string;
+	/** The inviter's avatar as a `data:image/webp;base64,` URL, or null. */
+	avatar_data_url: string | null;
+}
+export const lookupInviter = (code: string) => gatewayCall<InviterPreview>('monoize_referral_inviter', { code });
+
 /** The account's authorized devices (gateway DA-10, AD-API-1); times in Unix ms. */
 export interface DeviceOverview {
 	devices: {

@@ -1,18 +1,20 @@
 <script lang="ts">
 	// Settings → 邀请好友 (gateway DA-9): who invited the user (or a field to add
 	// the inviter's code while that is still allowed), the user's own code and
-	// link, the rules, and the people they invited.
+	// link, the rules, and the people they invited. A typed code names its
+	// inviter first (RF-B3); binding happens only on 确认绑定 in that dialog.
 	import { onMount } from 'svelte';
 	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
 	import GiftIcon from 'phosphor-svelte/lib/GiftIcon';
 	import UserCheckIcon from 'phosphor-svelte/lib/UserCheckIcon';
 	import Button from '$lib/ui/Button.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import Notice from '$lib/ui/Notice.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { t } from '$lib/i18n';
 	import { prefs } from '$lib/prefs.svelte';
 	import { shownBalanceText } from '$lib/money';
-	import { bindReferral, fetchReferrals, GatewayError, type ReferralOverview } from '$lib/protocol';
+	import { bindReferral, fetchReferrals, GatewayError, lookupInviter, type InviterPreview, type ReferralOverview } from '$lib/protocol';
 	import SettingsSection from './SettingsSection.svelte';
 	import GatewayNotice from './GatewayNotice.svelte';
 
@@ -25,8 +27,12 @@
 	let error = $state<unknown>(null);
 	let loading = $state(true);
 	let code = $state('');
-	let binding = $state(false);
+	let checking = $state(false);
 	let bindError = $state('');
+	/** The inviter the typed code names, waiting for 确认绑定. */
+	let preview = $state<InviterPreview | null>(null);
+	let binding = $state(false);
+	let confirmError = $state('');
 
 	async function load() {
 		loading = true;
@@ -52,17 +58,38 @@
 			.catch(() => {});
 	}
 
-	async function bind(e: SubmitEvent) {
+	function bindErrorText(err: unknown): string {
+		const known = err instanceof GatewayError && err.code && BIND_ERRORS.has(err.code);
+		return known ? t(`settings.invite.errors.${(err as GatewayError).code}`) : err instanceof Error ? err.message : String(err);
+	}
+
+	/** 下一步: who the code names; nothing is bound yet. */
+	async function lookUp(e: SubmitEvent) {
 		e.preventDefault();
 		bindError = '';
+		checking = true;
+		try {
+			preview = await lookupInviter(code.trim().toUpperCase());
+			confirmError = '';
+		} catch (err) {
+			bindError = bindErrorText(err);
+		} finally {
+			checking = false;
+		}
+	}
+
+	/** 确认绑定 in the dialog. */
+	async function confirmBind() {
+		if (!preview) return;
+		confirmError = '';
 		binding = true;
 		try {
-			data = await bindReferral(code.trim().toUpperCase());
+			data = await bindReferral(preview.code);
 			code = '';
+			preview = null;
 			toast.success(t('settings.invite.bindDone'));
 		} catch (err) {
-			const known = err instanceof GatewayError && err.code && BIND_ERRORS.has(err.code);
-			bindError = known ? t(`settings.invite.errors.${(err as GatewayError).code}`) : err instanceof Error ? err.message : String(err);
+			confirmError = bindErrorText(err);
 		} finally {
 			binding = false;
 		}
@@ -85,13 +112,14 @@
 			{#if data.invited_by}
 				<p class="plain">{t('settings.invite.invitedBy', { name: data.invited_by })}</p>
 			{:else}
-				<form class="bind" onsubmit={bind}>
+				<form class="bind" onsubmit={lookUp}>
 					<label class="field-label" for="inviter-code">{t('settings.invite.bindLabel')}</label>
 					<div class="bind-row">
 						<input
 							id="inviter-code"
 							class="code-input"
 							bind:value={code}
+							oninput={() => (bindError = '')}
 							maxlength="16"
 							autocomplete="off"
 							spellcheck="false"
@@ -99,7 +127,7 @@
 							aria-invalid={bindError ? true : undefined}
 							aria-describedby="inviter-code-hint"
 						/>
-						<Button variant="primary" size="sm" type="submit" disabled={binding || code.trim().length < 4}>{t('settings.invite.bindSubmit')}</Button>
+						<Button variant="primary" size="sm" type="submit" disabled={checking || code.trim().length < 4}>{t('settings.invite.bindNext')}</Button>
 					</div>
 					{#if bindError}<p class="err" role="alert">{bindError}</p>{/if}
 					<p class="hint" id="inviter-code-hint">{t('settings.invite.bindHint', { date: new Date(data.bind_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) })}</p>
@@ -140,6 +168,30 @@
 		</div>
 		<div class="tile"><span class="tile-label">{t('settings.invite.earned')}</span><span class="num">{yuan(data.stats.earned_fen)}</span></div>
 	</section>
+
+	{#if preview}
+		<Modal title={t('settings.invite.confirmTitle')} dismissible={!binding} onClose={() => (preview = null)} width={400}>
+			<div class="confirm">
+				<p class="plain dim">{t('settings.invite.confirmBody')}</p>
+				<div class="inviter">
+					{#if preview.avatar_data_url}
+						<img class="avatar" src={preview.avatar_data_url} alt="" />
+					{:else}
+						<span class="avatar initial" aria-hidden="true">{preview.username.slice(0, 1).toUpperCase()}</span>
+					{/if}
+					<span class="who">
+						<span class="inviter-name">{preview.username}</span>
+						<span class="small mono">{t('settings.invite.confirmCode', { code: preview.code })}</span>
+					</span>
+				</div>
+				{#if confirmError}<p class="err" role="alert">{confirmError}</p>{/if}
+			</div>
+			{#snippet footer()}
+				<Button onclick={() => (preview = null)} disabled={binding}>{t('settings.invite.confirmLater')}</Button>
+				<Button variant="primary" onclick={confirmBind} disabled={binding}>{t('settings.invite.confirmSubmit')}</Button>
+			{/snippet}
+		</Modal>
+	{/if}
 
 	<SettingsSection title={t('settings.invite.list')}>
 		{#if data.invitees.length === 0}
@@ -190,6 +242,48 @@
 	.plain {
 		margin: 0;
 		font-size: var(--fs-sm);
+	}
+	.dim {
+		color: var(--dim);
+	}
+	.confirm {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.inviter {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 14px;
+		border-radius: var(--r-md);
+		background: color-mix(in oklab, var(--text) 4%, transparent);
+		box-shadow: inset 0 0 0 1px var(--hairline);
+	}
+	.avatar {
+		flex-shrink: 0;
+		width: 48px;
+		height: 48px;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+	.avatar.initial {
+		display: grid;
+		place-items: center;
+		background: color-mix(in oklab, var(--text) 8%, transparent);
+		font-size: 18px;
+		font-weight: 600;
+	}
+	.inviter-name {
+		overflow: hidden;
+		font-size: var(--fs-md);
+		font-weight: 600;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.mono {
+		font-family: var(--font-mono);
+		letter-spacing: 0.08em;
 	}
 	.field-label {
 		color: var(--dim);
