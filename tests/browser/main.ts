@@ -47,7 +47,21 @@ const modelsMode = params0.get('models');
 // in force already (12 days left): a higher plan is an upgrade at a quoted
 // price, a lower one is not offered, the same one renews.
 const purchaseMode = params0.get('purchase');
-let loggedIn = new URL(location.href).searchParams.has('loggedIn') || trialReply != null || purchaseMode != null;
+// ?invite: Settings → 邀请好友 on a new account that can still add its inviter
+// (gateway DA-9): the code ABCD2345 names lin_xiaoyu with an avatar, any other
+// code is refused (invite_code_invalid), and binding records it.
+const inviteMode = params0.has('invite');
+let inviteBound = false;
+const inviteOverview = () => ({
+  code: 'MYCODE23', invite_url: 'https://www.lynshen.org/login?mode=register&invite=MYCODE23', enabled: true,
+  invited_by: inviteBound ? 'l***u' : null, can_bind: !inviteBound, bind_until: Date.now() + 6 * 86_400_000,
+  rules: {bonus_fen: 500, share_bp: 200, window_days: 30, min_usage_hours: 24, min_consumption_fen: 100},
+  stats: {invited: 1, qualified: 0, pending: 1, earned_fen: 0},
+  invitees: [{username: 'z***u', registered_at: Date.now() - 86_400_000, status: 'pending', earned_fen: 0, window_ends_at: null}]
+});
+// A 2 x 2 PNG in two blues, as the gateway inlines an avatar.
+const INVITER_AVATAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAE0lEQVR4nGOwaPmQnPaRAYiBLAAtFgbNou/mXwAAAABJRU5ErkJggg==';
+let loggedIn = new URL(location.href).searchParams.has('loggedIn') || trialReply != null || purchaseMode != null || inviteMode;
 let planFunding = params0.get('funding') === 'plan' ? 'plan' : 'balance';
 // A move to the balance until the used-up window recovers (PUT mode
 // until_reset): its end; `window.__windowRecovered()` is the gateway putting
@@ -162,6 +176,17 @@ Object.assign(window, {
         if (command === 'fetch_monoize_models') return {data: SAMPLE_PLAIN_IDS.map((id) => ({id, routing_status: 'ready'}))};
         if (command === 'read_config') return {provider: 'monoize', model: 'deepseek-v4.1-flash', models: SAMPLE_PLAIN_IDS.map((name) => ({name})), compact_model: 'glm-5.3-flash', image_model: 'gpt-image-2'};
         if (command === 'read_auth_providers') return ['monoize'];
+      }
+      if (inviteMode) {
+        if (command === 'monoize_referrals') return inviteOverview();
+        if (command === 'monoize_referral_inviter') {
+          if (args.code !== 'ABCD2345') throw JSON.stringify({status: 400, code: 'invite_code_invalid', message: 'invite code is not valid'});
+          return {code: 'ABCD2345', username: 'lin_xiaoyu', avatar_data_url: INVITER_AVATAR};
+        }
+        if (command === 'monoize_bind_referral') {
+          inviteBound = true;
+          return inviteOverview();
+        }
       }
       if (command.startsWith('monoize_store_')) {
         if (purchaseMode === '404') throw storeRefusal(404, null, 'Not Found');
